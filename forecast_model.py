@@ -167,6 +167,16 @@ def forecast_state_environment(ctx: dict) -> dict:
     X = df[["presidential", "inflation", "approval"]].values
     y = df["dem_share"].values
     coeffs, resid_std, residuals = ols(X, y)
+    # Use forecast SE instead of residual SD to capture both residual
+    # variance and parameter uncertainty (important for small samples)
+    X_b = np.column_stack([np.ones(len(X)), X])
+    n, p = X_b.shape
+    mse = float(np.sum(residuals**2) / (n - p))
+    # Forecast variance for the 2026 prediction point
+    x_pred = np.array([1.0, float(ctx["presidential"]), float(ctx["inflation"]), float(ctx["approval"])])
+    XtX_inv = np.linalg.inv(X_b.T @ X_b)
+    forecast_var = mse * (1 + float(x_pred @ XtX_inv @ x_pred))
+    resid_std = float(np.sqrt(forecast_var))
     coeff_names = ["intercept", "presidential", "inflation", "approval"]
 
     x_row = [float(ctx["presidential"]), float(ctx["inflation"]), float(ctx["approval"])]
