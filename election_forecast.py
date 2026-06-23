@@ -846,6 +846,57 @@ with tab_mechanics:
         st.markdown(f'<div class="stat-card"><div class="label">County Turnout SD</div><div class="value">{fmt_pct(sds2["county_turnout_sd"])}</div><div class="sub">Mean per-county residual SD</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
+  st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-label">County Forecast Summary</div>', unsafe_allow_html=True)
+    st.caption("All figures from the current forecast model run.")
+    try:
+        is_gen = fp2["context"]["general"]
+        lean_key = "lean_avg" if lean_method == "Average" else "lean_lin"
+        frows = ""
+        total_reg = 0; total_votes = 0; total_dem = 0
+        for cn in county_names:
+            cd = fp2["counties"][cn]
+            reg  = cd["registration"]
+            to   = cd["turnout"]
+            lean = cd[lean_key]
+            env  = fp2["state_environment"]["predicted_state_env"]
+            share = env + lean
+            votes = reg * to
+            dem   = votes * share
+            total_reg   += reg
+            total_votes += votes
+            total_dem   += dem
+            frows += (
+                f"<tr><td>{cn}</td>"
+                f"<td>{reg:,}</td>"
+                f"<td>{to*100:.1f}%</td>"
+                f"<td>{votes:,.0f}</td>"
+                f"<td>{env*100:.1f}%</td>"
+                f"<td>{lean*100:+.1f}%</td>"
+                f"<td>{share*100:.1f}%</td>"
+                f"<td>{dem:,.0f}</td></tr>"
+            )
+        dist_share = total_dem / total_votes if total_votes > 0 else 0
+        frows += (
+            f"<tr style='font-weight:600;background:#f0f7f3'>"
+            f"<td>District Total</td>"
+            f"<td>{total_reg:,}</td>"
+            f"<td>—</td>"
+            f"<td>{total_votes:,.0f}</td>"
+            f"<td>—</td><td>—</td>"
+            f"<td>{dist_share*100:.1f}%</td>"
+            f"<td>{total_dem:,.0f}</td></tr>"
+        )
+        st.markdown(
+            f'<table class="styled-table">'
+            f'<thead><tr><th>County</th><th>Registration</th><th>Turnout</th>'
+            f'<th>Est. Votes</th><th>State Env</th><th>Lean ({lean_method})</th>'
+            f'<th>Forecast Share</th><th>Est. Dem Votes</th></tr></thead>'
+            f'<tbody>{frows}</tbody></table>',
+            unsafe_allow_html=True
+        )
+    except Exception as e:
+        st.caption(f"Could not render forecast table: {e}")
 
     # ── County leans ──────────────────────────────────────────────────────────
     st.markdown('<div class="section-label">County Leans — Historical vs Forecast</div>', unsafe_allow_html=True)
