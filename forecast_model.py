@@ -110,7 +110,9 @@ def forecast_turnout(ctx: dict) -> tuple:
     )
     df = df[df.prev_turnout.notna()].copy()
 
-    # County fixed effects (one-hot, drop Alpine as reference)
+    # Set Tuolumne as reference category by putting it first after sorting
+    county_order = ["Tuolumne"] + [c for c in sorted(df["county"].unique()) if c != "Tuolumne"]
+    df["county"] = pd.Categorical(df["county"], categories=county_order, ordered=False)
     county_dummies = pd.get_dummies(df["county"], drop_first=True, dtype=float)
     dummy_cols = list(county_dummies.columns)
 
