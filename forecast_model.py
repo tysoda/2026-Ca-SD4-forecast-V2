@@ -190,9 +190,9 @@ def forecast_state_environment(ctx: dict) -> dict:
     XtX_inv = np.linalg.inv(X_b.T @ X_b)
     forecast_var = mse * (1 + float(x_pred @ XtX_inv @ x_pred))
     resid_std = float(np.sqrt(forecast_var))
-    coeff_names = ["intercept", "presidential", "inflation", "approval"]
+    coeff_names = ["intercept", "presidential", "inflation", "approval", "is_general"]
 
-    x_row = [float(ctx["presidential"]), float(ctx["inflation"]), float(ctx["approval"])]
+    x_row = [float(ctx["presidential"]), float(ctx["inflation"]), float(ctx["approval"]), float(ctx["general"])]
     predicted = float(predict_ols(coeffs, x_row))
 
     # Back-test residuals for SD (already computed in ols)
