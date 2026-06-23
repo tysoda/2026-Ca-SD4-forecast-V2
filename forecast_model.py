@@ -103,11 +103,8 @@ def forecast_turnout(ctx: dict) -> tuple:
     df = df[df.votes_cast.notna()].copy()
     df = df.sort_values(["county", "year", "month"]).reset_index(drop=True)
 
-    # Previous turnout: last election of the same type (primary or general) per county
-    df["prev_turnout"] = (
-        df.groupby(["county", "general"])["turnout_rate"]
-        .shift(1)
-    )
+    # Previous turnout: last election per county
+    df["prev_turnout"] = df.groupby("county")["turnout_rate"].shift(1)
     df = df[df.prev_turnout.notna()].copy()
 
     # Set Tuolumne as reference category by putting it first after sorting
@@ -130,12 +127,12 @@ def forecast_turnout(ctx: dict) -> tuple:
     results = {}
 
     for county in COUNTIES:
-        # Most recent same-type turnout for this county
-        same_type = df[(df.county == county) & (df.general == int(is_general))]
-        if len(same_type) > 0:
-            prev = float(same_type.iloc[-1]["turnout_rate"])
+        # Most recent election of any type for this county
+        prev_any = df[df.county == county]
+        if len(prev_any) > 0:
+            prev = float(prev_any.iloc[-1]["turnout_rate"])
         else:
-            prev = float(df[df.county == county]["turnout_rate"].mean())
+            prev = float(df["turnout_rate"].mean())
 
         county_fe = {c: 0.0 for c in dummy_cols}
         if county in county_fe:
