@@ -167,40 +167,43 @@ def forecast_state_environment(ctx: dict) -> dict:
     df = pd.read_csv(DATA_DIR / "state_environment_history.csv")
     features = ["presidential", "inflation", "approval"]
 
-    # Walk-forward validation: predict each election using only prior data
-    # Must have at least len(features)+1 observations to fit
-    min_train = len(features) + 1
+    # Extract year from election name for year-by-year back-test
+    df["year_inferred"] = df["election"].str.extract(r"(\d{4})").astype(int)
+    test_years = sorted(df[df["year_inferred"] >= 2016]["year_inferred"].unique())
+
+    # Back-test: for each year from 2016 onwards, fit on all prior years,
+    # predict all elections in the current year. This matches the spreadsheet method.
     errors = []
-    for i in range(min_train, len(df)):
-        train = df.iloc[:i]
-        test  = df.iloc[i]
-        X_tr  = np.column_stack([np.ones(len(train)), train[features].values])
-        y_tr  = train["dem_share"].values
+    for yr in test_years:
+        train_df = df[df["year_inferred"] < yr]
+        test_df  = df[df["year_inferred"] == yr]
+        X_tr = np.column_stack([np.ones(len(train_df)), train_df[features].values])
+        y_tr = train_df["dem_share"].values
         coeffs_i, _, _, _ = np.linalg.lstsq(X_tr, y_tr, rcond=None)
-        x_te  = np.array([1.0] + [float(test[f]) for f in features])
-        pred  = float(x_te @ coeffs_i)
-        errors.append(float(test["dem_share"]) - pred)
+        for _, row in test_df.iterrows():
+            x = np.array([1.0] + [float(row[f]) for f in features])
+            pred = float(x @ coeffs_i)
+            errors.append(float(row["dem_share"]) - pred)
 
     walk_fwd_sd = float(np.std(errors, ddof=1))
 
-    # Full-sample fit for the actual forecast
+    # Full-sample fit for the actual 2026 forecast
     X = df[features].values
     y = df["dem_share"].values
-    coeffs, _, _, _ = np.linalg.lstsq(
-        np.column_stack([np.ones(len(X)), X]), y, rcond=None
-    )
+    X_b = np.column_stack([np.ones(len(X)), X])
+    coeffs, _, _, _ = np.linalg.lstsq(X_b, y, rcond=None)
     coeff_names = ["intercept"] + features
+
     x_row = [float(ctx["presidential"]), float(ctx["inflation"]), float(ctx["approval"])]
     predicted = float(predict_ols(coeffs, x_row))
 
     return {
-        "predicted_state_env": round(predicted, 6),
-        "state_env_sd":        round(walk_fwd_sd, 6),
-        "coefficients":        {n: round(float(c), 8) for n, c in zip(coeff_names, coeffs)},
-        "n_obs":               int(len(df)),
-        "n_walk_fwd_errors":   int(len(errors)),
+        "predicted_state_env":   round(predicted, 6),
+        "state_env_sd":          round(walk_fwd_sd, 6),
+        "coefficients":          {n: round(float(c), 8) for n, c in zip(coeff_names, coeffs)},
+        "n_obs":                 int(len(df)),
+        "n_walk_fwd_errors":     int(len(errors)),
     }
-
     # Back-test residuals for SD (already computed in ols)
     return {
         "predicted_state_env": round(predicted, 6),
