@@ -820,11 +820,22 @@ with tab_mechanics:
         fig_to.patch.set_facecolor("#f7f7f5"); ax_to.set_facecolor("#f7f7f5")
 
         x = np.arange(len(county_names)); w = 0.35
-        hist_means = [df_t2[df_t2.county==cn]["turnout_rate"].mean() for cn in county_names]
-        pred_turns = [fp2["counties"][cn]["turnout"] for cn in county_names]
+        is_gen = fp2["context"]["general"]
+        if is_gen:
+            hist_means = [
+                df_t2[(df_t2.county==cn) & (df_t2.general==1)]["turnout_rate"].mean()
+                for cn in county_names
+            ]
+            hist_label = "Historical mean (generals)"
+        else:
+            hist_means = [
+                df_t2[(df_t2.county==cn) & (df_t2.primary==1)]["turnout_rate"].mean()
+                for cn in county_names
+            ]
+            hist_label = "Historical mean (primaries)"
 
         ax_to.bar(x - w/2, [v*100 for v in hist_means], w,
-                  label="Historical mean", color="#888", alpha=0.6)
+                  label=hist_label, color="#888", alpha=0.6)
         ax_to.bar(x + w/2, [v*100 for v in pred_turns], w,
                   label="Model forecast", color="#1a6b3c", alpha=0.8)
         ax_to.set_xticks(x)
