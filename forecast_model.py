@@ -166,8 +166,19 @@ def forecast_turnout(ctx: dict) -> tuple:
 def forecast_state_environment(ctx: dict) -> dict:
     df = pd.read_csv(DATA_DIR / "state_environment_history.csv")
 
-    X = df[["presidential", "inflation", "approval"]].values
-    y = df["dem_share"].values
+   # Add general dummy and collapse duplicate feature rows to avoid
+    # artificial precision from same-year multi-race observations
+    df["is_general"] = df["election"].str.contains("General").astype(float)
+    df["feature_key"] = df[["presidential","inflation","approval","is_general"]].apply(tuple, axis=1)
+    df_collapsed = df.groupby("feature_key", as_index=False).agg(
+        dem_share=("dem_share","mean"),
+        presidential=("presidential","first"),
+        inflation=("inflation","first"),
+        approval=("approval","first"),
+        is_general=("is_general","first"),
+    )
+    X = df_collapsed[["presidential","inflation","approval","is_general"]].values
+    y = df_collapsed["dem_share"].values
     coeffs, resid_std, residuals = ols(X, y)
     # Use forecast SE instead of residual SD to capture both residual
     # variance and parameter uncertainty (important for small samples)
