@@ -870,7 +870,64 @@ with tab_mechanics:
         plt.tight_layout(); st.pyplot(fig_leans, width="stretch"); plt.close()
     except Exception as e:
         st.caption(f"Could not render lean chart: {e}")
+# Historical lean table
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-label">County Leans by Election</div>', unsafe_allow_html=True)
+    st.caption("Each cell shows county Dem share minus statewide Dem share for that election. "
+               "Avg lean and linear lean are the two forecast methods.")
+    try:
+        df_lv = pd.read_csv(DATA_DIR / "historical_voting.csv")
+        ELECTION_ORDER = [
+            "2022_ss4_pri", "2022_gov_pri", "2022_senate_pri",
+            "2022_gov_gen", "2022_senate_gen",
+            "2024_senate_pri", "2024_pres_gen", "2024_senate_gen",
+        ]
+        pivot = df_lv[df_lv.state_dem_share.notna()].pivot_table(
+            index="county", columns="election", values="county_lean", aggfunc="first"
+        )
+        # Reorder columns to election sequence
+        cols_present = [e for e in ELECTION_ORDER if e in pivot.columns]
+        pivot = pivot[cols_present]
 
+        # Add forecast columns
+        pivot["Avg Lean"] = [
+            fp2["counties"][cn]["lean_avg"] if cn in fp2["counties"] else np.nan
+            for cn in pivot.index
+        ]
+        pivot["Lin Lean"] = [
+            fp2["counties"][cn]["lean_lin"] if cn in fp2["counties"] else np.nan
+            for cn in pivot.index
+        ]
+
+        # Reorder rows to match county_names order
+        pivot = pivot.reindex([cn for cn in county_names if cn in pivot.index])
+
+        # Format as HTML table with colour coding
+        def lean_cell(v):
+            if pd.isna(v): return "<td>—</td>"
+            color = "#1a6b3c" if v >= 0 else "#b91c1c"
+            return f'<td style="color:{color};font-weight:500">{v*100:+.1f}%</td>'
+
+        header = "<th>County</th>" + "".join(
+            f"<th>{c.replace('_',' ')}</th>" for c in pivot.columns
+        )
+        rows_lt = ""
+        for cn, row in pivot.iterrows():
+            is_forecast = lambda c: c in ("Avg Lean", "Lin Lean")
+            cells = "".join(
+                f'<td style="background:#f0f7f3;font-weight:600;color:{"#1a6b3c" if row[c]>=0 else "#b91c1c"}">{row[c]*100:+.1f}%</td>'
+                if is_forecast(c) else lean_cell(row[c])
+                for c in pivot.columns
+            )
+            rows_lt += f"<tr><td>{cn}</td>{cells}</tr>"
+
+        st.markdown(
+            f'<table class="styled-table"><thead><tr>{header}</tr></thead>'
+            f'<tbody>{rows_lt}</tbody></table>',
+            unsafe_allow_html=True
+        )
+    except Exception as e:
+        st.caption(f"Could not render lean table: {e}")
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Polling blend visualisation ───────────────────────────────────────────
