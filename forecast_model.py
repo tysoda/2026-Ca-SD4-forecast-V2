@@ -103,8 +103,24 @@ def forecast_turnout(ctx: dict) -> tuple:
     df = df[df.votes_cast.notna()].copy()
     df = df.sort_values(["county", "year", "month"]).reset_index(drop=True)
 
-    # Previous turnout: last election per county
+        # 2010 general turnout (used as lag for 2012 primaries, county alphabetical order)
+    TURNOUT_2010 = {
+        "Alpine":     0.7722, "Amador":     0.7758, "Calaveras":  0.7000,
+        "El Dorado":  0.7284, "Inyo":       0.7574, "Madera":     0.6383,
+        "Mariposa":   0.7371, "Merced":     0.5094, "Mono":       0.7176,
+        "Nevada":     0.8083, "Placer":     0.7156, "Stanislaus": 0.5346,
+        "Tuolumne":   0.7160,
+    }
+
     df["prev_turnout"] = df.groupby("county")["turnout_rate"].shift(1)
+
+    # Fill NaN prev_turnout for the first row of each county (2012 Jun primary)
+    # using the 2010 general election turnout
+    def fill_2010(row):
+        if pd.isna(row["prev_turnout"]) and row["year"] == 2012:
+            return TURNOUT_2010.get(row["county"], np.nan)
+        return row["prev_turnout"]
+    df["prev_turnout"] = df.apply(fill_2010, axis=1)
     df = df[df.prev_turnout.notna()].copy()
 
     # Set Tuolumne as reference category by putting it first after sorting
