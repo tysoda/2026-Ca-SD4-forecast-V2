@@ -1025,14 +1025,14 @@ with tab_hood:
     st.caption("Edit and hit ▶ Run Simulation to apply. These are normally set automatically by the forecast model.")
     sd_c1,sd_c2,sd_c3,_=st.columns([1,1,1,2])
     with sd_c1:
-        v=st.number_input("District Turnout SD (%)",min_value=0.0,max_value=50.0,step=0.01,value=float(st.session_state["district_turnout_sd_pct"]),format="%.2f",key="in_dst_sd")
-        st.session_state["district_turnout_sd_pct"]=v
+        st.number_input("District Turnout SD (%)", min_value=0.0, max_value=50.0, step=0.01,
+                        format="%.2f", key="district_turnout_sd_pct")
     with sd_c2:
-        v=st.number_input("County Turnout SD (%)",min_value=0.0,max_value=50.0,step=0.01,value=float(st.session_state["county_turnout_sd_pct"]),format="%.2f",key="in_cty_sd")
-        st.session_state["county_turnout_sd_pct"]=v
+        st.number_input("County Turnout SD (%)", min_value=0.0, max_value=50.0, step=0.01,
+                        format="%.2f", key="county_turnout_sd_pct")
     with sd_c3:
-        v=st.number_input("State Env SD (%)",min_value=0.0,max_value=50.0,step=0.01,value=float(st.session_state["state_env_sd_pct"]),format="%.2f",key="in_env_sd")
-        st.session_state["state_env_sd_pct"]=v
+        st.number_input("State Env SD (%)", min_value=0.0, max_value=50.0, step=0.01,
+                        format="%.2f", key="state_env_sd_pct")
     if st.button("↩ Reset SDs to model values",key="rst_sds"):
         fp3=st.session_state.get("forecast_params")
         if fp3:
