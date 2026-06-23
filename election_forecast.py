@@ -627,9 +627,6 @@ with tab_model:
     with c2:
         ctx_inflation = st.number_input("Inflation (CPI YoY %)", value=float(fp["context"]["inflation"]) if fp else 3.8, step=0.1, format="%.1f")
         ctx_approval  = st.number_input("Presidential Approval (0–1)", value=float(fp["context"]["approval"]) if fp else 0.39, step=0.01, format="%.2f", min_value=0.0, max_value=1.0)
-    with c3:
-        ctx_trump_office = st.toggle("Trump in Office", value=True)
-        ctx_trump_ballot = st.toggle("Trump on Ballot", value=False)
     with c4:
         st.markdown("<br>", unsafe_allow_html=True)
         run_model = st.button("🔄 Run Forecast Model", type="primary", width="stretch")
@@ -639,8 +636,7 @@ with tab_model:
         ctx_input = {
             "year": int(ctx_year), "general": bool(ctx_general),
             "presidential": bool(ctx_pres), "inflation": float(ctx_inflation),
-            "approval": float(ctx_approval), "trump_in_office": bool(ctx_trump_office),
-            "trump_on_ballot": bool(ctx_trump_ballot),
+            "approval": float(ctx_approval),
         }
         with st.spinner("Running forecast model…"):
             new_params = run_forecast_model(ctx_input)
