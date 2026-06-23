@@ -846,7 +846,6 @@ with tab_mechanics:
         st.markdown(f'<div class="stat-card"><div class="label">County Turnout SD</div><div class="value">{fmt_pct(sds2["county_turnout_sd"])}</div><div class="sub">Mean per-county residual SD</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-  st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-label">County Forecast Summary</div>', unsafe_allow_html=True)
     st.caption("All figures from the current forecast model run.")
     try:
