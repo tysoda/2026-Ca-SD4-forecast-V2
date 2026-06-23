@@ -812,20 +812,33 @@ with tab_mechanics:
                 st.markdown(f'<div class="stat-card"><div class="label">{n}</div><div class="value" style="font-size:1.1rem">{v:+.4f}</div></div>', unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # County fixed effects chart
-        fe_names = {k:v for k,v in tcoef.items() if k not in ("intercept","presidential","general","prev_turnout")}
-        if fe_names:
-            fig_fe, ax_fe = plt.subplots(figsize=(10,3))
-            fig_fe.patch.set_facecolor("#f7f7f5"); ax_fe.set_facecolor("#f7f7f5")
-            names=list(fe_names.keys()); vals=[fe_names[n] for n in names]
-            colors=["#1a6b3c" if v>=0 else "#b91c1c" for v in vals]
-            ax_fe.bar(names,vals,color=colors,alpha=0.75)
-            ax_fe.axhline(0,color="#ccc",linewidth=0.8)
-            ax_fe.set_xticks(range(len(names))); ax_fe.set_xticklabels(names,rotation=40,ha="right",fontsize=7)
-            ax_fe.set_ylabel("Fixed Effect (vs Alpine)",fontsize=8)
-            ax_fe.set_title("County Fixed Effects — Turnout Model",fontsize=8,fontweight="600")
-            ax_fe.spines[["top","right","left"]].set_visible(False); ax_fe.tick_params(labelsize=7)
-            plt.tight_layout(); st.pyplot(fig_fe,width="stretch"); plt.close()
+       # Predicted turnout chart (more intuitive than raw fixed effects)
+    try:
+        df_t2 = pd.read_csv(DATA_DIR / "historical_turnout.csv")
+        df_t2 = df_t2[df_t2.votes_cast.notna()].copy()
+
+        fig_to, ax_to = plt.subplots(figsize=(11, 4))
+        fig_to.patch.set_facecolor("#f7f7f5"); ax_to.set_facecolor("#f7f7f5")
+
+        x = np.arange(len(county_names)); w = 0.35
+        hist_means = [df_t2[df_t2.county==cn]["turnout_rate"].mean() for cn in county_names]
+        pred_turns = [fp2["counties"][cn]["turnout"] for cn in county_names]
+
+        ax_to.bar(x - w/2, [v*100 for v in hist_means], w,
+                  label="Historical mean", color="#888", alpha=0.6)
+        ax_to.bar(x + w/2, [v*100 for v in pred_turns], w,
+                  label="Model forecast", color="#1a6b3c", alpha=0.8)
+        ax_to.set_xticks(x)
+        ax_to.set_xticklabels(county_names, rotation=40, ha="right", fontsize=7)
+        ax_to.yaxis.set_major_formatter(mtick.PercentFormatter())
+        ax_to.set_ylabel("Turnout (%)", fontsize=8)
+        ax_to.set_title("County Turnout: Historical Mean vs Model Forecast", fontsize=8, fontweight="600")
+        ax_to.legend(fontsize=8, framealpha=0)
+        ax_to.spines[["top","right","left"]].set_visible(False)
+        ax_to.tick_params(labelsize=7)
+        plt.tight_layout(); st.pyplot(fig_to, width="stretch"); plt.close()
+    except Exception as e:
+        st.caption(f"Could not render turnout chart: {e}")
 
     sd_c1, sd_c2 = st.columns(2)
     with sd_c1:
