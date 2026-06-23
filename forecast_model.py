@@ -165,35 +165,41 @@ def forecast_turnout(ctx: dict) -> tuple:
 # ══════════════════════════════════════════════════════════════════════════════
 def forecast_state_environment(ctx: dict) -> dict:
     df = pd.read_csv(DATA_DIR / "state_environment_history.csv")
+    features = ["presidential", "inflation", "approval"]
 
-   # Add general dummy and collapse duplicate feature rows to avoid
-    # artificial precision from same-year multi-race observations
-    df["is_general"] = df["election"].str.contains("General").astype(float)
-    df["feature_key"] = df[["presidential","inflation","approval","is_general"]].apply(tuple, axis=1)
-    df_collapsed = df.groupby("feature_key", as_index=False).agg(
-        dem_share=("dem_share","mean"),
-        presidential=("presidential","first"),
-        inflation=("inflation","first"),
-        approval=("approval","first"),
-        is_general=("is_general","first"),
+    # Walk-forward validation: predict each election using only prior data
+    # Must have at least len(features)+1 observations to fit
+    min_train = len(features) + 1
+    errors = []
+    for i in range(min_train, len(df)):
+        train = df.iloc[:i]
+        test  = df.iloc[i]
+        X_tr  = np.column_stack([np.ones(len(train)), train[features].values])
+        y_tr  = train["dem_share"].values
+        coeffs_i, _, _, _ = np.linalg.lstsq(X_tr, y_tr, rcond=None)
+        x_te  = np.array([1.0] + [float(test[f]) for f in features])
+        pred  = float(x_te @ coeffs_i)
+        errors.append(float(test["dem_share"]) - pred)
+
+    walk_fwd_sd = float(np.std(errors, ddof=1))
+
+    # Full-sample fit for the actual forecast
+    X = df[features].values
+    y = df["dem_share"].values
+    coeffs, _, _, _ = np.linalg.lstsq(
+        np.column_stack([np.ones(len(X)), X]), y, rcond=None
     )
-    X = df_collapsed[["presidential","inflation","approval","is_general"]].values
-    y = df_collapsed["dem_share"].values
-    coeffs, resid_std, residuals = ols(X, y)
-    # Use forecast SE instead of residual SD to capture both residual
-    # variance and parameter uncertainty (important for small samples)
-    X_b = np.column_stack([np.ones(len(X)), X])
-    n, p = X_b.shape
-    mse = float(np.sum(residuals**2) / (n - p))
-    # Forecast variance for the 2026 prediction point
-    x_pred = np.array([1.0, float(ctx["presidential"]), float(ctx["inflation"]), float(ctx["approval"])])
-    XtX_inv = np.linalg.inv(X_b.T @ X_b)
-    forecast_var = mse * (1 + float(x_pred @ XtX_inv @ x_pred))
-    resid_std = float(np.sqrt(forecast_var))
-    coeff_names = ["intercept", "presidential", "inflation", "approval", "is_general"]
-
-    x_row = [float(ctx["presidential"]), float(ctx["inflation"]), float(ctx["approval"]), float(ctx["general"])]
+    coeff_names = ["intercept"] + features
+    x_row = [float(ctx["presidential"]), float(ctx["inflation"]), float(ctx["approval"])]
     predicted = float(predict_ols(coeffs, x_row))
+
+    return {
+        "predicted_state_env": round(predicted, 6),
+        "state_env_sd":        round(walk_fwd_sd, 6),
+        "coefficients":        {n: round(float(c), 8) for n, c in zip(coeff_names, coeffs)},
+        "n_obs":               int(len(df)),
+        "n_walk_fwd_errors":   int(len(errors)),
+    }
 
     # Back-test residuals for SD (already computed in ols)
     return {
@@ -270,27 +276,56 @@ def forecast_county_leans() -> dict:
 def estimate_turnout_sds_from_model(ctx: dict) -> dict:
     df = pd.read_csv(DATA_DIR / "historical_turnout.csv")
     df = df[df.votes_cast.notna()].copy()
-    df = df.sort_values(["county", "year", "month"]).reset_index(drop=True)
-    df["prev_turnout"] = df.groupby(["county", "general"])["turnout_rate"].shift(1)
+    df = df.sort_values(["county","year","month"]).reset_index(drop=True)
+    df["prev_turnout"] = df.groupby(["county","general"])["turnout_rate"].shift(1)
     df = df[df.prev_turnout.notna()].copy()
 
-    county_dummies = pd.get_dummies(df["county"], drop_first=True, dtype=float)
-    X = pd.concat([df[["presidential", "general", "prev_turnout"]], county_dummies], axis=1).values
-    y = df["turnout_rate"].values
-    coeffs, _, residuals = ols(X, y)
+    # Only use 2022 onwards for walk-forward (matching your approach)
+    df_wf = df[df.year >= 2022].copy()
 
-    # District SD = overall residual SD (how much elections deviate from model)
-    district_sd = float(np.std(residuals, ddof=X.shape[1]))
+    county_order = ["Tuolumne"] + [c for c in sorted(df["county"].unique()) if c != "Tuolumne"]
+    features = ["presidential","general","prev_turnout"]
 
-    # County SD = mean of per-county residual SD
-    df["resid"] = residuals
-    county_sd = float(df.groupby("county")["resid"].std(ddof=1).mean())
+    # Walk-forward: for each post-2022 election, train on all prior data
+    all_errors = []
+    county_errors = {cn: [] for cn in df["county"].unique()}
+
+    for idx in df_wf.index:
+        row = df_wf.loc[idx]
+        train = df[df.index < idx]
+        if len(train) < 5:
+            continue
+        train_cat = train.copy()
+        train_cat["county_cat"] = pd.Categorical(train_cat["county"], categories=county_order)
+        dummies = pd.get_dummies(train_cat["county_cat"], drop_first=True, dtype=float)
+        X_tr = pd.concat([train_cat[features], dummies], axis=1).values
+        X_tr = np.column_stack([np.ones(len(X_tr)), X_tr])
+        y_tr = train["turnout_rate"].values
+        coeffs_i, _, _, _ = np.linalg.lstsq(X_tr, y_tr, rcond=None)
+
+        # Build test feature vector
+        cn = row["county"]
+        fe_vec = {c: 0.0 for c in dummies.columns}
+        if cn in fe_vec:
+            fe_vec[cn] = 1.0
+        x_te = np.array([1.0, float(row["presidential"]), float(row["general"]),
+                         float(row["prev_turnout"])] + [fe_vec[c] for c in dummies.columns])
+        if len(x_te) != len(coeffs_i):
+            continue
+        pred  = float(x_te @ coeffs_i)
+        err   = float(row["turnout_rate"]) - pred
+        all_errors.append(err)
+        county_errors[cn].append(err)
+
+    district_sd = float(np.std(all_errors, ddof=1)) if len(all_errors) > 1 else 0.082
+    county_sd_vals = [np.std(v, ddof=1) for v in county_errors.values() if len(v) > 1]
+    county_sd = float(np.mean(county_sd_vals)) if county_sd_vals else 0.077
 
     return {
         "district_turnout_sd": round(district_sd, 6),
         "county_turnout_sd":   round(county_sd,   6),
+        "n_walk_fwd_errors":   int(len(all_errors)),
     }
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN
