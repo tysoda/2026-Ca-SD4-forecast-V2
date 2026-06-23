@@ -20,12 +20,10 @@ DATA_DIR = Path(__file__).parent
 # 2026 election context — update these as new information arrives
 ELECTION_CONTEXT = {
     "year":                2026,
-    "general":             False,   # False=primary, True=general
+    "general":             True,   # False=primary, True=general
     "presidential":        False,   # midterm cycle
     "inflation":           3.8,     # CPI YoY % at time of election
     "approval":            0.39,    # Presidential net approval (0–1 scale)
-    "trump_in_office":     True,
-    "trump_on_ballot":     False,
 }
 
 COUNTIES = [
