@@ -77,20 +77,25 @@ def compute_poll_weights(
     """
     weights = []
     for _, row in polls.iterrows():
-        mae = predict_mae(
+       mae = predict_mae(
             coeffs,
             int(row.get("rv", 0)),
             int(row.get("lv", 0)),
             float(row.get("days_out", 120)),
         )
-        # Sampling variance from MoE (converted from 95% CI half-width to SD)
-        moe = row.get("moe", None)
-        if moe is not None and not pd.isna(moe) and float(moe) > 0:
-            sampling_sd = float(moe) / 2
+        # Sampling variance from MoE or theoretical sample size
+        moe_val = row.get("moe", None)
+        try:
+            moe_float = float(moe_val)
+            has_moe = not pd.isna(moe_float) and moe_float > 0
+        except (TypeError, ValueError):
+            has_moe = False
+
+        if has_moe:
+            sampling_sd = moe_float / 2
         else:
-            # Fall back to theoretical MoE from sample size if not provided
             n = max(int(row.get("sample_size", 600)), 1)
-            p = float(row.get("dem", 0.5))
+            p = float(row.get("dem", 0.5)) if pd.notna(row.get("dem")) else 0.5
             sampling_sd = ((p * (1 - p)) / n) ** 0.5
 
         total_var = mae ** 2 + sampling_sd ** 2
@@ -152,17 +157,18 @@ def blend_with_polls(
             float(row.get("days_out", 120)),
         )
         details.append({
-            "source":    str(row.get("source", "")),
-            "dem":       float(row["dem"]),
-            "days_out":  float(row.get("days_out", 120)),
-            "rv":        int(row.get("rv", 0)),
-            "lv":        int(row.get("lv", 0)),
-            "partisan":  is_partisan(str(row.get("source", ""))),
-            "pred_mae":  round(mae, 4),
+            "source":      str(row.get("source", "")),
+            "dem":         float(row["dem"]),
+            "days_out":    float(row.get("days_out", 120)),
+            "rv":          int(row.get("rv", 0)),
+            "lv":          int(row.get("lv", 0)),
+            "moe":         float(row.get("moe", 0)) if pd.notna(row.get("moe")) else None,
+            "partisan":    is_partisan(str(row.get("source", ""))),
+            "pred_mae":    round(mae, 4),
             "sampling_sd": round(sampling_sd, 4),
-            "total_sd":  round(total_var ** 0.5, 4),
-            "weight":    round(float(w), 4),
-            "rel_weight": 0.0,  # filled below
+            "total_sd":    round((mae**2 + sampling_sd**2)**0.5, 4),
+            "weight":      round(float(w), 4),
+            "rel_weight":  0.0,
         })
 
     total_w = sum(d["weight"] for d in details)
