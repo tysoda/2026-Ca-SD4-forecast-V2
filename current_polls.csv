@@ -1,4 +1,4 @@
 source,end_date,election_date,days_out,cycle,race,election,sample_size,type,rv,lv,dem,rep,MOE
 Kreate Strategies,2026-06-17,2026-11-03,139.0,2026.0,Governor,General,900.0,RV,1,0,0.58,0.33,0.033
 Berkeley IGS,2026-06-11,2026-11-03,145.0,2026.0,Governor,General,8578.0,RV,1,0,0.52,0.31,0.02
-Center for Excellence in Polling,2026-05-26,2026-11-03,161.0,2026.0,Governor,General,735.0,LV,0,1,0.58,0.35,0
+Center for Excellence in Polling,2026-05-26,2026-11-03,161.0,2026.0,Governor,General,735.0,LV,0,1,0.58,0.35,
