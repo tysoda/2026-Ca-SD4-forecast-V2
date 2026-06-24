@@ -256,11 +256,11 @@ def load_polling_blend() -> tuple:
     except Exception as e:
         return None, None, [], None
       
-# Compute blended state environment
+# Compute blended state environment using polling model
 model_env_val = st.session_state["model_forecast_env"] / 100
-blended_env, blended_sd = blend_environment(
-    model_env_val, STATE_ENV_SD, st.session_state["poll_entries"]
-)
+_blended_env, _blended_sd, _poll_details, _mae_coeffs = load_polling_blend()
+blended_env = _blended_env if _blended_env is not None else model_env_val
+blended_sd  = _blended_sd  if _blended_sd  is not None else STATE_ENV_SD
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
