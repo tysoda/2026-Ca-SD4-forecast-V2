@@ -146,25 +146,30 @@ def blend_with_polls(
     blended_sd   = float((1.0 / total_prec) ** 0.5)
 
     # Per-poll diagnostics
-    details = []
-    for (_, row), w in zip(polls.iterrows(), weights):
-        mae = predict_mae(
-            coeffs,
-            int(row.get("rv", 0)),
-            int(row.get("lv", 0)),
-            float(row.get("days_out", 120)),
-        )
+    moe_val = row.get("moe", None)
+        diag_sampling_sd = None
+        try:
+            moe_float = float(moe_val)
+            if not pd.isna(moe_float) and moe_float > 0:
+                diag_sampling_sd = moe_float / 2
+        except (TypeError, ValueError):
+            pass
+        if diag_sampling_sd is None:
+            n = max(int(row.get("sample_size", 600)), 1)
+            p = float(row.get("dem", 0.5)) if pd.notna(row.get("dem")) else 0.5
+            diag_sampling_sd = ((p * (1 - p)) / n) ** 0.5
+
         details.append({
             "source":      str(row.get("source", "")),
             "dem":         float(row["dem"]),
             "days_out":    float(row.get("days_out", 120)),
             "rv":          int(row.get("rv", 0)),
             "lv":          int(row.get("lv", 0)),
-            "moe":         float(row.get("moe", 0)) if pd.notna(row.get("moe")) else None,
+            "moe":         float(moe_val) if moe_val is not None and pd.notna(moe_val) else None,
             "partisan":    is_partisan(str(row.get("source", ""))),
             "pred_mae":    round(mae, 4),
-            "sampling_sd": round(sampling_sd, 4),
-            "total_sd":    round((mae**2 + sampling_sd**2)**0.5, 4),
+            "sampling_sd": round(diag_sampling_sd, 4),
+            "total_sd":    round((mae**2 + diag_sampling_sd**2)**0.5, 4),
             "weight":      round(float(w), 4),
             "rel_weight":  0.0,
         })
