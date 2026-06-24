@@ -254,6 +254,7 @@ def load_polling_blend() -> tuple:
         )
         return blended_env, blended_sd, details, coeffs
     except Exception as e:
+        st.sidebar.error(f"Poll blend error: {e}")  # temporary debug
         return None, None, [], None
       
 # Compute blended state environment using polling model
