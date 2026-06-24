@@ -254,8 +254,6 @@ def load_polling_blend() -> tuple:
         )
         return blended_env, blended_sd, details, coeffs
     except Exception as e:
-        import traceback
-        st.error(f"Poll blend error: {traceback.format_exc()}")
         return None, None, [], None
       
 # Compute blended state environment using polling model
@@ -664,7 +662,7 @@ with tab_model:
     st.markdown(
         "Polls are loaded from **current_polls.csv** in the same folder as the app. "
         "Add rows to that file (source, end_date, election_date, days_out, cycle, race, "
-        "election, sample_size, type, rv, lv, dem, rep, MoE) and click **Reload Polls** below. "
+        "election, sample_size, type, rv, lv, dem, rep) and click **Reload Polls** below. "
         "Weights are computed automatically using the MAE regression from historical polling accuracy."
     )
 
@@ -680,14 +678,13 @@ with tab_model:
                                    file_name="current_polls.csv", mime="text/csv")
 
     with st.expander("➕ Add a new poll"):
-        ac1, ac2, ac3, ac4, ac5, ac6, ac7 = st.columns([2, 1, 1, 1, 1, 1, 1])
+        ac1, ac2, ac3, ac4, ac5, ac6 = st.columns([2, 1, 1, 1, 1, 1])
         with ac1: new_source   = st.text_input("Source", placeholder="e.g. PPIC, Emerson")
         with ac2: new_dem      = st.number_input("Dem share (%)", value=59.0, step=0.1, format="%.1f")
         with ac3: new_n        = st.number_input("Sample size", value=600, step=50, min_value=1)
         with ac4: new_type     = st.selectbox("Type", ["RV", "LV", "Other"])
         with ac5: new_end_date = st.date_input("Poll end date", value=pd.Timestamp.today())
         with ac6: new_race     = st.selectbox("Race", ["Governor", "President", "US Senate", "Other"])
-        with ac7: new_moe = st.number_input("MoE (%, optional)", value=0.0, step=0.1, format="%.1f", min_value=0.0)
 
         if st.button("Add poll to CSV"):
             election_date = pd.Timestamp("2026-11-03")
@@ -717,7 +714,6 @@ with tab_model:
                 "rv":             rv,
                 "lv":             lv,
                 "dem":            round(new_dem / 100, 4),
-                "moe":            round(new_moe / 100, 4) if new_moe > 0 else None,
                 "rep":            None,
                 "predicted_mae":  pred_mae,
             }
@@ -754,7 +750,6 @@ with tab_model:
                 f"<tr>"
                 f"<td>{d['source'][:40]}{partisan_badge}</td>"
                 f"<td>{fmt_pct(d['dem'])}</td>"
-                f"<td>{fmt_pct(d['moe'])}</td>"
                 f"<td>{poll_type}</td>"
                 f"<td>{d['days_out']:.0f}</td>"
                 f"<td>{fmt_pct(d['pred_mae'])}</td>"
@@ -763,7 +758,7 @@ with tab_model:
             )
         st.markdown(
             f'<table class="styled-table"><thead><tr>'
-            f'<th>Poll</th><th>Dem Share</th><th>MoE</th><th>Type</th>'
+            f'<th>Poll</th><th>Dem Share</th><th>Type</th>'
             f'<th>Days Out</th><th>Pred MAE</th><th>Rel Weight</th>'
             f'</tr></thead><tbody>{prows}</tbody></table>',
             unsafe_allow_html=True
