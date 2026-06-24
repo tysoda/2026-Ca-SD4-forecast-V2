@@ -685,6 +685,7 @@ with tab_model:
         with ac4: new_type     = st.selectbox("Type", ["RV", "LV", "Other"])
         with ac5: new_end_date = st.date_input("Poll end date", value=pd.Timestamp.today())
         with ac6: new_race     = st.selectbox("Race", ["Governor", "President", "US Senate", "Other"])
+        with ac7: new_moe = st.number_input("MoE (%, optional)", value=0.0, step=0.1, format="%.1f", min_value=0.0)
 
         if st.button("Add poll to CSV"):
             election_date = pd.Timestamp("2026-11-03")
@@ -714,6 +715,7 @@ with tab_model:
                 "rv":             rv,
                 "lv":             lv,
                 "dem":            round(new_dem / 100, 4),
+                "moe":            round(new_moe / 100, 4) if new_moe > 0 else None,
                 "rep":            None,
                 "predicted_mae":  pred_mae,
             }
