@@ -657,60 +657,69 @@ with tab_model:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Polling inputs ────────────────────────────────────────────────────────
+   # ── Polling inputs ────────────────────────────────────────────────────────
     st.markdown('<div class="section-label">Polling — State Environment</div>', unsafe_allow_html=True)
     st.markdown(
-        "Add statewide CA polls (governor or senate) to blend with the structural model. "
-        "The blend uses inverse-variance weighting: larger samples and higher weights pull "
-        "the forecast further from the structural prior."
+        "Polls are loaded from **current_polls.csv** in the same folder as the app. "
+        "Add rows to that file (source, end_date, election_date, days_out, cycle, race, "
+        "election, sample_size, type, rv, lv, dem, rep) and click **Reload Polls** below. "
+        "Weights are computed automatically using the MAE regression from historical polling accuracy."
     )
 
-    polls = st.session_state.get("poll_entries", [])
+    col_reload, col_csv, _ = st.columns([1, 1, 3])
+    with col_reload:
+        if st.button("🔄 Reload Polls"):
+            st.rerun()
+    with col_csv:
+        curr_path2 = DATA_DIR / "current_polls.csv"
+        if curr_path2.exists():
+            with open(curr_path2) as f2:
+                st.download_button("⬇ Download current_polls.csv", f2.read(),
+                                   file_name="current_polls.csv", mime="text/csv")
 
-    with st.expander("➕ Add a poll", expanded=len(polls)==0):
-        pc1,pc2,pc3,pc4,pc5 = st.columns([2,1,1,1,1])
-        with pc1: poll_name  = st.text_input("Poll / source", placeholder="e.g. Emerson, PPIC")
-        with pc2: poll_dem   = st.number_input("Dem share (%)", value=59.0, step=0.1, format="%.1f") / 100
-        with pc3: poll_n     = st.number_input("Sample size", value=600, step=50)
-        with pc4: poll_w     = st.number_input("Weight (1=full)", value=1.0, step=0.1, min_value=0.1, max_value=2.0, format="%.1f")
-        with pc5:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("Add poll"):
-                polls.append({"name": poll_name or f"Poll {len(polls)+1}", "dem_share": poll_dem, "n": int(poll_n), "weight": poll_w})
-                st.session_state["poll_entries"] = polls
-                st.rerun()
-
-    if polls:
-        blended_env2, blended_sd2 = blend_environment(model_env_val, STATE_ENV_SD, polls)
-        poll_mean = sum(p["dem_share"]*p["weight"] for p in polls)/sum(p["weight"] for p in polls)
-
+    details = _poll_details
+    if details:
+        poll_mean = sum(d["dem"] for d in details) / len(details)
         st.markdown(f"""
         <div class="poll-blend">
-          <b>Blended state environment: {blended_env2:.2%}</b> (SD={blended_sd2:.2%})<br>
+          <b>Blended state environment: {blended_env:.2%}</b> (SD={blended_sd:.2%})<br>
           <span style="font-size:0.82rem;color:#555">
-            Structural model: {model_env_val:.2%} · Poll average: {poll_mean:.2%} · Polls: {len(polls)}
+            Structural model: {model_env_val:.2%} · Simple poll average: {poll_mean:.2%}
+             · {len(details)} poll{"s" if len(details)!=1 else ""} loaded
           </span>
         </div>
         """, unsafe_allow_html=True)
 
-        poll_rows=""
-        for i,p in enumerate(polls):
-            poll_rows += (f"<tr><td>{p['name']}</td><td>{fmt_pct(p['dem_share'])}</td>"
-                          f"<td>{p['n']:,}</td><td>{p['weight']:.1f}</td>"
-                          f"<td><form><button name='del_{i}' value='1' style='background:none;border:none;cursor:pointer;color:#b91c1c;font-size:0.8rem'>✕</button></form></td></tr>")
-        st.markdown(f'<table class="styled-table"><thead><tr><th>Poll</th><th>Dem Share</th><th>N</th><th>Weight</th><th></th></tr></thead><tbody>{poll_rows}</tbody></table>', unsafe_allow_html=True)
-
-        col_clear, _ = st.columns([1,3])
-        with col_clear:
-            if st.button("🗑 Clear all polls"):
-                st.session_state["poll_entries"] = []; st.rerun()
-
-        # Individual poll removal
-        for i in range(len(polls)):
-            if st.session_state.get(f"del_{i}"):
-                polls.pop(i); st.session_state["poll_entries"]=polls; st.rerun()
+        prows = ""
+        for d in details:
+            poll_type = "LV" if d["lv"] else ("RV" if d["rv"] else "—")
+            partisan_badge = ' <span style="color:#d97706;font-size:0.7rem">[partisan]</span>' if d["partisan"] else ""
+            prows += (
+                f"<tr>"
+                f"<td>{d['source'][:40]}{partisan_badge}</td>"
+                f"<td>{fmt_pct(d['dem'])}</td>"
+                f"<td>{poll_type}</td>"
+                f"<td>{d['days_out']:.0f}</td>"
+                f"<td>{fmt_pct(d['pred_mae'])}</td>"
+                f"<td>{d['rel_weight']:.3f}</td>"
+                f"</tr>"
+            )
+        st.markdown(
+            f'<table class="styled-table"><thead><tr>'
+            f'<th>Poll</th><th>Dem Share</th><th>Type</th>'
+            f'<th>Days Out</th><th>Pred MAE</th><th>Rel Weight</th>'
+            f'</tr></thead><tbody>{prows}</tbody></table>',
+            unsafe_allow_html=True
+        )
+        st.caption(
+            "Rel Weight = each poll's share of total poll precision. "
+            "Partisan polls (marked D/R) receive a 50% weight discount."
+        )
     else:
-        st.caption("No polls added yet. The simulation uses the structural model only.")
+        st.info(
+            "No polls loaded. Add rows to current_polls.csv and click Reload Polls. "
+            "The simulation currently uses the structural model only."
+        )
 
     # ── Data files status ─────────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
