@@ -782,7 +782,7 @@ with tab_model:
                     ],
                     key="poll_delete_editor"
                 )
-              if st.button(
+            if st.button(
                   "Delete Checked Polls",
                   key="delete_checked_polls"
                 ):
