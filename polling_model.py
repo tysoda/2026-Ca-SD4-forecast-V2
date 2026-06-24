@@ -84,7 +84,7 @@ def compute_poll_weights(
             float(row.get("days_out", 120)),
         )
         # Sampling variance from MoE or theoretical sample size
-            moe_val = row.get("moe", None)
+    moe_val = row.get("moe", None)
         try:
             moe_float = float(moe_val)
             has_moe = not pd.isna(moe_float) and moe_float > 0
