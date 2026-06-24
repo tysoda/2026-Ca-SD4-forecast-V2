@@ -678,7 +678,7 @@ with tab_model:
                                    file_name="current_polls.csv", mime="text/csv")
 
     with st.expander("➕ Add a new poll"):
-        ac1, ac2, ac3, ac4, ac5, ac6 = st.columns([2, 1, 1, 1, 1, 1])
+        ac1, ac2, ac3, ac4, ac5, ac6, ac7 = st.columns([2, 1, 1, 1, 1, 1, 1])
         with ac1: new_source   = st.text_input("Source", placeholder="e.g. PPIC, Emerson")
         with ac2: new_dem      = st.number_input("Dem share (%)", value=59.0, step=0.1, format="%.1f")
         with ac3: new_n        = st.number_input("Sample size", value=600, step=50, min_value=1)
