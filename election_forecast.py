@@ -662,7 +662,7 @@ with tab_model:
     st.markdown(
         "Polls are loaded from **current_polls.csv** in the same folder as the app. "
         "Add rows to that file (source, end_date, election_date, days_out, cycle, race, "
-        "election, sample_size, type, rv, lv, dem, rep) and click **Reload Polls** below. "
+        "election, sample_size, type, rv, lv, dem, rep, MoE) and click **Reload Polls** below. "
         "Weights are computed automatically using the MAE regression from historical polling accuracy."
     )
 
