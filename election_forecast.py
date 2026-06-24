@@ -1002,22 +1002,24 @@ with tab_mechanics:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Polling blend visualisation ───────────────────────────────────────────
-    polls3 = st.session_state.get("poll_entries", [])
-    if polls3:
+    if _poll_details:
         st.markdown('<div class="section-label">Polling Blend Illustration</div>', unsafe_allow_html=True)
-        b_env, b_sd = blend_environment(model_env_val, STATE_ENV_SD, polls3)
-        x_range = np.linspace(0.40, 0.75, 400)
         from scipy.stats import norm as _norm
-        model_pdf  = _norm.pdf(x_range, model_env_val, STATE_ENV_SD)
-        blend_pdf  = _norm.pdf(x_range, b_env, b_sd)
-        fig_pb, ax_pb = plt.subplots(figsize=(9,3))
+        x_range   = np.linspace(0.40, 0.75, 400)
+        model_pdf = _norm.pdf(x_range, model_env_val, STATE_ENV_SD)
+        blend_pdf = _norm.pdf(x_range, blended_env, blended_sd)
+        poll_avg  = sum(d["dem"] for d in _poll_details) / len(_poll_details)
+        fig_pb, ax_pb = plt.subplots(figsize=(9, 3))
         fig_pb.patch.set_facecolor("#f7f7f5"); ax_pb.set_facecolor("#f7f7f5")
-        ax_pb.plot(x_range*100, model_pdf,  color="#888", linewidth=1.5, linestyle="--", label=f"Structural model ({model_env_val:.1%})")
-        ax_pb.plot(x_range*100, blend_pdf,  color="#1a6b3c", linewidth=2.0, label=f"Blended ({b_env:.1%}, SD={b_sd:.2%})")
-        poll_avg = sum(p["dem_share"]*p["weight"] for p in polls3)/sum(p["weight"] for p in polls3)
-        ax_pb.axvline(poll_avg*100, color="#d97706", linewidth=1.5, linestyle=":", label=f"Poll avg ({poll_avg:.1%})")
+        ax_pb.plot(x_range*100, model_pdf, color="#888", linewidth=1.5, linestyle="--",
+                   label=f"Structural model ({model_env_val:.1%}, SD={STATE_ENV_SD:.2%})")
+        ax_pb.plot(x_range*100, blend_pdf, color="#1a6b3c", linewidth=2.0,
+                   label=f"Blended ({blended_env:.1%}, SD={blended_sd:.2%})")
+        ax_pb.axvline(poll_avg*100, color="#d97706", linewidth=1.5, linestyle=":",
+                      label=f"Simple poll avg ({poll_avg:.1%})")
         ax_pb.set_xlabel("State Dem Share (%)", fontsize=8); ax_pb.set_ylabel("Density", fontsize=8)
-        ax_pb.xaxis.set_major_formatter(mtick.PercentFormatter()); ax_pb.legend(fontsize=7, framealpha=0)
+        ax_pb.xaxis.set_major_formatter(mtick.PercentFormatter())
+        ax_pb.legend(fontsize=7, framealpha=0)
         ax_pb.spines[["top","right","left"]].set_visible(False); ax_pb.tick_params(labelsize=7)
         ax_pb.set_title("State Environment: Structural Prior vs Polling Blend", fontsize=8, fontweight="600")
         plt.tight_layout(); st.pyplot(fig_pb, width="stretch"); plt.close()
