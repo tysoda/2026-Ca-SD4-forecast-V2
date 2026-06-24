@@ -752,7 +752,7 @@ with tab_model:
                 f"<tr>"
                 f"<td>{d['source'][:40]}{partisan_badge}</td>"
                 f"<td>{fmt_pct(d['dem'])}</td>"
-                f"<td>{fmt_pct(d['MOE'])}</td>"
+                f"<td>{fmt_pct(d['moe'])}</td>"
                 f"<td>{poll_type}</td>"
                 f"<td>{d['days_out']:.0f}</td>"
                 f"<td>{fmt_pct(d['pred_mae'])}</td>"
