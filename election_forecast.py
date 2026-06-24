@@ -254,8 +254,9 @@ def load_polling_blend() -> tuple:
         )
         return blended_env, blended_sd, details, coeffs
     except Exception as e:
-            print(f"MoE error for {row.get('source')}: {type(e).__name__}: {e}")
-            pass
+        import traceback
+        st.error(f"Poll blend error: {traceback.format_exc()}")
+        return None, None, [], None
       
 # Compute blended state environment using polling model
 model_env_val = st.session_state["model_forecast_env"] / 100
