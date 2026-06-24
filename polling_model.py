@@ -72,19 +72,18 @@ def compute_poll_weights(
     """
     Compute inverse-variance weights for each poll.
     weight = 1/MAE² × partisan_discount (if partisan)
-
     Returns a Series of weights aligned with polls index.
     """
     weights = []
     for _, row in polls.iterrows():
-       mae = predict_mae(
+        mae = predict_mae(
             coeffs,
             int(row.get("rv", 0)),
             int(row.get("lv", 0)),
             float(row.get("days_out", 120)),
         )
         # Sampling variance from MoE or theoretical sample size
-    moe_val = row.get("moe", None)
+        moe_val = row.get("moe", None)
         try:
             moe_float = float(moe_val)
             has_moe = not pd.isna(moe_float) and moe_float > 0
