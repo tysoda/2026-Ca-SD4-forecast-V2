@@ -83,7 +83,18 @@ def compute_poll_weights(
             int(row.get("lv", 0)),
             float(row.get("days_out", 120)),
         )
-        w = 1.0 / (mae ** 2)
+        # Sampling variance from MoE (converted from 95% CI half-width to SD)
+        moe = row.get("moe", None)
+        if moe is not None and not pd.isna(moe) and float(moe) > 0:
+            sampling_sd = float(moe) / 2
+        else:
+            # Fall back to theoretical MoE from sample size if not provided
+            n = max(int(row.get("sample_size", 600)), 1)
+            p = float(row.get("dem", 0.5))
+            sampling_sd = ((p * (1 - p)) / n) ** 0.5
+
+        total_var = mae ** 2 + sampling_sd ** 2
+        w = 1.0 / total_var
         if is_partisan(str(row.get("source", ""))):
             w *= partisan_discount
         weights.append(max(w, MIN_WEIGHT))
@@ -148,6 +159,8 @@ def blend_with_polls(
             "lv":        int(row.get("lv", 0)),
             "partisan":  is_partisan(str(row.get("source", ""))),
             "pred_mae":  round(mae, 4),
+            "sampling_sd": round(sampling_sd, 4),
+            "total_sd":  round(total_var ** 0.5, 4),
             "weight":    round(float(w), 4),
             "rel_weight": 0.0,  # filled below
         })
