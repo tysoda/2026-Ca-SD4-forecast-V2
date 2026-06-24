@@ -767,6 +767,41 @@ with tab_model:
             "Rel Weight = each poll's share of total poll precision. "
             "Partisan polls (marked D/R) receive a 50% weight discount."
         )
+            with st.expander("🗑 Manage Polls"):
+
+        curr_path = DATA_DIR / "current_polls.csv"
+
+        if curr_path.exists():
+
+            df_manage = pd.read_csv(curr_path)
+
+            # Add checkbox column
+            df_manage["Delete"] = False
+
+            edited_df = st.data_editor(
+                df_manage,
+                hide_index=True,
+                use_container_width=True,
+                key="poll_delete_editor"
+            )
+
+            if st.button(
+                "Delete Checked Polls",
+                key="delete_checked_polls"
+            ):
+
+                remaining = edited_df[
+                    edited_df["Delete"] == False
+                ].drop(columns=["Delete"])
+
+                remaining.to_csv(
+                    curr_path,
+                    index=False
+                )
+
+                st.success("Selected poll(s) deleted")
+
+                st.rerun()
     else:
         st.info(
             "No polls loaded. Add rows to current_polls.csv and click Reload Polls. "
