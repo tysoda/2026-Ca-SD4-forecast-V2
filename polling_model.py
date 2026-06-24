@@ -84,19 +84,18 @@ def compute_poll_weights(
         )
         # Sampling variance from MoE or theoretical sample size
         moe_val = row.get("moe", None)
+        sampling_sd = None
         try:
             moe_float = float(moe_val)
-            has_moe = not pd.isna(moe_float) and moe_float > 0
+            if not pd.isna(moe_float) and moe_float > 0:
+                sampling_sd = moe_float / 2
         except (TypeError, ValueError):
-            has_moe = False
+            pass
 
-        if has_moe:
-            sampling_sd = moe_float / 2
-        else:
+        if sampling_sd is None:
             n = max(int(row.get("sample_size", 600)), 1)
             p = float(row.get("dem", 0.5)) if pd.notna(row.get("dem")) else 0.5
             sampling_sd = ((p * (1 - p)) / n) ** 0.5
-
         total_var = mae ** 2 + sampling_sd ** 2
         w = 1.0 / total_var
         if is_partisan(str(row.get("source", ""))):
