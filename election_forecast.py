@@ -752,6 +752,7 @@ with tab_model:
                 f"<tr>"
                 f"<td>{d['source'][:40]}{partisan_badge}</td>"
                 f"<td>{fmt_pct(d['dem'])}</td>"
+                f"<td>{fmt_pct(d['MOE'])}</td>"
                 f"<td>{poll_type}</td>"
                 f"<td>{d['days_out']:.0f}</td>"
                 f"<td>{fmt_pct(d['pred_mae'])}</td>"
@@ -760,7 +761,7 @@ with tab_model:
             )
         st.markdown(
             f'<table class="styled-table"><thead><tr>'
-            f'<th>Poll</th><th>Dem Share</th><th>Type</th>'
+            f'<th>Poll</th><th>Dem Share</th><th>MoE</th><th>Type</th>'
             f'<th>Days Out</th><th>Pred MAE</th><th>Rel Weight</th>'
             f'</tr></thead><tbody>{prows}</tbody></table>',
             unsafe_allow_html=True
