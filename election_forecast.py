@@ -769,7 +769,7 @@ with tab_model:
         )
         with st.expander("🗑 Manage Polls"):
             curr_path = DATA_DIR / "current_polls.csv"
-              if curr_path.exists():
+            if curr_path.exists():
                 df_manage = pd.read_csv(curr_path)
                 df_manage["Delete"] = False
                 edited_df = st.data_editor(
@@ -793,8 +793,8 @@ with tab_model:
                         curr_path,
                         index=False
                     )
-                    st.success("Selected poll(s) deleted")
-                    st.rerun()
+                  st.success("Selected poll(s) deleted")
+                  st.rerun()
     else:
         st.info(
             "No polls loaded. Add rows to current_polls.csv and click Reload Polls. "
