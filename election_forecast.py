@@ -677,6 +677,58 @@ with tab_model:
                 st.download_button("⬇ Download current_polls.csv", f2.read(),
                                    file_name="current_polls.csv", mime="text/csv")
 
+  with st.expander("➕ Add a new poll"):
+        ac1, ac2, ac3, ac4, ac5, ac6 = st.columns([2, 1, 1, 1, 1, 1])
+        with ac1: new_source   = st.text_input("Source", placeholder="e.g. PPIC, Emerson")
+        with ac2: new_dem      = st.number_input("Dem share (%)", value=59.0, step=0.1, format="%.1f")
+        with ac3: new_n        = st.number_input("Sample size", value=600, step=50, min_value=1)
+        with ac4: new_type     = st.selectbox("Type", ["RV", "LV", "Other"])
+        with ac5: new_end_date = st.date_input("Poll end date", value=pd.Timestamp.today())
+        with ac6: new_race     = st.selectbox("Race", ["Governor", "President", "US Senate", "Other"])
+
+        if st.button("Add poll to CSV"):
+            election_date = pd.Timestamp("2026-11-03")
+            days_out = (election_date - pd.Timestamp(new_end_date)).days
+            rv = 1 if new_type == "RV" else 0
+            lv = 1 if new_type == "LV" else 0
+
+            # Compute predicted MAE using the fitted regression
+            pred_mae = None
+            if _mae_coeffs is not None:
+                try:
+                    import polling_model as pm
+                    pred_mae = round(pm.predict_mae(_mae_coeffs, rv, lv, days_out), 4)
+                except Exception:
+                    pass
+
+            new_row = {
+                "source":         new_source,
+                "end_date":       str(new_end_date),
+                "election_date":  "2026-11-03",
+                "days_out":       days_out,
+                "cycle":          2026,
+                "race":           new_race,
+                "election":       "General",
+                "sample_size":    int(new_n),
+                "type":           new_type,
+                "rv":             rv,
+                "lv":             lv,
+                "dem":            round(new_dem / 100, 4),
+                "rep":            None,
+                "predicted_mae":  pred_mae,
+            }
+
+            curr_path3 = DATA_DIR / "current_polls.csv"
+            if curr_path3.exists():
+                df_curr2 = pd.read_csv(curr_path3)
+                df_curr2 = pd.concat([df_curr2, pd.DataFrame([new_row])], ignore_index=True)
+            else:
+                df_curr2 = pd.DataFrame([new_row])
+
+            df_curr2.to_csv(curr_path3, index=False)
+            st.success(f"Added: {new_source} ({new_dem:.1f}% Dem, {days_out} days out, predicted MAE={pred_mae or 'N/A'})")
+            st.rerun()
+
     details = _poll_details
     if details:
         poll_mean = sum(d["dem"] for d in details) / len(details)
