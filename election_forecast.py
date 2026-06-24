@@ -769,39 +769,42 @@ with tab_model:
         )
         with st.expander("🗑 Manage Polls"):
 
-        curr_path = DATA_DIR / "current_polls.csv"
+    curr_path = DATA_DIR / "current_polls.csv"
 
-        if curr_path.exists():
+    if curr_path.exists():
 
-            df_manage = pd.read_csv(curr_path)
+        df_manage = pd.read_csv(curr_path)
 
-            # Add checkbox column
-            df_manage["Delete"] = False
+        df_manage["Delete"] = False
 
-            edited_df = st.data_editor(
-                df_manage,
-                hide_index=True,
-                use_container_width=True,
-                key="poll_delete_editor"
+        edited_df = st.data_editor(
+            df_manage,
+            hide_index=True,
+            use_container_width=True,
+            disabled=[
+                c for c in df_manage.columns
+                if c != "Delete"
+            ],
+            key="poll_delete_editor"
+        )
+
+        if st.button(
+            "Delete Checked Polls",
+            key="delete_checked_polls"
+        ):
+
+            remaining = edited_df[
+                edited_df["Delete"] == False
+            ].drop(columns=["Delete"])
+
+            remaining.to_csv(
+                curr_path,
+                index=False
             )
 
-            if st.button(
-                "Delete Checked Polls",
-                key="delete_checked_polls"
-            ):
+            st.success("Selected poll(s) deleted")
 
-                remaining = edited_df[
-                    edited_df["Delete"] == False
-                ].drop(columns=["Delete"])
-
-                remaining.to_csv(
-                    curr_path,
-                    index=False
-                )
-
-                st.success("Selected poll(s) deleted")
-
-                st.rerun()
+            st.rerun()
     else:
         st.info(
             "No polls loaded. Add rows to current_polls.csv and click Reload Polls. "
