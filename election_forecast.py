@@ -767,7 +767,7 @@ with tab_model:
             "Rel Weight = each poll's share of total poll precision. "
             "Partisan polls (marked D/R) receive a 50% weight discount."
         )
-            with st.expander("🗑 Manage Polls"):
+        with st.expander("🗑 Manage Polls"):
 
         curr_path = DATA_DIR / "current_polls.csv"
 
