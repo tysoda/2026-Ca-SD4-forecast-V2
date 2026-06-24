@@ -221,37 +221,41 @@ for _, row in st.session_state["county_df"].iterrows():
     }
 
 # ── Polling blend: inverse-variance weighted combination ─────────────────────
-def blend_environment(model_env: float, model_sd: float, polls: list) -> tuple:
+def load_polling_blend() -> tuple:
     """
-    Bayesian blend of structural model with poll average.
-    Returns (blended_env, blended_sd).
-    polls = list of {"dem_share": float, "n": int, "weight": float}
+    Load current_polls.csv, run MAE-weighted blend with structural model.
+    Returns (blended_env, blended_sd, poll_details, mae_coeffs).
     """
-    if not polls:
-        return model_env, model_sd
+    try:
+        if str(DATA_DIR) not in sys.path:
+            sys.path.insert(0, str(DATA_DIR))
+        import importlib
+        import polling_model as pm
+        importlib.reload(pm)
 
-    # Model precision
-    model_prec = 1.0 / (model_sd ** 2)
+        curr_path = DATA_DIR / "current_polls.csv"
+        if not curr_path.exists():
+            return None, None, [], None
 
-    # Poll precision (combined)
-    # Each poll contributes variance ~ p(1-p)/n, scaled by user weight
-    poll_prec = 0.0
-    poll_weighted_mean = 0.0
-    for p in polls:
-        dem = p["dem_share"]
-        n   = max(p["n"], 1)
-        w   = p.get("weight", 1.0)
-        poll_var  = (dem * (1 - dem) / n) / max(w, 0.01)
-        poll_prec += 1.0 / poll_var
-        poll_weighted_mean += (1.0 / poll_var) * dem
+        df_hist = pd.read_csv(DATA_DIR / "historical_polls.csv")
+        coeffs  = pm.fit_mae_regression(df_hist)
+        df_curr = pd.read_csv(curr_path)
 
-    poll_mean = poll_weighted_mean / poll_prec if poll_prec > 0 else model_env
-    total_prec = model_prec + poll_prec
-    blended_mean = (model_prec * model_env + poll_prec * poll_mean) / total_prec
-    blended_sd   = (1.0 / total_prec) ** 0.5
+        fp = st.session_state.get("forecast_params")
+        if fp:
+            model_env = fp["state_environment"]["predicted_state_env"]
+            model_sd  = fp["state_environment"]["state_env_sd"]
+        else:
+            model_env = st.session_state.get("model_forecast_env", 59.80) / 100
+            model_sd  = st.session_state.get("state_env_sd_pct", 6.29) / 100
 
-    return float(blended_mean), float(blended_sd)
-
+        blended_env, blended_sd, details = pm.blend_with_polls(
+            model_env, model_sd, df_curr, coeffs
+        )
+        return blended_env, blended_sd, details, coeffs
+    except Exception as e:
+        return None, None, [], None
+      
 # Compute blended state environment
 model_env_val = st.session_state["model_forecast_env"] / 100
 blended_env, blended_sd = blend_environment(
