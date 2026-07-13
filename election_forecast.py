@@ -1253,9 +1253,69 @@ with tab_hood:
                 "Error":      f"{error*100:+.2f}%",
                 "Abs Error":  abs(error),
             })
+          
+        # District-level walk-forward predictions
+        elections = df_wf[["year","month","general","presidential"]].drop_duplicates().sort_values(["year","month"])
+        for _, elec in elections.iterrows():
+            elec_mask = ((df_wf.year == elec.year) & 
+                         (df_wf.month == elec.month))
+            elec_rows = df_wf[elec_mask]
+            
+            # Get predicted turnout for each county in this election
+            total_pred_votes = 0
+            total_actual_votes = 0
+            total_reg = 0
+            valid = True
+            
+            for _, row in elec_rows.iterrows():
+                train = df_diag[df_diag.index < row.name]
+                if len(train) < 5:
+                    valid = False
+                    break
+                train_cat = train.copy()
+                train_cat["county_cat"] = pd.Categorical(train_cat["county"], categories=county_order)
+                dummies = pd.get_dummies(train_cat["county_cat"], drop_first=True, dtype=float)
+                X_tr = pd.concat([train_cat[features], dummies], axis=1).values
+                X_tr = np.column_stack([np.ones(len(X_tr)), X_tr])
+                y_tr = train["turnout_rate"].values
+                coeffs_i, _, _, _ = np.linalg.lstsq(X_tr, y_tr, rcond=None)
+
+                cn = row["county"]
+                fe_vec = {c: 0.0 for c in dummies.columns}
+                if cn in fe_vec: fe_vec[cn] = 1.0
+                x_te = np.array([1.0, float(row["presidential"]), float(row["general"]),
+                                 float(row["prev_turnout"])] + [fe_vec[c] for c in dummies.columns])
+                if len(x_te) != len(coeffs_i):
+                    valid = False
+                    break
+
+                pred = float(x_te @ coeffs_i)
+                reg = float(row["registered_voters"])
+                total_pred_votes   += pred   * reg
+                total_actual_votes += float(row["turnout_rate"]) * reg
+                total_reg          += reg
+
+            if not valid or total_reg == 0:
+                continue
+
+            dist_actual = total_actual_votes / total_reg
+            dist_pred   = total_pred_votes   / total_reg
+            dist_error  = dist_actual - dist_pred
+
+            diag_rows.append({
+                "County":    "DISTRICT",
+                "Year":      int(elec.year),
+                "Month":     elec.month,
+                "Type":      "General" if elec.general else "Primary",
+                "Actual":    f"{dist_actual*100:.2f}%",
+                "Predicted": f"{dist_pred*100:.2f}%",
+                "Error":     f"{dist_error*100:+.2f}%",
+                "Abs Error": abs(dist_error),
+            })
 
         df_out = pd.DataFrame(diag_rows)
-
+        df_out = df_out.sort_values(["Year","Month","County"]).reset_index(drop=True)
+      
         # Summary stats
         err_arr = np.array(all_errors)
         d_sd = float(np.std(err_arr, ddof=1))
