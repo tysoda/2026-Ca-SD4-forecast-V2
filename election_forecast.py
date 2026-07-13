@@ -46,6 +46,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def prob_class(p):
+    return "prob-high" if p>=0.60 else ("prob-mid" if p>=0.40 else "prob-low")
+def fmt_pct(v, d=1): return f"{v*100:.{d}f}%"
+
 # ── Geographic data (SD4 boundary + helpers) ──────────────────────────────────
 COUNTY_CENTROIDS = {
     "Alpine":(-119.73,38.60),"Amador":(-120.65,38.43),"Calaveras":(-120.56,38.14),
@@ -353,12 +358,6 @@ for county, filt in county_filters.items():
     if filt == "Over threshold":   mask &= county_shares[county] >= county_vote_threshold
     elif filt == "Under threshold": mask &= county_shares[county] <  county_vote_threshold
 filtered_share = district_share[mask]; n_filtered = mask.sum()
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-def prob_class(p):
-    return "prob-high" if p>=0.60 else ("prob-mid" if p>=0.40 else "prob-low")
-def fmt_pct(v, d=1): return f"{v*100:.{d}f}%"
-
 # ══════════════════════════════════════════════════════════════════════════════
 st.title("🗳️ SD4 Election Forecast")
 st.caption(
