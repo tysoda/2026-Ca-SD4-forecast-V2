@@ -268,13 +268,14 @@ with st.sidebar:
     n_sims = st.number_input("Simulations", min_value=1000, max_value=100_000, value=N_DEFAULT, step=1000)
 
     st.markdown("**State Environment**")
-    use_model_env = st.toggle("Use model forecast", value=True)
-    if use_model_env:
+    use_blended_env = st.toggle("Blend with polls", value=False)
+    if use_blended_env and _poll_details:
         forecast_env = blended_env
-        st.caption(f"Model: {model_env_val:.1%} → Blended: {blended_env:.1%} (SD={blended_sd:.1%})")
         STATE_ENV_SD = blended_sd
+        st.caption(f"Model: {model_env_val:.1%} → Blended: {blended_env:.1%} (SD={blended_sd:.1%})")
     else:
-        forecast_env = st.number_input("Manual forecast (%)", value=round(blended_env*100,2), step=0.1) / 100
+        forecast_env = model_env_val
+        st.caption(f"Model forecast: {model_env_val:.1%} (SD={fmt_pct(STATE_ENV_SD)})")
 
     lean_method = st.radio("County Lean Method", ["Average", "Linear"], horizontal=True)
 
