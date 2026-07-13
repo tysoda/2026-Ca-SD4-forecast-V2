@@ -1303,7 +1303,7 @@ with tab_hood:
             dist_error  = dist_actual - dist_pred
 
             diag_rows.append({
-                "County":    "DISTRICT",
+                "County":    "Entire District",
                 "Year":      int(elec.year),
                 "Month":     elec.month,
                 "Type":      "General" if elec.general else "Primary",
@@ -1314,7 +1314,9 @@ with tab_hood:
             })
 
         df_out = pd.DataFrame(diag_rows)
-        df_out = df_out.sort_values(["Year","Month","County"]).reset_index(drop=True)
+        df_out["_sort"] = df_out["County"].apply(lambda x: 1 if x == "DISTRICT" else 0)
+        df_out = df_out.sort_values(["_sort","Year","Month","County"]).reset_index(drop=True)
+        df_out = df_out.drop(columns=["_sort"])
       
         # Summary stats
         err_arr = np.array(all_errors)
