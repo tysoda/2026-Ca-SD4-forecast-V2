@@ -1,6 +1,6 @@
 streamlit
 numpy
 pandas
-matplotlib
+matplotlib==3.9.4
 adjustText
 scipy
