@@ -1314,7 +1314,7 @@ with tab_hood:
             })
 
         df_out = pd.DataFrame(diag_rows)
-        df_out["_sort"] = df_out["County"].apply(lambda x: 1 if x == "DISTRICT" else 0)
+        df_out["_sort"] = df_out["County"].apply(lambda x: 1 if x == "Entire District" else 0)
         df_out = df_out.sort_values(["_sort","Year","Month","County"]).reset_index(drop=True)
         df_out = df_out.drop(columns=["_sort"])
       
