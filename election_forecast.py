@@ -821,12 +821,12 @@ with tab_model:
         else:
             frows+=f'<tr><td>❌ {fname}</td><td>{desc}</td><td>Not found</td></tr>'
     st.markdown(f'<table class="styled-table"><thead><tr><th>File</th><th>Contents</th><th>Last Modified</th></tr></thead><tbody>{frows}</tbody></table>', unsafe_allow_html=True)
-  params_path = DATA_DIR / "forecast_params.json"
-    if params_path.exists():
-        with open(params_path) as f:
-            params_json = f.read()
-        st.download_button("⬇ Download forecast_params.json", params_json,
-                          file_name="forecast_params.json", mime="application/json")
+    params_path = DATA_DIR / "forecast_params.json"
+      if params_path.exists():
+          with open(params_path) as f:
+              params_json = f.read()
+          st.download_button("⬇ Download forecast_params.json", params_json,
+                            file_name="forecast_params.json", mime="application/json")
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 5 — MODEL MECHANICS
 # ══════════════════════════════════════════════════════════════════════════════
