@@ -272,14 +272,13 @@ def forecast_county_leans() -> dict:
         hist_avg = float(c_df["county_dem_share"].mean())
 
         results[county] = {
-            "lean_avg":  round(wavg,     6),
-            "lean_lin":  round(lean_lin, 6),
-            "lean_sd":   round(lean_sd,  6),
-            "lean_lin_incomplete": lean_lin_incomplete,
-            "hist_avg":  round(hist_avg, 6),
-            "n_elections": int(len(c_df)),
+            "lean_avg":              round(wavg,     6),
+            "lean_lin":              round(lean_lin, 6),
+            "lean_lin_incomplete":   lean_lin_incomplete,
+            "lean_sd":               round(lean_sd,  6),
+            "hist_avg":              round(hist_avg, 6),
+            "n_elections":           int(len(c_df)),
         }
-
     return results
 
 
