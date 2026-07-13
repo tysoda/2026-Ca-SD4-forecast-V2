@@ -330,6 +330,26 @@ def estimate_turnout_sds_from_model(ctx: dict) -> dict:
             continue
         pred  = float(x_te @ coeffs_i)
         err   = float(row["turnout_rate"]) - pred
+        walk_fwd_coefficients = []
+        for idx in df_wf.index:
+            # ... existing prediction code ...
+            pred  = float(x_te @ coeffs_i)
+            err   = float(row["turnout_rate"]) - pred
+            all_errors.append(err)
+            county_errors[cn].append(err)
+
+            # Store coefficients for this step
+            coeff_names_i = ["intercept","presidential","general","prev_turnout"] + list(dummies.columns)
+            walk_fwd_coefficients.append({
+                "year":        int(row["year"]),
+                "month":       str(row["month"]),
+                "county":      cn,
+                "type":        "General" if row["general"] else "Primary",
+                "actual":      round(float(row["turnout_rate"]), 6),
+                "predicted":   round(pred, 6),
+                "error":       round(err, 6),
+                "coefficients": {n: round(float(c), 8) for n, c in zip(coeff_names_i, coeffs_i)},
+            })
         all_errors.append(err)
         county_errors[cn].append(err)
 
@@ -338,11 +358,11 @@ def estimate_turnout_sds_from_model(ctx: dict) -> dict:
     county_sd = float(np.mean(county_sd_vals)) if county_sd_vals else 0.077
 
     return {
-        "district_turnout_sd": round(district_sd, 6),
-        "county_turnout_sd":   round(county_sd,   6),
-        "n_walk_fwd_errors":   int(len(all_errors)),
+        "district_turnout_sd":    round(district_sd, 6),
+        "county_turnout_sd":      round(county_sd,   6),
+        "n_walk_fwd_errors":      int(len(all_errors)),
+        "walk_fwd_predictions":   walk_fwd_coefficients,
     }
-
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════════
@@ -362,11 +382,12 @@ def run_forecast(ctx: dict = None, verbose: bool = True) -> dict:
     sds     = estimate_turnout_sds_from_model(ctx)
 
     params = {
-        "context":          ctx,
-        "state_environment": state,
-        "turnout_sds":      sds,
-        "turnout_coefficients": turnout_coeffs,
-        "counties":         {},
+        "context":               ctx,
+        "state_environment":     state,
+        "turnout_sds":           sds,
+        "turnout_coefficients":  turnout_coeffs,
+        "walk_fwd_predictions":  sds.get("walk_fwd_predictions", []),
+        "counties":              {},
     }
 
     for county in COUNTIES:
