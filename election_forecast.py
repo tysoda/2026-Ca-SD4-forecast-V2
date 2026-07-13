@@ -631,7 +631,7 @@ with tab_model:
     c1,c2,c3,c4 = st.columns(4)
     with c1:
         ctx_year    = st.number_input("Election Year", value=2026, step=2)
-        ctx_general = st.toggle("General Election", value=False)
+        ctx_general = st.toggle("General Election", value=True)
         ctx_pres    = st.toggle("Presidential Cycle", value=False)
     with c2:
         ctx_inflation = st.number_input("Inflation (CPI YoY %)", value=float(fp["context"]["inflation"]) if fp else 3.8, step=0.1, format="%.1f")
