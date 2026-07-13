@@ -277,10 +277,15 @@ with st.sidebar:
     if use_blended_env and _poll_details:
         forecast_env = blended_env
         STATE_ENV_SD = blended_sd
-        st.caption(f"Model: {model_env_val:.1%} → Blended: {blended_env:.1%} (SD={blended_sd:.1%})")
+        st.caption(f"Model: {model_env_val:.1%} → Blended: {blended_env:.1%} (SD={fmt_pct(blended_sd)})")
     else:
-        forecast_env = model_env_val
-        st.caption(f"Model forecast: {model_env_val:.1%} (SD={fmt_pct(STATE_ENV_SD)})")
+        override_env = st.toggle("Override model forecast", value=False)
+        if override_env:
+            forecast_env = st.number_input("Manual forecast (%)", value=round(model_env_val*100, 2), step=0.1) / 100
+            st.caption(f"Manual override · Model was: {model_env_val:.1%}")
+        else:
+            forecast_env = model_env_val
+            st.caption(f"Model forecast: {fmt_pct(model_env_val)} (SD={fmt_pct(STATE_ENV_SD)})")
 
     lean_method = st.radio("County Lean Method", ["Average", "Linear"], horizontal=True)
 
