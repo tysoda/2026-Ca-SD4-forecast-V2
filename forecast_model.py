@@ -237,7 +237,7 @@ def forecast_county_leans() -> dict:
     ELECTION_ORDER = [
         "2022_ss4_pri", "2022_gov_pri", "2022_senate_pri",
         "2022_gov_gen", "2022_senate_gen",
-        "2024_senate_pri", "2024_pres_gen", "2024_senate_gen",
+        "2024_senate_pri", "2024_pres_gen", "2024_senate_gen", "2026_ss4_pri", "2026_gov_pri"
     ]
 
     results = {}
