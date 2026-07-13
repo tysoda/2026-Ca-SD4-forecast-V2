@@ -1188,7 +1188,7 @@ with tab_hood:
                 st.session_state["county_df"]=params_to_county_df(FALLBACK_COUNTIES)
             st.rerun()
 
-st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-label">Turnout Walk-Forward Diagnostics</div>', unsafe_allow_html=True)
     st.caption("Predicted vs actual turnout for each election from 2016 onwards, using only data available at the time of prediction.")
     try:
