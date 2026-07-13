@@ -296,15 +296,13 @@ def estimate_turnout_sds_from_model(ctx: dict) -> dict:
     df["prev_turnout"] = df.groupby(["county","general"])["turnout_rate"].shift(1)
     df = df[df.prev_turnout.notna()].copy()
 
-    # Only use 2022 onwards for walk-forward (matching your approach)
     df_wf = df[df.year >= 2022].copy()
-
     county_order = ["Tuolumne"] + [c for c in sorted(df["county"].unique()) if c != "Tuolumne"]
     features = ["presidential","general","prev_turnout"]
 
-    # Walk-forward: for each post-2022 election, train on all prior data
     all_errors = []
     county_errors = {cn: [] for cn in df["county"].unique()}
+    walk_fwd_coefficients = []
 
     for idx in df_wf.index:
         row = df_wf.loc[idx]
@@ -319,7 +317,6 @@ def estimate_turnout_sds_from_model(ctx: dict) -> dict:
         y_tr = train["turnout_rate"].values
         coeffs_i, _, _, _ = np.linalg.lstsq(X_tr, y_tr, rcond=None)
 
-        # Build test feature vector
         cn = row["county"]
         fe_vec = {c: 0.0 for c in dummies.columns}
         if cn in fe_vec:
@@ -328,40 +325,33 @@ def estimate_turnout_sds_from_model(ctx: dict) -> dict:
                          float(row["prev_turnout"])] + [fe_vec[c] for c in dummies.columns])
         if len(x_te) != len(coeffs_i):
             continue
-        pred  = float(x_te @ coeffs_i)
-        err   = float(row["turnout_rate"]) - pred
-        walk_fwd_coefficients = []
-        for idx in df_wf.index:
-            # ... existing prediction code ...
-            pred  = float(x_te @ coeffs_i)
-            err   = float(row["turnout_rate"]) - pred
-            all_errors.append(err)
-            county_errors[cn].append(err)
 
-            # Store coefficients for this step
-            coeff_names_i = ["intercept","presidential","general","prev_turnout"] + list(dummies.columns)
-            walk_fwd_coefficients.append({
-                "year":        int(row["year"]),
-                "month":       str(row["month"]),
-                "county":      cn,
-                "type":        "General" if row["general"] else "Primary",
-                "actual":      round(float(row["turnout_rate"]), 6),
-                "predicted":   round(pred, 6),
-                "error":       round(err, 6),
-                "coefficients": {n: round(float(c), 8) for n, c in zip(coeff_names_i, coeffs_i)},
-            })
+        pred = float(x_te @ coeffs_i)
+        err  = float(row["turnout_rate"]) - pred
         all_errors.append(err)
         county_errors[cn].append(err)
+
+        coeff_names_i = ["intercept","presidential","general","prev_turnout"] + list(dummies.columns)
+        walk_fwd_coefficients.append({
+            "year":        int(row["year"]),
+            "month":       str(row["month"]),
+            "county":      cn,
+            "type":        "General" if row["general"] else "Primary",
+            "actual":      round(float(row["turnout_rate"]), 6),
+            "predicted":   round(pred, 6),
+            "error":       round(err, 6),
+            "coefficients": {n: round(float(c), 8) for n, c in zip(coeff_names_i, coeffs_i)},
+        })
 
     district_sd = float(np.std(all_errors, ddof=1)) if len(all_errors) > 1 else 0.082
     county_sd_vals = [np.std(v, ddof=1) for v in county_errors.values() if len(v) > 1]
     county_sd = float(np.mean(county_sd_vals)) if county_sd_vals else 0.077
 
     return {
-        "district_turnout_sd":    round(district_sd, 6),
-        "county_turnout_sd":      round(county_sd,   6),
-        "n_walk_fwd_errors":      int(len(all_errors)),
-        "walk_fwd_predictions":   walk_fwd_coefficients,
+        "district_turnout_sd":   round(district_sd, 6),
+        "county_turnout_sd":     round(county_sd,   6),
+        "n_walk_fwd_errors":     int(len(all_errors)),
+        "walk_fwd_predictions":  walk_fwd_coefficients,
     }
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN
