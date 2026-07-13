@@ -287,7 +287,7 @@ with st.sidebar:
             forecast_env = model_env_val
             st.caption(f"Model forecast: {fmt_pct(model_env_val)} (SD={fmt_pct(STATE_ENV_SD)})")
 
-    lean_method = st.radio("County Lean Method", ["Average", "Linear"], horizontal=True)
+    lean_method = st.radio("County Lean Method", ["Linear", "Average"], horizontal=True)
 
     st.markdown("---")
     st.markdown("### 🔍 Conditional Filters")
