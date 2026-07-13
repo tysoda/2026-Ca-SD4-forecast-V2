@@ -1051,9 +1051,7 @@ with tab_mechanics:
             for cn in pivot.index
         ]
         pivot["Lin Lean"] = [
-            f"{fp2['counties'][cn]['lean_lin']*100:+.1f}%*"
-            if cn in fp2["counties"] and fp2["counties"][cn].get("lean_lin_incomplete", False)
-            else (fp2["counties"][cn]["lean_lin"] if cn in fp2["counties"] else np.nan)
+            fp2["counties"][cn]["lean_lin"] if cn in fp2["counties"] else np.nan
             for cn in pivot.index
         ]
         # Reorder rows to match county_names order
@@ -1083,7 +1081,7 @@ with tab_mechanics:
             f'<tbody>{rows_lt}</tbody></table>',
             unsafe_allow_html=True
         )
-        st.caption("* Linear lean estimated from incomplete 2026 data — partial county results pending.")
+        st.caption("Note: 2026 data unavailable for Madera, Merced, Nevada and Placer — linear lean for these counties is estimated from 2022–2024 data only.")
     except Exception as e:
         st.caption(f"Could not render lean table: {e}")
     st.markdown("<br>", unsafe_allow_html=True)
