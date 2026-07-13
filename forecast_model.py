@@ -258,14 +258,16 @@ def forecast_county_leans() -> dict:
         )
         c_ordered = c_ordered[c_ordered.order >= 0].sort_values("order")
 
-        if len(c_ordered) >= 3:
-            X_lin = c_ordered["order"].values.reshape(-1, 1).astype(float)
-            y_lin = c_ordered["county_lean"].values
+        c_ordered_clean = c_ordered[c_ordered["county_lean"].notna()]
+        if len(c_ordered_clean) >= 3:
+            X_lin = c_ordered_clean["order"].values.reshape(-1, 1).astype(float)
+            y_lin = c_ordered_clean["county_lean"].values
             lin_coeffs, _, _ = ols(X_lin, y_lin)
-            # Predict at next election index
             lean_lin = float(predict_ols(lin_coeffs, [float(len(ELECTION_ORDER))]))
+            lean_lin_incomplete = len(c_ordered_clean) < len(c_ordered)
         else:
             lean_lin = wavg
+            lean_lin_incomplete = True
 
         hist_avg = float(c_df["county_dem_share"].mean())
 
@@ -273,6 +275,7 @@ def forecast_county_leans() -> dict:
             "lean_avg":  round(wavg,     6),
             "lean_lin":  round(lean_lin, 6),
             "lean_sd":   round(lean_sd,  6),
+            "lean_lin_incomplete": lean_lin_incomplete,
             "hist_avg":  round(hist_avg, 6),
             "n_elections": int(len(c_df)),
         }
