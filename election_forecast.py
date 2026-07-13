@@ -1222,7 +1222,7 @@ with tab_hood:
         for idx in df_wf.index:
             row = df_wf.loc[idx]
             train = df_diag[df_diag.index < idx]
-            if len(train) < 5:
+            if len(train) < 2:
                 continue
             train_cat = train.copy()
             train_cat["county_cat"] = pd.Categorical(train_cat["county"], categories=county_order)
