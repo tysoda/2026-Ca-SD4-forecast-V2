@@ -237,7 +237,7 @@ def forecast_county_leans() -> dict:
     ELECTION_ORDER = [
         "2022_ss4_pri", "2022_gov_pri", "2022_senate_pri",
         "2022_gov_gen", "2022_senate_gen",
-        "2024_senate_pri", "2024_pres_gen", "2024_senate_gen",
+        "2024_senate_pri", "2024_pres_gen", "2024_senate_gen", "2026_ss4_pri", "2026_gov_pri"
     ]
 
     results = {}
@@ -258,25 +258,27 @@ def forecast_county_leans() -> dict:
         )
         c_ordered = c_ordered[c_ordered.order >= 0].sort_values("order")
 
-        if len(c_ordered) >= 3:
-            X_lin = c_ordered["order"].values.reshape(-1, 1).astype(float)
-            y_lin = c_ordered["county_lean"].values
+        c_ordered_clean = c_ordered[c_ordered["county_lean"].notna()]
+        if len(c_ordered_clean) >= 3:
+            X_lin = c_ordered_clean["order"].values.reshape(-1, 1).astype(float)
+            y_lin = c_ordered_clean["county_lean"].values
             lin_coeffs, _, _ = ols(X_lin, y_lin)
-            # Predict at next election index
             lean_lin = float(predict_ols(lin_coeffs, [float(len(ELECTION_ORDER))]))
+            lean_lin_incomplete = len(c_ordered_clean) < len(c_ordered)
         else:
             lean_lin = wavg
+            lean_lin_incomplete = True
 
         hist_avg = float(c_df["county_dem_share"].mean())
 
         results[county] = {
-            "lean_avg":  round(wavg,     6),
-            "lean_lin":  round(lean_lin, 6),
-            "lean_sd":   round(lean_sd,  6),
-            "hist_avg":  round(hist_avg, 6),
-            "n_elections": int(len(c_df)),
+            "lean_avg":              round(wavg,     6),
+            "lean_lin":              round(lean_lin, 6),
+            "lean_lin_incomplete":   lean_lin_incomplete,
+            "lean_sd":               round(lean_sd,  6),
+            "hist_avg":              round(hist_avg, 6),
+            "n_elections":           int(len(c_df)),
         }
-
     return results
 
 
@@ -290,25 +292,54 @@ def forecast_county_leans() -> dict:
 def estimate_turnout_sds_from_model(ctx: dict) -> dict:
     df = pd.read_csv(DATA_DIR / "historical_turnout.csv")
     df = df[df.votes_cast.notna()].copy()
-    df = df.sort_values(["county","year","month"]).reset_index(drop=True)
-    df["prev_turnout"] = df.groupby(["county","general"])["turnout_rate"].shift(1)
+    df = df.sort_values(["county", "year", "month"]).reset_index(drop=True)
+
+    # 2010 general turnout (used as lag for 2012 primaries)
+    TURNOUT_2010 = {
+        "Alpine":0.7722,"Amador":0.7758,"Calaveras":0.7000,"El Dorado":0.7284,
+        "Inyo":0.7574,"Madera":0.6383,"Mariposa":0.7371,"Merced":0.5094,
+        "Mono":0.7176,"Nevada":0.8083,"Placer":0.7156,"Stanislaus":0.5346,
+        "Tuolumne":0.7160,
+    }
+
+    # Lag = immediately preceding election regardless of type
+    df["prev_turnout"] = df.groupby("county")["turnout_rate"].shift(1)
+
+    # Fill 2012 primaries with 2010 general turnout
+    def fill_2010(row):
+        if pd.isna(row["prev_turnout"]) and row["year"] == 2012:
+            return TURNOUT_2010.get(row["county"], np.nan)
+        return row["prev_turnout"]
+    df["prev_turnout"] = df.apply(fill_2010, axis=1)
     df = df[df.prev_turnout.notna()].copy()
 
-    # Only use 2022 onwards for walk-forward (matching your approach)
-    df_wf = df[df.year >= 2022].copy()
-
     county_order = ["Tuolumne"] + [c for c in sorted(df["county"].unique()) if c != "Tuolumne"]
-    features = ["presidential","general","prev_turnout"]
+    features = ["presidential", "general", "prev_turnout"]
 
-    # Walk-forward: for each post-2022 election, train on all prior data
-    all_errors = []
-    county_errors = {cn: [] for cn in df["county"].unique()}
+    # Walk-forward from 2016: predict each election using all prior data
+    df_wf = df[df.year >= 2016].copy()
 
-    for idx in df_wf.index:
-        row = df_wf.loc[idx]
-        train = df[df.index < idx]
+    county_errors = []        # all individual county-election errors pooled
+    district_errors = []      # district-level aggregate errors
+    walk_fwd_predictions = []
+
+    # Get unique elections in chronological order
+    elections = (df_wf[["year","month"]]
+                 .drop_duplicates()
+                 .sort_values(["year","month"])
+                 .reset_index(drop=True))
+
+    for _, elec in elections.iterrows():
+        elec_year  = int(elec["year"])
+        elec_month = elec["month"]
+
+        # Training set: all rows before this election
+        train = df[(df["year"] < elec_year) |
+                   ((df["year"] == elec_year) & (df["month"] < elec_month))].copy()
+
         if len(train) < 5:
             continue
+
         train_cat = train.copy()
         train_cat["county_cat"] = pd.Categorical(train_cat["county"], categories=county_order)
         dummies = pd.get_dummies(train_cat["county_cat"], drop_first=True, dtype=float)
@@ -316,31 +347,80 @@ def estimate_turnout_sds_from_model(ctx: dict) -> dict:
         X_tr = np.column_stack([np.ones(len(X_tr)), X_tr])
         y_tr = train["turnout_rate"].values
         coeffs_i, _, _, _ = np.linalg.lstsq(X_tr, y_tr, rcond=None)
+        coeff_names_i = ["intercept","presidential","general","prev_turnout"] + list(dummies.columns)
 
-        # Build test feature vector
-        cn = row["county"]
-        fe_vec = {c: 0.0 for c in dummies.columns}
-        if cn in fe_vec:
-            fe_vec[cn] = 1.0
-        x_te = np.array([1.0, float(row["presidential"]), float(row["general"]),
-                         float(row["prev_turnout"])] + [fe_vec[c] for c in dummies.columns])
-        if len(x_te) != len(coeffs_i):
-            continue
-        pred  = float(x_te @ coeffs_i)
-        err   = float(row["turnout_rate"]) - pred
-        all_errors.append(err)
-        county_errors[cn].append(err)
+        # Predict each county in this election
+        elec_rows = df_wf[(df_wf["year"] == elec_year) & (df_wf["month"] == elec_month)]
 
-    district_sd = float(np.std(all_errors, ddof=1)) if len(all_errors) > 1 else 0.082
-    county_sd_vals = [np.std(v, ddof=1) for v in county_errors.values() if len(v) > 1]
-    county_sd = float(np.mean(county_sd_vals)) if county_sd_vals else 0.077
+        total_pred_votes   = 0.0
+        total_actual_votes = 0.0
+        total_reg          = 0.0
+        elec_valid         = True
+
+        for _, row in elec_rows.iterrows():
+            cn = row["county"]
+            fe_vec = {c: 0.0 for c in dummies.columns}
+            if cn in fe_vec:
+                fe_vec[cn] = 1.0
+            x_te = np.array([1.0, float(row["presidential"]), float(row["general"]),
+                             float(row["prev_turnout"])] + [fe_vec[c] for c in dummies.columns])
+            if len(x_te) != len(coeffs_i):
+                elec_valid = False
+                continue
+
+            pred   = float(x_te @ coeffs_i)
+            actual = float(row["turnout_rate"])
+            err    = actual - pred
+            county_errors.append(err)
+
+            reg = float(row["registered_voters"])
+            total_pred_votes   += pred   * reg
+            total_actual_votes += actual * reg
+            total_reg          += reg
+
+            walk_fwd_predictions.append({
+                "year":        elec_year,
+                "month":       elec_month,
+                "county":      cn,
+                "type":        "General" if row["general"] else "Primary",
+                "actual":      round(actual, 6),
+                "predicted":   round(pred,   6),
+                "error":       round(err,    6),
+                "coefficients": {n: round(float(c), 8)
+                                 for n, c in zip(coeff_names_i, coeffs_i)},
+            })
+
+        # District aggregate for this election
+        if elec_valid and total_reg > 0:
+            dist_actual = total_actual_votes / total_reg
+            dist_pred   = total_pred_votes   / total_reg
+            dist_err    = dist_actual - dist_pred
+            district_errors.append(dist_err)
+
+            walk_fwd_predictions.append({
+                "year":      elec_year,
+                "month":     elec_month,
+                "county":    "Entire District",
+                "type":      "General" if elec_rows.iloc[0]["general"] else "Primary",
+                "actual":    round(dist_actual, 6),
+                "predicted": round(dist_pred,   6),
+                "error":     round(dist_err,    6),
+                "coefficients": {},
+            })
+
+    # District SD = SD of district-level aggregate errors (matches your spreadsheet)
+    district_sd = float(np.std(district_errors, ddof=1)) if len(district_errors) > 1 else 0.082
+
+    # County SD = SD of all individual county errors pooled
+    county_sd = float(np.std(county_errors, ddof=1)) if len(county_errors) > 1 else 0.077
 
     return {
-        "district_turnout_sd": round(district_sd, 6),
-        "county_turnout_sd":   round(county_sd,   6),
-        "n_walk_fwd_errors":   int(len(all_errors)),
+        "district_turnout_sd":   round(district_sd, 6),
+        "county_turnout_sd":     round(county_sd,   6),
+        "n_district_errors":     int(len(district_errors)),
+        "n_county_errors":       int(len(county_errors)),
+        "walk_fwd_predictions":  walk_fwd_predictions,
     }
-
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════════
@@ -360,11 +440,12 @@ def run_forecast(ctx: dict = None, verbose: bool = True) -> dict:
     sds     = estimate_turnout_sds_from_model(ctx)
 
     params = {
-        "context":          ctx,
-        "state_environment": state,
-        "turnout_sds":      sds,
-        "turnout_coefficients": turnout_coeffs,
-        "counties":         {},
+        "context":               ctx,
+        "state_environment":     state,
+        "turnout_sds":           sds,
+        "turnout_coefficients":  turnout_coeffs,
+        "walk_fwd_predictions":  sds.get("walk_fwd_predictions", []),
+        "counties":              {},
     }
 
     for county in COUNTIES:

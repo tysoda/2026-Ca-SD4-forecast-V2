@@ -46,6 +46,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def prob_class(p):
+    return "prob-high" if p>=0.60 else ("prob-mid" if p>=0.40 else "prob-low")
+def fmt_pct(v, d=1): return f"{v*100:.{d}f}%"
+
 # ── Geographic data (SD4 boundary + helpers) ──────────────────────────────────
 COUNTY_CENTROIDS = {
     "Alpine":(-119.73,38.60),"Amador":(-120.65,38.43),"Calaveras":(-120.56,38.14),
@@ -268,15 +273,21 @@ with st.sidebar:
     n_sims = st.number_input("Simulations", min_value=1000, max_value=100_000, value=N_DEFAULT, step=1000)
 
     st.markdown("**State Environment**")
-    use_model_env = st.toggle("Use model forecast", value=True)
-    if use_model_env:
+    use_blended_env = st.toggle("Blend with polls", value=False)
+    if use_blended_env and _poll_details:
         forecast_env = blended_env
-        st.caption(f"Model: {model_env_val:.1%} → Blended: {blended_env:.1%} (SD={blended_sd:.1%})")
         STATE_ENV_SD = blended_sd
+        st.caption(f"Model: {model_env_val:.1%} → Blended: {blended_env:.1%} (SD={fmt_pct(blended_sd)})")
     else:
-        forecast_env = st.number_input("Manual forecast (%)", value=round(blended_env*100,2), step=0.1) / 100
+        override_env = st.toggle("Override model forecast", value=False)
+        if override_env:
+            forecast_env = st.number_input("Manual forecast (%)", value=round(model_env_val*100, 2), step=0.1) / 100
+            st.caption(f"Manual override · Model was: {model_env_val:.1%}")
+        else:
+            forecast_env = model_env_val
+            st.caption(f"Model forecast: {fmt_pct(model_env_val)} (SD={fmt_pct(STATE_ENV_SD)})")
 
-    lean_method = st.radio("County Lean Method", ["Average", "Linear"], horizontal=True)
+    lean_method = st.radio("County Lean Method", ["Linear", "Average"], horizontal=True)
 
     st.markdown("---")
     st.markdown("### 🔍 Conditional Filters")
@@ -352,12 +363,6 @@ for county, filt in county_filters.items():
     if filt == "Over threshold":   mask &= county_shares[county] >= county_vote_threshold
     elif filt == "Under threshold": mask &= county_shares[county] <  county_vote_threshold
 filtered_share = district_share[mask]; n_filtered = mask.sum()
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-def prob_class(p):
-    return "prob-high" if p>=0.60 else ("prob-mid" if p>=0.40 else "prob-low")
-def fmt_pct(v, d=1): return f"{v*100:.{d}f}%"
-
 # ══════════════════════════════════════════════════════════════════════════════
 st.title("🗳️ SD4 Election Forecast")
 st.caption(
@@ -626,7 +631,7 @@ with tab_model:
     c1,c2,c3,c4 = st.columns(4)
     with c1:
         ctx_year    = st.number_input("Election Year", value=2026, step=2)
-        ctx_general = st.toggle("General Election", value=False)
+        ctx_general = st.toggle("General Election", value=True)
         ctx_pres    = st.toggle("Presidential Cycle", value=False)
     with c2:
         ctx_inflation = st.number_input("Inflation (CPI YoY %)", value=float(fp["context"]["inflation"]) if fp else 3.8, step=0.1, format="%.1f")
@@ -662,7 +667,7 @@ with tab_model:
     st.markdown(
         "Polls are loaded from **current_polls.csv** in the same folder as the app. "
         "Add rows to that file (source, end_date, election_date, days_out, cycle, race, "
-        "election, sample_size, type, rv, lv, dem, rep, MoE) and click **Reload Polls** below. "
+        "election, sample_size, type, rv, lv, dem, rep) and click **Reload Polls** below. "
         "Weights are computed automatically using the MAE regression from historical polling accuracy."
     )
 
@@ -685,7 +690,7 @@ with tab_model:
         with ac4: new_type     = st.selectbox("Type", ["RV", "LV", "Other"])
         with ac5: new_end_date = st.date_input("Poll end date", value=pd.Timestamp.today())
         with ac6: new_race     = st.selectbox("Race", ["Governor", "President", "US Senate", "Other"])
-        with ac7: new_moe = st.number_input("MoE (%, optional)", value=0.0, step=0.1, format="%.1f", min_value=0.0)
+        with ac7: new_moe      = st.number_input("MoE (%, optional)", value=0.0, step=0.1, format="%.1f", min_value=0.0)
 
         if st.button("Add poll to CSV"):
             election_date = pd.Timestamp("2026-11-03")
@@ -693,7 +698,6 @@ with tab_model:
             rv = 1 if new_type == "RV" else 0
             lv = 1 if new_type == "LV" else 0
 
-            # Compute predicted MAE using the fitted regression
             pred_mae = None
             if _mae_coeffs is not None:
                 try:
@@ -748,56 +752,49 @@ with tab_model:
         for d in details:
             poll_type = "LV" if d["lv"] else ("RV" if d["rv"] else "—")
             partisan_badge = ' <span style="color:#d97706;font-size:0.7rem">[partisan]</span>' if d["partisan"] else ""
+            moe_str = fmt_pct(d["moe"]) if d.get("moe") else "—"
             prows += (
                 f"<tr>"
                 f"<td>{d['source'][:40]}{partisan_badge}</td>"
                 f"<td>{fmt_pct(d['dem'])}</td>"
-                f"<td>{fmt_pct(d['moe'])}</td>"
+                f"<td>{moe_str}</td>"
                 f"<td>{poll_type}</td>"
                 f"<td>{d['days_out']:.0f}</td>"
                 f"<td>{fmt_pct(d['pred_mae'])}</td>"
+                f"<td>{fmt_pct(d['sampling_sd'])}</td>"
                 f"<td>{d['rel_weight']:.3f}</td>"
                 f"</tr>"
             )
         st.markdown(
             f'<table class="styled-table"><thead><tr>'
             f'<th>Poll</th><th>Dem Share</th><th>MoE</th><th>Type</th>'
-            f'<th>Days Out</th><th>Pred MAE</th><th>Rel Weight</th>'
+            f'<th>Days Out</th><th>Pred MAE</th><th>Sampling SD</th><th>Rel Weight</th>'
             f'</tr></thead><tbody>{prows}</tbody></table>',
             unsafe_allow_html=True
         )
         st.caption(
             "Rel Weight = each poll's share of total poll precision. "
+            "Sampling SD uses reported MoE÷2 if available, else theoretical from sample size. "
             "Partisan polls (marked D/R) receive a 50% weight discount."
         )
-        with st.expander("🗑 Manage Polls"):
+        with st.expander("🗑 Remove Polls"):
             curr_path = DATA_DIR / "current_polls.csv"
             if curr_path.exists():
                 df_manage = pd.read_csv(curr_path)
-                df_manage["Delete"] = False
+                df_manage.insert(0, "Delete", False)
                 edited_df = st.data_editor(
                     df_manage,
                     hide_index=True,
-                    use_container_width=True,
-                    disabled=[
-                        c for c in df_manage.columns
-                        if c != "Delete"
-                    ],
+                    width="stretch",
+                    disabled=[c for c in df_manage.columns if c != "Delete"],
+                    column_config={"Delete": st.column_config.CheckboxColumn("Delete?", default=False)},
                     key="poll_delete_editor"
                 )
-            if st.button(
-                  "Delete Checked Polls",
-                  key="delete_checked_polls"
-                ):
-                  remaining = edited_df[
-                      edited_df["Delete"] == False
-                    ].drop(columns=["Delete"])
-                  remaining.to_csv(
-                        curr_path,
-                        index=False
-                    )
-                  st.success("Selected poll(s) deleted")
-                  st.rerun()
+                if st.button("🗑 Delete selected polls", key="delete_checked_polls"):
+                    remaining = edited_df[edited_df["Delete"] == False].drop(columns=["Delete"])
+                    remaining.to_csv(curr_path, index=False)
+                    st.success(f"Deleted {(edited_df['Delete']==True).sum()} poll(s).")
+                    st.rerun()
     else:
         st.info(
             "No polls loaded. Add rows to current_polls.csv and click Reload Polls. "
@@ -824,7 +821,12 @@ with tab_model:
         else:
             frows+=f'<tr><td>❌ {fname}</td><td>{desc}</td><td>Not found</td></tr>'
     st.markdown(f'<table class="styled-table"><thead><tr><th>File</th><th>Contents</th><th>Last Modified</th></tr></thead><tbody>{frows}</tbody></table>', unsafe_allow_html=True)
-
+    params_path = DATA_DIR / "forecast_params.json"
+    if params_path.exists():
+        with open(params_path) as f:
+            params_json = f.read()
+        st.download_button("⬇ Download forecast_params.json", params_json,
+                          file_name="forecast_params.json", mime="application/json")
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 5 — MODEL MECHANICS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1034,7 +1036,7 @@ with tab_mechanics:
         ELECTION_ORDER = [
             "2022_ss4_pri", "2022_gov_pri", "2022_senate_pri",
             "2022_gov_gen", "2022_senate_gen",
-            "2024_senate_pri", "2024_pres_gen", "2024_senate_gen",
+            "2024_senate_pri", "2024_pres_gen", "2024_senate_gen", "2026_ss4_pri", "2026_gov_pri"
         ]
         pivot = df_lv[df_lv.state_dem_share.notna()].pivot_table(
             index="county", columns="election", values="county_lean", aggfunc="first"
@@ -1052,7 +1054,6 @@ with tab_mechanics:
             fp2["counties"][cn]["lean_lin"] if cn in fp2["counties"] else np.nan
             for cn in pivot.index
         ]
-
         # Reorder rows to match county_names order
         pivot = pivot.reindex([cn for cn in county_names if cn in pivot.index])
 
@@ -1080,6 +1081,7 @@ with tab_mechanics:
             f'<tbody>{rows_lt}</tbody></table>',
             unsafe_allow_html=True
         )
+        st.caption("Note: 2026 data unavailable for Madera, Merced, Nevada and Placer — linear lean for these counties is estimated from 2022–2024 data only.")
     except Exception as e:
         st.caption(f"Could not render lean table: {e}")
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1185,3 +1187,179 @@ with tab_hood:
             else:
                 st.session_state["county_df"]=params_to_county_df(FALLBACK_COUNTIES)
             st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Turnout Walk-Forward Diagnostics</div>', unsafe_allow_html=True)
+    st.caption("Predicted vs actual turnout for each election from 2016 onwards, using only data available at the time of prediction.")
+    try:
+        df_diag = pd.read_csv(DATA_DIR / "historical_turnout.csv")
+        df_diag = df_diag[df_diag.votes_cast.notna()].copy()
+        df_diag = df_diag.sort_values(["county","year","month"]).reset_index(drop=True)
+
+        # 2010 general turnout for lag
+        TURNOUT_2010 = {
+            "Alpine":0.7722,"Amador":0.7758,"Calaveras":0.7000,"El Dorado":0.7284,
+            "Inyo":0.7574,"Madera":0.6383,"Mariposa":0.7371,"Merced":0.5094,
+            "Mono":0.7176,"Nevada":0.8083,"Placer":0.7156,"Stanislaus":0.5346,
+            "Tuolumne":0.7160,
+        }
+        df_diag["prev_turnout"] = df_diag.groupby("county")["turnout_rate"].shift(1)
+        def fill_2010(row):
+            if pd.isna(row["prev_turnout"]) and row["year"] == 2012:
+                return TURNOUT_2010.get(row["county"], np.nan)
+            return row["prev_turnout"]
+        df_diag["prev_turnout"] = df_diag.apply(fill_2010, axis=1)
+        df_diag = df_diag[df_diag.prev_turnout.notna()].copy()
+
+        county_order = ["Tuolumne"] + [c for c in sorted(df_diag["county"].unique()) if c != "Tuolumne"]
+        features = ["presidential","general","prev_turnout"]
+
+        # Walk-forward: for each election from 2016 onwards, train on all prior data
+        df_wf = df_diag[df_diag.year >= 2016].copy()
+        all_errors = []
+        diag_rows = []
+
+        for idx in df_wf.index:
+            row = df_wf.loc[idx]
+            train = df_diag[df_diag.index < idx]
+            if len(train) < 5:
+                continue
+            train_cat = train.copy()
+            train_cat["county_cat"] = pd.Categorical(train_cat["county"], categories=county_order)
+            dummies = pd.get_dummies(train_cat["county_cat"], drop_first=True, dtype=float)
+            X_tr = pd.concat([train_cat[features], dummies], axis=1).values
+            X_tr = np.column_stack([np.ones(len(X_tr)), X_tr])
+            y_tr = train["turnout_rate"].values
+            coeffs_i, _, _, _ = np.linalg.lstsq(X_tr, y_tr, rcond=None)
+
+            cn = row["county"]
+            fe_vec = {c: 0.0 for c in dummies.columns}
+            if cn in fe_vec: fe_vec[cn] = 1.0
+            x_te = np.array([1.0, float(row["presidential"]), float(row["general"]),
+                             float(row["prev_turnout"])] + [fe_vec[c] for c in dummies.columns])
+            if len(x_te) != len(coeffs_i): continue
+
+            pred  = float(x_te @ coeffs_i)
+            actual = float(row["turnout_rate"])
+            error = actual - pred
+            all_errors.append(error)
+            diag_rows.append({
+                "County":     cn,
+                "Year":       int(row["year"]),
+                "Month":      row["month"],
+                "Type":       "General" if row["general"] else "Primary",
+                "Actual":     f"{actual*100:.2f}%",
+                "Predicted":  f"{pred*100:.2f}%",
+                "Error":      f"{error*100:+.2f}%",
+                "Abs Error":  abs(error),
+            })
+          
+        # District-level walk-forward predictions
+        elections = df_wf[["year","month","general","presidential"]].drop_duplicates().sort_values(["year","month"])
+        for _, elec in elections.iterrows():
+            elec_mask = ((df_wf.year == elec.year) & 
+                         (df_wf.month == elec.month))
+            elec_rows = df_wf[elec_mask]
+            
+            # Get predicted turnout for each county in this election
+            total_pred_votes = 0
+            total_actual_votes = 0
+            total_reg = 0
+            valid = True
+            
+            for _, row in elec_rows.iterrows():
+                train = df_diag[df_diag.index < row.name]
+                if len(train) < 5:
+                    valid = False
+                    break
+                train_cat = train.copy()
+                train_cat["county_cat"] = pd.Categorical(train_cat["county"], categories=county_order)
+                dummies = pd.get_dummies(train_cat["county_cat"], drop_first=True, dtype=float)
+                X_tr = pd.concat([train_cat[features], dummies], axis=1).values
+                X_tr = np.column_stack([np.ones(len(X_tr)), X_tr])
+                y_tr = train["turnout_rate"].values
+                coeffs_i, _, _, _ = np.linalg.lstsq(X_tr, y_tr, rcond=None)
+
+                cn = row["county"]
+                fe_vec = {c: 0.0 for c in dummies.columns}
+                if cn in fe_vec: fe_vec[cn] = 1.0
+                x_te = np.array([1.0, float(row["presidential"]), float(row["general"]),
+                                 float(row["prev_turnout"])] + [fe_vec[c] for c in dummies.columns])
+                if len(x_te) != len(coeffs_i):
+                    valid = False
+                    break
+
+                pred = float(x_te @ coeffs_i)
+                reg = float(row["registered_voters"])
+                total_pred_votes   += pred   * reg
+                total_actual_votes += float(row["turnout_rate"]) * reg
+                total_reg          += reg
+
+            if not valid or total_reg == 0:
+                continue
+
+            dist_actual = total_actual_votes / total_reg
+            dist_pred   = total_pred_votes   / total_reg
+            dist_error  = dist_actual - dist_pred
+
+            diag_rows.append({
+                "County":    "Entire District",
+                "Year":      int(elec.year),
+                "Month":     elec.month,
+                "Type":      "General" if elec.general else "Primary",
+                "Actual":    f"{dist_actual*100:.2f}%",
+                "Predicted": f"{dist_pred*100:.2f}%",
+                "Error":     f"{dist_error*100:+.2f}%",
+                "Abs Error": abs(dist_error),
+            })
+
+        df_out = pd.DataFrame(diag_rows)
+        df_out["_sort"] = df_out["County"].apply(lambda x: 1 if x == "Entire District" else 0)
+        df_out = df_out.sort_values(["_sort","Year","Month","County"]).reset_index(drop=True)
+        df_out = df_out.drop(columns=["_sort"])
+      
+        # Summary stats
+        err_arr = np.array(all_errors)
+        d_sd = float(np.std(err_arr, ddof=1))
+        c_sd = float(df_out.groupby("County")["Abs Error"].mean().mean())
+
+        sc1, sc2, sc3 = st.columns(3)
+        with sc1:
+            st.markdown(f'<div class="stat-card"><div class="label">Walk-Forward District SD</div><div class="value">{d_sd*100:.4f}%</div><div class="sub">{len(all_errors)} predictions</div></div>', unsafe_allow_html=True)
+        with sc2:
+            st.markdown(f'<div class="stat-card"><div class="label">Mean County Abs Error</div><div class="value">{c_sd*100:.4f}%</div></div>', unsafe_allow_html=True)
+        with sc3:
+            stored_dsd = sds2.get("district_turnout_sd", 0)
+            st.markdown(f'<div class="stat-card"><div class="label">Stored District SD</div><div class="value">{stored_dsd*100:.4f}%</div><div class="sub">From forecast_params.json</div></div>', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # Per-election table — pivot so counties are columns
+        df_pivot = df_out.copy()
+        df_pivot["Election"] = df_pivot["Year"].astype(str) + " " + df_pivot["Month"] + " " + df_pivot["Type"]
+        df_pivot["Error_num"] = df_pivot["Error"].str.replace("%","").astype(float)
+
+        # Show full detail table sortable by county/election
+        st.dataframe(
+            df_out[["County","Year","Month","Type","Actual","Predicted","Error"]],
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Error": st.column_config.TextColumn("Error (Actual − Pred)"),
+            }
+        )
+
+        # Per-county error summary
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div class="section-label">Per-County Error Summary</div>', unsafe_allow_html=True)
+        county_summary = df_out.groupby("County").agg(
+            N=("Abs Error","count"),
+            Mean_Abs_Error=("Abs Error","mean"),
+            SD_Error=("Abs Error","std"),
+        ).reset_index()
+        county_summary["Mean_Abs_Error"] = (county_summary["Mean_Abs_Error"]*100).round(3)
+        county_summary["SD_Error"] = (county_summary["SD_Error"]*100).round(3)
+        st.dataframe(county_summary, hide_index=True, width="stretch")
+
+    except Exception as e:
+        st.caption(f"Could not render turnout diagnostics: {e}")

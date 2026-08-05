@@ -1,6 +1,6 @@
 streamlit
+adjustText
+matplotlib
 numpy
 pandas
-matplotlib
-adjustText
 scipy
