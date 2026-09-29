@@ -382,9 +382,9 @@ st.caption(
     f"District win threshold: 50%"
 )
 
-tab_dash, tab_turnout, tab_map, tab_model, tab_mechanics, tab_hood = st.tabs([
+tab_dash, tab_turnout, tab_map, tab_model, tab_mechanics, tab_hood, tab_night = st.tabs([
     "📊 Dashboard", "🎚️ Turnout Explorer", "🗺️ District Map",
-    "🔮 Forecast Model", "📐 Model Mechanics", "🔧 Under the Hood"
+    "🔮 Forecast Model", "📐 Model Mechanics", "🔧 Under the Hood", "🌙 Election Night"
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1426,3 +1426,388 @@ with tab_hood:
 
     except Exception as e:
         st.caption(f"Could not render turnout diagnostics: {e}")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 7 — ELECTION NIGHT
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_night:
+    import time as _time
+
+    st.markdown("## 🌙 Election Night Tracker")
+    st.markdown(
+        "Live results for SD4 counties. Enter results manually or load from a CSV. "
+        "Win probability updates in real time by filtering simulations to match reported results."
+    )
+
+    # ── Controls row ──────────────────────────────────────────────────────────
+    nc1, nc2, nc3, nc4 = st.columns([2, 1, 1, 2])
+    with nc1:
+        auto_refresh = st.toggle("Auto-refresh every 10 min", value=False, key="night_auto_refresh")
+    with nc2:
+        manual_refresh = st.button("🔄 Refresh now", key="night_manual_refresh")
+    with nc3:
+        mock_scenario = st.selectbox("Load mock results", ["— none —", "Narrow win", "Comfortable win", "Narrow loss"], key="night_mock")
+
+    if manual_refresh:
+        st.rerun()
+
+    # ── Mock data loader ──────────────────────────────────────────────────────
+    MOCK_DATA = {
+        "Narrow win": {
+            # Dem ~51% across district: good base Tuolumne + flips Mono/Inyo, barely holds urban
+            "Alpine":     (0.56, 0.40),
+            "Amador":     (0.38, 0.58),
+            "Calaveras":  (0.39, 0.57),
+            "El Dorado":  (0.44, 0.53),
+            "Inyo":       (0.48, 0.48),
+            "Madera":     (0.38, 0.58),
+            "Mariposa":   (0.41, 0.55),
+            "Merced":     (0.41, 0.55),
+            "Mono":       (0.54, 0.43),
+            "Nevada":     (0.55, 0.42),
+            "Placer":     (0.44, 0.53),
+            "Stanislaus": (0.44, 0.53),
+            "Tuolumne":   (0.44, 0.53),
+        },
+        "Comfortable win": {
+            "Alpine":     (0.61, 0.35),
+            "Amador":     (0.40, 0.56),
+            "Calaveras":  (0.42, 0.54),
+            "El Dorado":  (0.47, 0.50),
+            "Inyo":       (0.52, 0.45),
+            "Madera":     (0.41, 0.55),
+            "Mariposa":   (0.44, 0.52),
+            "Merced":     (0.45, 0.51),
+            "Mono":       (0.57, 0.40),
+            "Nevada":     (0.59, 0.38),
+            "Placer":     (0.47, 0.50),
+            "Stanislaus": (0.47, 0.50),
+            "Tuolumne":   (0.47, 0.50),
+        },
+        "Narrow loss": {
+            "Alpine":     (0.52, 0.44),
+            "Amador":     (0.35, 0.61),
+            "Calaveras":  (0.36, 0.60),
+            "El Dorado":  (0.40, 0.57),
+            "Inyo":       (0.44, 0.52),
+            "Madera":     (0.35, 0.61),
+            "Mariposa":   (0.38, 0.58),
+            "Merced":     (0.38, 0.58),
+            "Mono":       (0.50, 0.47),
+            "Nevada":     (0.51, 0.46),
+            "Placer":     (0.40, 0.57),
+            "Stanislaus": (0.41, 0.56),
+            "Tuolumne":   (0.41, 0.56),
+        },
+    }
+
+    # ── Load / initialise election night data ─────────────────────────────────
+    night_path = DATA_DIR / "election_night.csv"
+    gov_path   = DATA_DIR / "governor_night.csv"
+
+    @st.cache_data(show_spinner=False, ttl=60)
+    def load_night_csv(p):
+        try:
+            return pd.read_csv(p)
+        except Exception:
+            return None
+
+    df_night = load_night_csv(str(night_path))
+    df_gov   = load_night_csv(str(gov_path))
+
+    if df_night is None:
+        st.warning("election_night.csv not found. Create it from the template (see repo).")
+        st.stop()
+
+    # Apply mock scenario
+    if mock_scenario != "— none —" and mock_scenario in MOCK_DATA:
+        mock = MOCK_DATA[mock_scenario]
+        for i, row in df_night.iterrows():
+            cn = row.get("county")
+            if cn in mock:
+                d_share, r_share = mock[cn]
+                # Estimate votes from registration & 70% turnout
+                reg = COUNTIES.get(cn, {}).get("registration", 10000)
+                est_votes = int(reg * 0.70)
+                df_night.at[i, "dem_votes"]  = int(est_votes * d_share)
+                df_night.at[i, "rep_votes"]  = int(est_votes * r_share)
+                df_night.at[i, "other_votes"] = max(0, est_votes - int(est_votes*d_share) - int(est_votes*r_share))
+                df_night.at[i, "precincts_reporting"] = df_night.at[i, "precincts_total"]
+        st.info(f"📋 Mock scenario loaded: **{mock_scenario}** — results shown are simulated for testing.")
+
+    # ── District summary ──────────────────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-label">District Summary</div>', unsafe_allow_html=True)
+
+    total_dem  = 0; total_rep  = 0; total_other = 0; total_prec = 0; total_prec_all = 0
+    counties_reporting = 0
+
+    for _, row in df_night.iterrows():
+        d = row.get("dem_votes", 0);  d = 0 if pd.isna(d) else int(d)
+        r = row.get("rep_votes", 0);  r = 0 if pd.isna(r) else int(r)
+        o = row.get("other_votes", 0); o = 0 if pd.isna(o) else int(o)
+        pr = row.get("precincts_reporting", 0); pr = 0 if pd.isna(pr) else int(pr)
+        pt = row.get("precincts_total", 1);     pt = 1 if pd.isna(pt) or pt == 0 else int(pt)
+        total_dem  += d; total_rep  += r; total_other += o
+        total_prec += pr; total_prec_all += pt
+        if d + r + o > 0:
+            counties_reporting += 1
+
+    total_votes = total_dem + total_rep + total_other
+    dist_dem_share = total_dem / total_votes if total_votes > 0 else None
+    pct_precincts  = total_prec / total_prec_all if total_prec_all > 0 else 0
+
+    # Compare reported dem share to model forecast environment
+    fp_env = st.session_state.get("model_forecast_env", 59.80) / 100
+
+    ns1, ns2, ns3, ns4, ns5 = st.columns(5)
+    with ns1:
+        v = f"{dist_dem_share*100:.1f}%" if dist_dem_share else "—"
+        color = ("#1a6b3c" if dist_dem_share and dist_dem_share >= 0.50 else "#b91c1c") if dist_dem_share else "#888"
+        st.markdown(f'<div class="stat-card" style="border-color:{color}"><div class="label">Dem Vote Share</div><div class="value" style="color:{color}">{v}</div><div class="sub">Combined election night</div></div>', unsafe_allow_html=True)
+    with ns2:
+        st.markdown(f'<div class="stat-card"><div class="label">Counties Reporting</div><div class="value">{counties_reporting}/13</div></div>', unsafe_allow_html=True)
+    with ns3:
+        st.markdown(f'<div class="stat-card"><div class="label">Precincts In</div><div class="value">{pct_precincts*100:.0f}%</div><div class="sub">{total_prec:,} of {total_prec_all:,}</div></div>', unsafe_allow_html=True)
+    with ns4:
+        if dist_dem_share:
+            diff = dist_dem_share - fp_env
+            arrow = "▲" if diff >= 0 else "▼"
+            c2 = "#1a6b3c" if diff >= 0 else "#b91c1c"
+            st.markdown(f'<div class="stat-card"><div class="label">vs Model Forecast</div><div class="value" style="color:{c2}">{arrow} {abs(diff)*100:.1f}pt</div><div class="sub">Model: {fp_env*100:.1f}%</div></div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="stat-card"><div class="label">vs Model Forecast</div><div class="value">—</div><div class="sub">No results yet</div></div>', unsafe_allow_html=True)
+    with ns5:
+        total_cast = total_dem + total_rep + total_other
+        st.markdown(f'<div class="stat-card"><div class="label">Total Votes Cast</div><div class="value">{total_cast:,}</div></div>', unsafe_allow_html=True)
+
+    # ── Live win probability ───────────────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Live Win Probability</div>', unsafe_allow_html=True)
+
+    if total_votes > 0 and counties_reporting > 0:
+        # Build a mask: for counties with results, filter simulations where county share ≈ reported
+        # For counties without results, use full simulation range
+        live_mask = np.ones(len(district_share), dtype=bool)
+
+        for _, row in df_night.iterrows():
+            cn  = row.get("county")
+            d2  = row.get("dem_votes",  0); d2  = 0 if pd.isna(d2)  else int(d2)
+            r2  = row.get("rep_votes",  0); r2  = 0 if pd.isna(r2)  else int(r2)
+            o2  = row.get("other_votes",0); o2  = 0 if pd.isna(o2)  else int(o2)
+            tv2 = d2 + r2 + o2
+            if tv2 == 0 or cn not in county_shares:
+                continue
+            reported_share = d2 / tv2
+            # Filter to simulations within ±2 lean SDs of reported share
+            lean_sd = COUNTIES.get(cn, {}).get("lean_sd", 0.02)
+            tol = max(0.03, lean_sd * 2.0)
+            live_mask &= np.abs(county_shares[cn] - reported_share) <= tol
+
+        n_live = int(live_mask.sum())
+        if n_live >= 50:
+            live_share = district_share[live_mask]
+            live_wp    = float(np.mean(live_share >= WIN_THRESHOLD))
+            live_mean  = float(np.mean(live_share))
+
+            lw1, lw2, lw3 = st.columns([1, 2, 2])
+            with lw1:
+                color_wp = "#1a6b3c" if live_wp >= 0.60 else ("#d97706" if live_wp >= 0.40 else "#b91c1c")
+                st.markdown(
+                    f'<div class="win-hero" style="background:linear-gradient(135deg,{color_wp} 0%,{color_wp}cc 100%)">'
+                    f'<div class="wlabel">Win Probability</div>'
+                    f'<div class="wvalue">{live_wp*100:.0f}%</div>'
+                    f'<div class="wsub">{n_live:,} matching simulations</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+            with lw2:
+                st.markdown(f'<div class="stat-card"><div class="label">Projected District Share</div><div class="value">{live_mean*100:.1f}%</div><div class="sub">Mean of filtered simulations</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-card"><div class="label">5th–95th Pct Range</div><div class="value" style="font-size:1.2rem">{np.percentile(live_share,5)*100:.1f}–{np.percentile(live_share,95)*100:.1f}%</div></div>', unsafe_allow_html=True)
+            with lw3:
+                fig_lw, ax_lw = plt.subplots(figsize=(5, 2.5))
+                fig_lw.patch.set_facecolor("#f7f7f5"); ax_lw.set_facecolor("#f7f7f5")
+                ax_lw.hist(live_share*100, bins=40, color="#1a6b3c", alpha=0.75, edgecolor="none", label="Filtered sims")
+                ax_lw.hist(district_share*100, bins=40, color="#888", alpha=0.25, edgecolor="none", label="All sims")
+                ax_lw.axvline(50, color="#b91c1c", linewidth=1.5, linestyle="--")
+                if dist_dem_share:
+                    ax_lw.axvline(dist_dem_share*100, color="#d97706", linewidth=1.5, linestyle="-", label=f"Reported {dist_dem_share*100:.1f}%")
+                ax_lw.set_xlabel("Dem Vote Share (%)", fontsize=7)
+                ax_lw.xaxis.set_major_formatter(mtick.PercentFormatter())
+                ax_lw.spines[["top","right","left"]].set_visible(False)
+                ax_lw.tick_params(labelsize=6)
+                ax_lw.legend(fontsize=6, framealpha=0)
+                plt.tight_layout()
+                st.pyplot(fig_lw, width="stretch"); plt.close()
+        else:
+            st.info(f"Only {n_live} simulations match current results — too few to estimate win probability. Results may be partial or extreme.")
+            st.markdown(f'<div class="stat-card"><div class="label">Pre-results Win Probability</div><div class="value">{float(np.mean(district_share>=WIN_THRESHOLD))*100:.0f}%</div><div class="sub">From prior simulation (no live filter)</div></div>', unsafe_allow_html=True)
+    else:
+        prior_wp = float(np.mean(district_share >= WIN_THRESHOLD))
+        col_pw, _ = st.columns([1, 3])
+        with col_pw:
+            st.markdown(
+                f'<div class="win-hero"><div class="wlabel">Pre-results Win Probability</div>'
+                f'<div class="wvalue">{prior_wp*100:.0f}%</div>'
+                f'<div class="wsub">No results entered yet</div></div>',
+                unsafe_allow_html=True
+            )
+        st.caption("Enter results in the county table below or load a mock scenario to see live filtering.")
+
+    # ── County results table ───────────────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-label">County Results</div>', unsafe_allow_html=True)
+
+    crows = ""
+    for _, row in df_night.iterrows():
+        cn   = row.get("county", "")
+        d3   = row.get("dem_votes",  0); d3 = 0 if pd.isna(d3)  else int(d3)
+        r3   = row.get("rep_votes",  0); r3 = 0 if pd.isna(r3)  else int(r3)
+        o3   = row.get("other_votes",0); o3 = 0 if pd.isna(o3)  else int(o3)
+        tv3  = d3 + r3 + o3
+        pr3  = row.get("precincts_reporting", 0); pr3 = 0 if pd.isna(pr3) else int(pr3)
+        pt3  = row.get("precincts_total", 1);     pt3 = 1 if (pd.isna(pt3) or pt3==0) else int(pt3)
+        pct3 = pr3 / pt3 if pt3 > 0 else 0
+
+        if tv3 > 0:
+            rep_share3 = d3 / tv3
+            model_share3 = forecast_env + COUNTIES.get(cn, {}).get("lean_lin", 0)
+            diff3 = rep_share3 - model_share3
+            share_str = f"{rep_share3*100:.1f}%"
+            diff_str  = f"{'▲' if diff3>=0 else '▼'} {abs(diff3)*100:.1f}pt"
+            diff_col  = "#1a6b3c" if diff3 >= 0 else "#b91c1c"
+            status_icon = "🟢" if rep_share3 >= 0.50 else "🔴"
+        else:
+            share_str = "—"; diff_str = "—"; diff_col = "#888"; status_icon = "⚪"
+
+        pct_str = f"{pct3*100:.0f}%" if pct3 > 0 else "—"
+        crows += (
+            f"<tr><td>{status_icon} {cn}</td>"
+            f"<td>{d3:,}</td><td>{r3:,}</td>"
+            f"<td>{share_str}</td>"
+            f"<td style='color:{diff_col}'>{diff_str}</td>"
+            f"<td>{pct_str}</td></tr>"
+        )
+
+    st.markdown(
+        f'<table class="styled-table">'
+        f'<thead><tr><th>County</th><th>Dem Votes</th><th>Rep Votes</th>'
+        f'<th>Dem Share</th><th>vs Forecast</th><th>Precincts In</th>'
+        f'</tr></thead><tbody>{crows}</tbody></table>'
+        f'<p style="font-size:0.72rem;color:#999;margin-top:0.4rem">'
+        f'🟢 leading · 🔴 trailing · ⚪ no results · vs Forecast uses linear lean</p>',
+        unsafe_allow_html=True
+    )
+
+    # ── Manual data entry ──────────────────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    with st.expander("✏️ Enter / update county results"):
+        st.caption("Edit cells and click **Save results** to write to election_night.csv.")
+        df_edit = df_night[["county","precincts_reporting","precincts_total","dem_votes","rep_votes","other_votes"]].copy()
+        for col in ["dem_votes","rep_votes","other_votes","precincts_reporting"]:
+            df_edit[col] = pd.to_numeric(df_edit[col], errors="coerce").fillna(0).astype(int)
+
+        edited_night = st.data_editor(
+            df_edit,
+            hide_index=True,
+            width="stretch",
+            disabled=["county"],
+            column_config={
+                "county":              st.column_config.TextColumn("County", width="medium"),
+                "precincts_reporting": st.column_config.NumberColumn("Prec. Reporting", min_value=0, step=1),
+                "precincts_total":     st.column_config.NumberColumn("Prec. Total",     min_value=1, step=1),
+                "dem_votes":           st.column_config.NumberColumn("Dem Votes",   min_value=0, step=1),
+                "rep_votes":           st.column_config.NumberColumn("Rep Votes",   min_value=0, step=1),
+                "other_votes":         st.column_config.NumberColumn("Other Votes", min_value=0, step=1),
+            },
+            key="night_editor"
+        )
+        if st.button("💾 Save results", key="night_save"):
+            # Merge back into the full night csv preserving other columns
+            df_out_night = df_night.copy()
+            for col in ["precincts_reporting","precincts_total","dem_votes","rep_votes","other_votes"]:
+                df_out_night[col] = edited_night[col].values
+            import datetime as _dt
+            df_out_night["last_updated"] = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+            df_out_night.to_csv(night_path, index=False)
+            st.success("Results saved to election_night.csv")
+            st.cache_data.clear()
+            st.rerun()
+
+    # ── Governor race panel ───────────────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Governor Race — Environment Validation</div>', unsafe_allow_html=True)
+    st.markdown(
+        "The governor race provides a real-time sanity check on the state environment assumption. "
+        "A governor Dem share significantly above or below the model's predicted environment "
+        "suggests conditions may differ from forecast."
+    )
+
+    if df_gov is not None:
+        gov_dem = 0; gov_rep = 0; gov_other = 0; gov_counties = 0
+        for _, row in df_gov.iterrows():
+            d4 = row.get("dem_votes"); r4 = row.get("rep_votes"); o4 = row.get("other_votes")
+            d4 = 0 if pd.isna(d4) else int(d4)
+            r4 = 0 if pd.isna(r4) else int(r4)
+            o4 = 0 if pd.isna(o4) else int(o4)
+            gov_dem += d4; gov_rep += r4; gov_other += o4
+            if d4 + r4 + o4 > 0:
+                gov_counties += 1
+
+        gov_total = gov_dem + gov_rep + gov_other
+        gv1, gv2, gv3, gv4 = st.columns(4)
+        with gv1:
+            gs = f"{gov_dem/gov_total*100:.1f}%" if gov_total > 0 else "—"
+            st.markdown(f'<div class="stat-card"><div class="label">Governor Dem Share</div><div class="value">{gs}</div><div class="sub">{gov_counties}/13 counties</div></div>', unsafe_allow_html=True)
+        with gv2:
+            if gov_total > 0:
+                g_share = gov_dem / gov_total
+                # Blend: weight governor result by precincts in
+                blend_wt  = pct_precincts  # fraction of SD4 precincts reported
+                gov_blend = blend_wt * g_share + (1 - blend_wt) * fp_env
+                st.markdown(f'<div class="stat-card"><div class="label">Gov → Adjusted Env</div><div class="value">{gov_blend*100:.1f}%</div><div class="sub">{blend_wt*100:.0f}% weight on live results</div></div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="stat-card"><div class="label">Gov → Adjusted Env</div><div class="value">—</div></div>', unsafe_allow_html=True)
+        with gv3:
+            st.markdown(f'<div class="stat-card"><div class="label">Model Forecast Env</div><div class="value">{fp_env*100:.1f}%</div></div>', unsafe_allow_html=True)
+        with gv4:
+            if gov_total > 0:
+                g_share = gov_dem / gov_total
+                diff_g  = g_share - fp_env
+                c_g = "#1a6b3c" if diff_g >= 0 else "#b91c1c"
+                st.markdown(f'<div class="stat-card"><div class="label">Gov vs Forecast</div><div class="value" style="color:{c_g}">{"▲" if diff_g>=0 else "▼"} {abs(diff_g)*100:.1f}pt</div></div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="stat-card"><div class="label">Gov vs Forecast</div><div class="value">—</div></div>', unsafe_allow_html=True)
+
+        with st.expander("✏️ Enter governor results"):
+            df_gov_edit = df_gov[["county","dem_votes","rep_votes","other_votes"]].copy()
+            for col in ["dem_votes","rep_votes","other_votes"]:
+                df_gov_edit[col] = pd.to_numeric(df_gov_edit[col], errors="coerce").fillna(0).astype(int)
+            edited_gov = st.data_editor(
+                df_gov_edit, hide_index=True, width="stretch", disabled=["county"],
+                column_config={
+                    "county":      st.column_config.TextColumn("County", width="medium"),
+                    "dem_votes":   st.column_config.NumberColumn("Dem Votes",   min_value=0, step=1),
+                    "rep_votes":   st.column_config.NumberColumn("Rep Votes",   min_value=0, step=1),
+                    "other_votes": st.column_config.NumberColumn("Other Votes", min_value=0, step=1),
+                },
+                key="gov_editor"
+            )
+            if st.button("💾 Save governor results", key="gov_save"):
+                df_gov_out = df_gov.copy()
+                for col in ["dem_votes","rep_votes","other_votes"]:
+                    df_gov_out[col] = edited_gov[col].values
+                import datetime as _dt2
+                df_gov_out["last_updated"] = _dt2.datetime.now().strftime("%Y-%m-%d %H:%M")
+                df_gov_out.to_csv(gov_path, index=False)
+                st.success("Governor results saved.")
+                st.cache_data.clear()
+                st.rerun()
+    else:
+        st.info("governor_night.csv not found. Create it from the template in the repo.")
+
+    # ── Auto-refresh logic ────────────────────────────────────────────────────
+    if auto_refresh:
+        st.caption("⏱ Auto-refreshing every 10 minutes. Toggle off to stop.")
+        _time.sleep(600)
+        st.rerun()
