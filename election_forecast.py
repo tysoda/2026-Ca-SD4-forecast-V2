@@ -1441,7 +1441,7 @@ with tab_night:
     )
 
     # ── Mock scenario controls ────────────────────────────────────────────────
-    MOCK_DIR = DATA_DIR.parent / "mock_results"
+    MOCK_DIR = DATA_DIR / "mock_results"
     MOCK_SCENARIOS = {
         "— none —":      None,
         "Narrow win":    "narrow_win",
