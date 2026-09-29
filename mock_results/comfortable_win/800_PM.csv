@@ -1,0 +1,14 @@
+county,precincts_reporting,precincts_total,dem_votes,rep_votes,other_votes,mail_dem,mail_rep,mail_other,source,last_updated
+Alpine,3,6,332,63,0,304,51,0,mock,8:00 PM
+Amador,29,68,4432,4402,0,4025,3748,0,mock,8:00 PM
+Calaveras,31,81,4285,4998,0,4017,4430,0,mock,8:00 PM
+El Dorado,30,155,11037,7747,0,9774,6380,0,mock,8:00 PM
+Inyo,23,42,2683,1502,0,2445,1279,0,mock,8:00 PM
+Madera,22,113,2110,1995,0,1756,1528,0,mock,8:00 PM
+Mariposa,19,34,2656,2262,0,2503,2021,0,mock,8:00 PM
+Merced,20,128,496,475,0,403,354,0,mock,8:00 PM
+Mono,15,27,2352,795,0,2223,703,0,mock,8:00 PM
+Nevada,32,70,3740,403,0,3516,378,0,mock,8:00 PM
+Placer,35,233,744,105,0,659,79,0,mock,8:00 PM
+Stanislaus,42,230,17986,12433,0,15070,9569,0,mock,8:00 PM
+Tuolumne,24,69,4513,3974,0,4175,3463,0,mock,8:00 PM

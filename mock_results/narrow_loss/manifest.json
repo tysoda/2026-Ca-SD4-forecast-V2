@@ -1,0 +1,16 @@
+{
+  "scenario": "narrow_loss",
+  "description": "Narrow loss (~47% district)",
+  "waves": [
+    "800_PM",
+    "900_PM",
+    "1100_PM",
+    "Next_Day_Final"
+  ],
+  "wave_labels": [
+    "8:00 PM",
+    "9:00 PM",
+    "11:00 PM",
+    "Next Day (Final)"
+  ]
+}

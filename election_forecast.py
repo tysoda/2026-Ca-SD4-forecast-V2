@@ -1432,74 +1432,46 @@ with tab_hood:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_night:
     import time as _time
+    import json as _json
 
     st.markdown("## 🌙 Election Night Tracker")
     st.markdown(
-        "Live results for SD4 counties. Enter results manually or load from a CSV. "
-        "Win probability updates in real time by filtering simulations to match reported results."
+        "Live results for SD4 counties. Enter results manually or step through a mock simulation "
+        "to see how win probability updates as votes come in."
     )
 
-    # ── Controls row ──────────────────────────────────────────────────────────
-    nc1, nc2, nc3, nc4 = st.columns([2, 1, 1, 2])
-    with nc1:
-        auto_refresh = st.toggle("Auto-refresh every 10 min", value=False, key="night_auto_refresh")
-    with nc2:
-        manual_refresh = st.button("🔄 Refresh now", key="night_manual_refresh")
-    with nc3:
-        mock_scenario = st.selectbox("Load mock results", ["— none —", "Narrow win", "Comfortable win", "Narrow loss"], key="night_mock")
+    # ── Mock scenario controls ────────────────────────────────────────────────
+    MOCK_DIR = DATA_DIR.parent / "mock_results"
+    MOCK_SCENARIOS = {
+        "— none —":      None,
+        "Narrow win":    "narrow_win",
+        "Comfortable win": "comfortable_win",
+        "Narrow loss":   "narrow_loss",
+    }
+    WAVE_LABELS_DISPLAY = ["8:00 PM", "9:00 PM", "11:00 PM", "Next Day (Final)"]
+    WAVE_FILENAMES      = ["800_PM.csv", "900_PM.csv", "1100_PM.csv", "Next_Day_Final.csv"]
+
+    mc1, mc2, mc3, mc4 = st.columns([2, 2, 1, 1])
+    with mc1:
+        mock_scenario_label = st.selectbox(
+            "Mock scenario", list(MOCK_SCENARIOS.keys()), key="night_mock_scenario"
+        )
+    with mc2:
+        mock_wave_idx = st.select_slider(
+            "Reporting wave",
+            options=list(range(len(WAVE_LABELS_DISPLAY))),
+            format_func=lambda i: WAVE_LABELS_DISPLAY[i],
+            value=0,
+            key="night_mock_wave",
+            disabled=(mock_scenario_label == "— none —"),
+        )
+    with mc3:
+        auto_refresh = st.toggle("Auto-refresh", value=False, key="night_auto_refresh")
+    with mc4:
+        manual_refresh = st.button("🔄 Refresh", key="night_manual_refresh")
 
     if manual_refresh:
         st.rerun()
-
-    # ── Mock data loader ──────────────────────────────────────────────────────
-    MOCK_DATA = {
-        "Narrow win": {
-            # Dem ~51% across district: good base Tuolumne + flips Mono/Inyo, barely holds urban
-            "Alpine":     (0.56, 0.40),
-            "Amador":     (0.38, 0.58),
-            "Calaveras":  (0.39, 0.57),
-            "El Dorado":  (0.44, 0.53),
-            "Inyo":       (0.48, 0.48),
-            "Madera":     (0.38, 0.58),
-            "Mariposa":   (0.41, 0.55),
-            "Merced":     (0.41, 0.55),
-            "Mono":       (0.54, 0.43),
-            "Nevada":     (0.55, 0.42),
-            "Placer":     (0.44, 0.53),
-            "Stanislaus": (0.44, 0.53),
-            "Tuolumne":   (0.44, 0.53),
-        },
-        "Comfortable win": {
-            "Alpine":     (0.61, 0.35),
-            "Amador":     (0.40, 0.56),
-            "Calaveras":  (0.42, 0.54),
-            "El Dorado":  (0.47, 0.50),
-            "Inyo":       (0.52, 0.45),
-            "Madera":     (0.41, 0.55),
-            "Mariposa":   (0.44, 0.52),
-            "Merced":     (0.45, 0.51),
-            "Mono":       (0.57, 0.40),
-            "Nevada":     (0.59, 0.38),
-            "Placer":     (0.47, 0.50),
-            "Stanislaus": (0.47, 0.50),
-            "Tuolumne":   (0.47, 0.50),
-        },
-        "Narrow loss": {
-            "Alpine":     (0.52, 0.44),
-            "Amador":     (0.35, 0.61),
-            "Calaveras":  (0.36, 0.60),
-            "El Dorado":  (0.40, 0.57),
-            "Inyo":       (0.44, 0.52),
-            "Madera":     (0.35, 0.61),
-            "Mariposa":   (0.38, 0.58),
-            "Merced":     (0.38, 0.58),
-            "Mono":       (0.50, 0.47),
-            "Nevada":     (0.51, 0.46),
-            "Placer":     (0.40, 0.57),
-            "Stanislaus": (0.41, 0.56),
-            "Tuolumne":   (0.41, 0.56),
-        },
-    }
 
     # ── Load / initialise election night data ─────────────────────────────────
     night_path = DATA_DIR / "election_night.csv"
@@ -1512,28 +1484,39 @@ with tab_night:
         except Exception:
             return None
 
-    df_night = load_night_csv(str(night_path))
-    df_gov   = load_night_csv(str(gov_path))
+    @st.cache_data(show_spinner=False, ttl=300)
+    def load_mock_wave(scenario_key, wave_filename):
+        """Load a wave CSV from mock_results/<scenario>/<wave>.csv"""
+        try:
+            p = MOCK_DIR / scenario_key / wave_filename
+            return pd.read_csv(p)
+        except Exception:
+            return None
 
-    if df_night is None:
+    df_night_base = load_night_csv(str(night_path))
+    if df_night_base is None:
         st.warning("election_night.csv not found. Create it from the template (see repo).")
         st.stop()
 
-    # Apply mock scenario
-    if mock_scenario != "— none —" and mock_scenario in MOCK_DATA:
-        mock = MOCK_DATA[mock_scenario]
-        for i, row in df_night.iterrows():
-            cn = row.get("county")
-            if cn in mock:
-                d_share, r_share = mock[cn]
-                # Estimate votes from registration & 70% turnout
-                reg = COUNTIES.get(cn, {}).get("registration", 10000)
-                est_votes = int(reg * 0.70)
-                df_night.at[i, "dem_votes"]  = int(est_votes * d_share)
-                df_night.at[i, "rep_votes"]  = int(est_votes * r_share)
-                df_night.at[i, "other_votes"] = max(0, est_votes - int(est_votes*d_share) - int(est_votes*r_share))
-                df_night.at[i, "precincts_reporting"] = df_night.at[i, "precincts_total"]
-        st.info(f"📋 Mock scenario loaded: **{mock_scenario}** — results shown are simulated for testing.")
+    # Apply mock wave if selected
+    mock_key = MOCK_SCENARIOS[mock_scenario_label]
+    if mock_key is not None:
+        wave_file = WAVE_FILENAMES[mock_wave_idx]
+        df_mock = load_mock_wave(mock_key, wave_file)
+        if df_mock is not None:
+            df_night = df_mock.copy()
+            st.info(
+                f"📋 Mock: **{mock_scenario_label}** · "
+                f"**{WAVE_LABELS_DISPLAY[mock_wave_idx]}** wave — simulated results for testing."
+            )
+        else:
+            df_night = df_night_base.copy()
+            st.warning(
+                f"Mock wave file not found: mock_results/{mock_key}/{wave_file}. "
+                "Run `python3 generate_mock_results.py --scenario all` to generate them."
+            )
+    else:
+        df_night = df_night_base.copy()
 
     # ── District summary ──────────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1736,75 +1719,94 @@ with tab_night:
 
     # ── Governor race panel ───────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown('<div class="section-label">Governor Race — Environment Validation</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Governor Race — Statewide Environment Check</div>', unsafe_allow_html=True)
     st.markdown(
-        "The governor race provides a real-time sanity check on the state environment assumption. "
-        "A governor Dem share significantly above or below the model's predicted environment "
-        "suggests conditions may differ from forecast."
+        "Statewide governor results provide a real-time read on the political environment. "
+        "A governor Dem share above or below the model's predicted environment suggests "
+        "conditions may differ from forecast."
     )
 
-    if df_gov is not None:
-        gov_dem = 0; gov_rep = 0; gov_other = 0; gov_counties = 0
-        for _, row in df_gov.iterrows():
-            d4 = row.get("dem_votes"); r4 = row.get("rep_votes"); o4 = row.get("other_votes")
-            d4 = 0 if pd.isna(d4) else int(d4)
-            r4 = 0 if pd.isna(r4) else int(r4)
-            o4 = 0 if pd.isna(o4) else int(o4)
-            gov_dem += d4; gov_rep += r4; gov_other += o4
-            if d4 + r4 + o4 > 0:
-                gov_counties += 1
+    # Load statewide governor totals from session state (persists across reruns)
+    gov_dem_state   = int(st.session_state.get("gov_dem_state",   0))
+    gov_rep_state   = int(st.session_state.get("gov_rep_state",   0))
+    gov_other_state = int(st.session_state.get("gov_other_state", 0))
+    gov_updated     = st.session_state.get("gov_updated", "—")
 
-        gov_total = gov_dem + gov_rep + gov_other
-        gv1, gv2, gv3, gv4 = st.columns(4)
-        with gv1:
-            gs = f"{gov_dem/gov_total*100:.1f}%" if gov_total > 0 else "—"
-            st.markdown(f'<div class="stat-card"><div class="label">Governor Dem Share</div><div class="value">{gs}</div><div class="sub">{gov_counties}/13 counties</div></div>', unsafe_allow_html=True)
-        with gv2:
-            if gov_total > 0:
-                g_share = gov_dem / gov_total
-                # Blend: weight governor result by precincts in
-                blend_wt  = pct_precincts  # fraction of SD4 precincts reported
-                gov_blend = blend_wt * g_share + (1 - blend_wt) * fp_env
-                st.markdown(f'<div class="stat-card"><div class="label">Gov → Adjusted Env</div><div class="value">{gov_blend*100:.1f}%</div><div class="sub">{blend_wt*100:.0f}% weight on live results</div></div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div class="stat-card"><div class="label">Gov → Adjusted Env</div><div class="value">—</div></div>', unsafe_allow_html=True)
-        with gv3:
-            st.markdown(f'<div class="stat-card"><div class="label">Model Forecast Env</div><div class="value">{fp_env*100:.1f}%</div></div>', unsafe_allow_html=True)
-        with gv4:
-            if gov_total > 0:
-                g_share = gov_dem / gov_total
-                diff_g  = g_share - fp_env
-                c_g = "#1a6b3c" if diff_g >= 0 else "#b91c1c"
-                st.markdown(f'<div class="stat-card"><div class="label">Gov vs Forecast</div><div class="value" style="color:{c_g}">{"▲" if diff_g>=0 else "▼"} {abs(diff_g)*100:.1f}pt</div></div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div class="stat-card"><div class="label">Gov vs Forecast</div><div class="value">—</div></div>', unsafe_allow_html=True)
+    gov_total = gov_dem_state + gov_rep_state + gov_other_state
 
-        with st.expander("✏️ Enter governor results"):
-            df_gov_edit = df_gov[["county","dem_votes","rep_votes","other_votes"]].copy()
-            for col in ["dem_votes","rep_votes","other_votes"]:
-                df_gov_edit[col] = pd.to_numeric(df_gov_edit[col], errors="coerce").fillna(0).astype(int)
-            edited_gov = st.data_editor(
-                df_gov_edit, hide_index=True, width="stretch", disabled=["county"],
-                column_config={
-                    "county":      st.column_config.TextColumn("County", width="medium"),
-                    "dem_votes":   st.column_config.NumberColumn("Dem Votes",   min_value=0, step=1),
-                    "rep_votes":   st.column_config.NumberColumn("Rep Votes",   min_value=0, step=1),
-                    "other_votes": st.column_config.NumberColumn("Other Votes", min_value=0, step=1),
-                },
-                key="gov_editor"
+    gv1, gv2, gv3, gv4 = st.columns(4)
+    with gv1:
+        gs = f"{gov_dem_state/gov_total*100:.1f}%" if gov_total > 0 else "—"
+        color_gs = ("#1a6b3c" if gov_total > 0 and gov_dem_state/gov_total >= 0.50 else "#b91c1c") if gov_total > 0 else "#888"
+        st.markdown(
+            f'<div class="stat-card" style="border-color:{color_gs}">'
+            f'<div class="label">Gov Dem Share</div>'
+            f'<div class="value" style="color:{color_gs}">{gs}</div>'
+            f'<div class="sub">Statewide · {gov_dem_state:,} D / {gov_rep_state:,} R</div>'
+            f'</div>', unsafe_allow_html=True
+        )
+    with gv2:
+        if gov_total > 0:
+            g_share   = gov_dem_state / gov_total
+            blend_wt  = pct_precincts
+            gov_blend = blend_wt * g_share + (1 - blend_wt) * fp_env
+            st.markdown(
+                f'<div class="stat-card"><div class="label">Gov → Adjusted Env</div>'
+                f'<div class="value">{gov_blend*100:.1f}%</div>'
+                f'<div class="sub">{blend_wt*100:.0f}% weight on live results</div>'
+                f'</div>', unsafe_allow_html=True
             )
-            if st.button("💾 Save governor results", key="gov_save"):
-                df_gov_out = df_gov.copy()
-                for col in ["dem_votes","rep_votes","other_votes"]:
-                    df_gov_out[col] = edited_gov[col].values
-                import datetime as _dt2
-                df_gov_out["last_updated"] = _dt2.datetime.now().strftime("%Y-%m-%d %H:%M")
-                df_gov_out.to_csv(gov_path, index=False)
-                st.success("Governor results saved.")
-                st.cache_data.clear()
-                st.rerun()
-    else:
-        st.info("governor_night.csv not found. Create it from the template in the repo.")
+        else:
+            st.markdown(
+                f'<div class="stat-card"><div class="label">Gov → Adjusted Env</div>'
+                f'<div class="value">—</div><div class="sub">No results yet</div></div>',
+                unsafe_allow_html=True
+            )
+    with gv3:
+        st.markdown(
+            f'<div class="stat-card"><div class="label">Model Forecast Env</div>'
+            f'<div class="value">{fp_env*100:.1f}%</div></div>',
+            unsafe_allow_html=True
+        )
+    with gv4:
+        if gov_total > 0:
+            g_share = gov_dem_state / gov_total
+            diff_g  = g_share - fp_env
+            c_g     = "#1a6b3c" if diff_g >= 0 else "#b91c1c"
+            st.markdown(
+                f'<div class="stat-card"><div class="label">Gov vs Forecast</div>'
+                f'<div class="value" style="color:{c_g}">{"▲" if diff_g>=0 else "▼"} {abs(diff_g)*100:.1f}pt</div>'
+                f'<div class="sub">Updated: {gov_updated}</div></div>',
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                f'<div class="stat-card"><div class="label">Gov vs Forecast</div>'
+                f'<div class="value">—</div></div>',
+                unsafe_allow_html=True
+            )
+
+    with st.expander("✏️ Enter statewide governor totals"):
+        st.caption(
+            "Enter the statewide running totals for the governor race "
+            "(Dem and Rep vote counts). These are used to estimate the live environment."
+        )
+        ge1, ge2, ge3 = st.columns(3)
+        with ge1:
+            new_gov_dem   = st.number_input("Dem votes (statewide)", min_value=0, value=gov_dem_state,   step=1000, key="gov_dem_input")
+        with ge2:
+            new_gov_rep   = st.number_input("Rep votes (statewide)", min_value=0, value=gov_rep_state,   step=1000, key="gov_rep_input")
+        with ge3:
+            new_gov_other = st.number_input("Other votes",           min_value=0, value=gov_other_state, step=1000, key="gov_other_input")
+
+        if st.button("💾 Save governor totals", key="gov_save"):
+            import datetime as _dt2
+            st.session_state["gov_dem_state"]   = new_gov_dem
+            st.session_state["gov_rep_state"]   = new_gov_rep
+            st.session_state["gov_other_state"] = new_gov_other
+            st.session_state["gov_updated"]     = _dt2.datetime.now().strftime("%H:%M")
+            st.success("Governor totals updated.")
+            st.rerun()
 
     # ── Auto-refresh logic ────────────────────────────────────────────────────
     if auto_refresh:
