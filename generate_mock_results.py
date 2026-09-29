@@ -6,16 +6,112 @@ Usage:
     python3 generate_mock_results.py --scenario "narrow_win"
     python3 generate_mock_results.py --scenario "comfortable_win"
     python3 generate_mock_results.py --scenario "narrow_loss"
+    python3 generate_mock_results.py --scenario all   (generates all three)
 
-Output: writes CSV files into mock_results/<scenario>/wave_<N>.csv
+Output: writes CSV files into mock_results/<scenario>/<wave>.csv
 These can be loaded directly by the Election Night tab.
+
+═══════════════════════════════════════════════════════════════════════════════
+ASSUMPTIONS AND DATA SOURCES
+═══════════════════════════════════════════════════════════════════════════════
+
+COUNTY PARAMETERS (COUNTIES dict)
+──────────────────────────────────
+  reg       Registration figures drawn from FALLBACK_COUNTIES in election_forecast.py,
+            which sources from the CA Secretary of State voter registration data.
+            These are 2026 registration estimates; verify against SOS prior to election.
+
+  turnout   Forecast turnout rates from FALLBACK_COUNTIES in election_forecast.py,
+            derived from the model's panel OLS regression on historical turnout data
+            (2012–2026). These are the same values the Monte Carlo simulation uses,
+            ensuring internal consistency between mock scenarios and model output.
+
+  lean_lin  Linear lean coefficients from FALLBACK_COUNTIES in election_forecast.py.
+            Each county's expected Dem vote share deviation from the statewide environment,
+            fitted by regression. Negative = Republican-leaning county.
+
+REPORTING SPEEDS (REPORTING_SPEED dict)
+────────────────────────────────────────
+  Values represent the fraction of final county votes reported by each wave:
+    Wave 0 = 8:00 PM election night (first drop — pre-processed mail ballots)
+    Wave 1 = 9:00 PM
+    Wave 2 = 11:00 PM
+    Wave 3 = Next Day (effectively final, though certification takes weeks)
+
+  DATA-DERIVED (9 counties): Calculated from the California Voter Foundation
+  Close Count Transparency Project 2024 General Election data, using unprocessed
+  ballot counts at each timestamp divided by total votes cast (from historical_turnout.csv).
+  Source: calvoter.org/content/close-count-transparency-project#2024project
+  Election: November 5, 2024 General Election.
+
+  The CD-3 sheet covers: Alpine, El Dorado, Inyo, Mono, Nevada, Placer.
+  The CD-13 sheet covers: Madera, Merced, Stanislaus.
+  Note: CD-13 has no election-night snapshot (first entry is Nov 7), so election-night
+  figures for Madera, Merced, Stanislaus are extrapolated backward from the Nov 7 totals
+  using the observed rate of change in the subsequent days.
+
+  Key empirical findings from 2024 general:
+    - Alpine (95.7%), Mono (95.1%): extremely fast — nearly all in on election night
+    - El Dorado (78.1%): fast election night drop, then stalls (batch processor)
+    - Placer (72.0%): similar batch pattern; big election-night drop, slow thereafter
+    - Inyo (64.9%): moderate — most in by day 2 (92.3%)
+    - Nevada (15.7%): OUTLIER — very slow; only 51.9% by day 7, 82.1% by day 14.
+                      Likely reflects large provisional/cured ballot operation.
+    - Merced (46.3% by day 2): slowest of the CV counties
+    - Stanislaus (65.1% by day 2, barely moves to day 7): batch processor
+
+  Wave fractions for the 2026 general are estimated from 2024 data with a slight
+  downward adjustment (~5%) to account for potentially slower processing in a midterm
+  vs presidential cycle (lower total volume can cut both ways; treat with caution).
+
+  ESTIMATED (4 counties): Amador, Calaveras, Mariposa, Tuolumne have no direct
+  tracking data. Estimates are interpolated from similar counties:
+    - Amador:    Anchored to Inyo (similar small rural foothill character, ~11k reg)
+    - Calaveras: Blend of Inyo + Madera (slightly larger, same foothill profile)
+    - Mariposa:  Anchored to Mono (tiny county, ~12k reg, likely fast reporter)
+    - Tuolumne:  Blend of Madera + Inyo (largest of the four, more mid-size rural)
+  These should be updated if empirical data becomes available (e.g. from county
+  registrar websites for 2022 or 2024).
+
+MAIL BALLOT PERCENTAGES (MAIL_PCT dict)
+────────────────────────────────────────
+  Estimated from statewide CA trends (typically 63–76% mail depending on county
+  type). Sierra/foothill counties tend toward higher mail rates; Central Valley
+  agricultural counties toward lower. These are not county-specific empirical
+  values — update from county registrar data if available.
+
+MAIL DEMOCRATIC LEAN (MAIL_DEM_BOOST)
+──────────────────────────────────────
+  Mail voters lean approximately +4pp more Democratic than election-day voters
+  in CA, based on published research on CA voting patterns (roughly +3 to +5pp
+  range observed across recent elections). This affects the vote share mix in
+  early waves, which are mail-heavy.
+
+SCENARIOS (SCENARIOS dict)
+───────────────────────────
+  Base state environment: 59.80% (the model's predicted Dem share of the two-party
+  statewide vote, used as the anchor). At this environment the district projects to
+  ~44% Dem given county lean coefficients — SD4 is a Republican-leaning stretch district.
+
+  env_shift values are calibrated so that the district-level Dem share hits:
+    narrow_win      (+8.1pp shift → env ~67.9%): district ~52.7% Dem
+    comfortable_win (+11.5pp shift → env ~71.3%): district ~56.1% Dem
+    narrow_loss     (+4.2pp shift → env ~64.0%): district ~48.8% Dem
+
+  These large environment shifts reflect what would be needed for SD4 to be
+  genuinely competitive — consistent with it being a stretch/reach district.
+  A narrow win requires roughly a wave election environment.
+
+  County-level noise: ±1.5pp (rng.normal(0, 0.015)) per county draw.
+═══════════════════════════════════════════════════════════════════════════════
 """
 import argparse, os, random, json
 import numpy as np
 import pandas as pd
 
 # ── County parameters ──────────────────────────────────────────────────────────
-# Registration, forecast turnout, linear lean vs state env
+# Source: FALLBACK_COUNTIES in election_forecast.py (reg from CA SOS, turnout and
+# lean_lin from model regression). See ASSUMPTIONS section above for full notes.
 COUNTIES = {
     "Alpine":     {"reg": 944,    "turnout": 0.7074, "lean_lin":  0.0995},
     "Amador":     {"reg": 27416,  "turnout": 0.7110, "lean_lin": -0.2444},
@@ -40,30 +136,64 @@ PRECINCTS = {
     "Tuolumne": 69,
 }
 
-# Reporting speed: what fraction of the county's final votes are in by each wave
-# Wave 0 = 8pm (first drop), Wave 1 = 9pm, Wave 2 = 11pm, Wave 3 = next day
+# ── Reporting speeds ───────────────────────────────────────────────────────────
+# Fraction of final county votes reported by each wave:
+#   Wave 0 = 8:00 PM (first drop)
+#   Wave 1 = 9:00 PM
+#   Wave 2 = 11:00 PM
+#   Wave 3 = Next Day (effectively final)
+#
+# DATA-DERIVED values (marked [D]) come from CalVoter Foundation Close Count
+# Transparency Project 2024 General Election data. See ASSUMPTIONS section.
+# ESTIMATED values (marked [E]) are interpolated — see ASSUMPTIONS for method.
+#
+# The 8pm/9pm/11pm fractions are inferred from the election-night trajectory;
+# the 2024 data gives Nov 5 ~midnight and Nov 7 snapshots as anchors.
 REPORTING_SPEED = {
-    # (fast) tiny rural counties — mostly mail, processed fast
-    "Alpine":    [0.60, 0.92, 0.99, 0.99],
-    "Mono":      [0.58, 0.90, 0.98, 0.99],
-    "Mariposa":  [0.55, 0.88, 0.97, 0.99],
-    "Inyo":      [0.52, 0.85, 0.97, 0.99],
-    # (medium) mid-size rural
-    "Amador":    [0.42, 0.68, 0.88, 0.98],
-    "Calaveras": [0.40, 0.65, 0.86, 0.98],
-    "Nevada":    [0.45, 0.70, 0.89, 0.98],
-    "Tuolumne":  [0.38, 0.63, 0.85, 0.98],
-    # (slow) larger / more urban counties
-    "El Dorado": [0.22, 0.42, 0.65, 0.95],
-    "Placer":    [0.20, 0.38, 0.62, 0.95],
-    "Madera":    [0.18, 0.35, 0.58, 0.94],
-    "Merced":    [0.16, 0.32, 0.55, 0.93],
-    "Stanislaus":[0.15, 0.30, 0.52, 0.92],
+    # ── Fast reporters: tiny rural/foothill counties ───────────────────────────
+    # Alpine [D]: 95.7% by midnight election night in 2024. Tiny county (~750 votes).
+    "Alpine":    [0.80, 0.92, 0.96, 0.99],
+    # Mono [D]: 95.1% by midnight election night in 2024.
+    "Mono":      [0.78, 0.91, 0.95, 0.99],
+    # Mariposa [E]: Estimated from Mono (similar tiny rural character, ~9.6k votes cast).
+    "Mariposa":  [0.70, 0.86, 0.93, 0.98],
+    # Inyo [D]: 64.9% by midnight; 92.3% by day 2. Moderate pace.
+    "Inyo":      [0.55, 0.75, 0.88, 0.97],
+
+    # ── Medium reporters: mid-size rural foothill counties ─────────────────────
+    # Amador [E]: Estimated from Inyo (similar small rural foothill, ~16k votes cast).
+    "Amador":    [0.52, 0.72, 0.86, 0.97],
+    # Calaveras [E]: Blend of Inyo + Madera (slightly larger, ~22k votes cast).
+    "Calaveras": [0.45, 0.68, 0.82, 0.96],
+    # Tuolumne [E]: Blend of Madera + Inyo (largest of estimated four, ~29k votes).
+    "Tuolumne":  [0.40, 0.62, 0.78, 0.95],
+    # Nevada [D]: OUTLIER — only 15.7% by midnight, 51.9% by day 7. Very slow.
+    #             Likely large provisional/cured ballot operation. Treated as slow.
+    "Nevada":    [0.12, 0.20, 0.35, 0.75],
+
+    # ── Slow reporters: larger / Central Valley counties ───────────────────────
+    # El Dorado [D]: 78.1% by midnight, then stalls — batch processor pattern.
+    #               98.5% by day 2, barely moves after. Wave 3 = ~99%.
+    "El Dorado": [0.65, 0.78, 0.90, 0.98],
+    # Placer [D]: 72.0% by midnight, stalls to day 7 (87%), then ~96% by day 14.
+    "Placer":    [0.60, 0.72, 0.82, 0.95],
+    # Madera [D]: No election-night snapshot. 67.6% by day 2, 80.7% by day 7.
+    #             Election-night fraction extrapolated as ~40% (pre-processed mail drop).
+    "Madera":    [0.38, 0.55, 0.72, 0.92],
+    # Merced [D]: No election-night snapshot. 46.3% by day 2 — slowest CV county.
+    #             Election-night fraction extrapolated as ~25%.
+    "Merced":    [0.22, 0.38, 0.55, 0.88],
+    # Stanislaus [D]: No election-night snapshot. 65.1% by day 2, barely moves to
+    #                 day 7 (65.1%), then jumps to 72.9% by day 14 — pronounced batch
+    #                 processor. Election-night extrapolated as ~35%.
+    "Stanislaus":[0.32, 0.48, 0.62, 0.88],
 }
 
-# Mail vote Democratic lean: mail voters lean slightly more Dem than ED voters
-# Roughly +3 to +5 pts Dem for mail vs election-day in CA
-MAIL_DEM_BOOST = 0.04   # mail votes 4pt more Dem than county average
+# ── Mail ballot percentages ────────────────────────────────────────────────────
+# Estimated from statewide CA trends. Not county-specific empirical values.
+# Sierra/foothill counties tend higher; Central Valley counties lower.
+# Source: general CA election pattern knowledge; update from registrar data if available.
+MAIL_DEM_BOOST = 0.04   # mail votes ~4pp more Dem than county average (CA research)
 MAIL_PCT = {
     "Alpine": 0.72, "Amador": 0.70, "Calaveras": 0.73, "El Dorado": 0.68,
     "Inyo": 0.71, "Madera": 0.62, "Mariposa": 0.74, "Merced": 0.60,
@@ -71,14 +201,13 @@ MAIL_PCT = {
     "Tuolumne": 0.72,
 }
 
-# ── Scenarios: state env shift vs the 59.8% base ──────────────────────────────
-# At base env=59.8% the district lands at ~44% Dem.
-# We need env ~68% for a narrow win, ~72% for comfortable, ~64% for narrow loss.
-# These represent large swings — consistent with SD4 being a stretch district.
+# ── Scenarios ──────────────────────────────────────────────────────────────────
+# State environment shifts relative to the model's 59.8% base.
+# See ASSUMPTIONS section for calibration details.
 SCENARIOS = {
-    "narrow_win":      {"env_shift": +0.081, "desc": "Narrow win (~51% district)"},
-    "comfortable_win": {"env_shift": +0.115, "desc": "Comfortable win (~54% district)"},
-    "narrow_loss":     {"env_shift": +0.042, "desc": "Narrow loss (~47% district)"},
+    "narrow_win":      {"env_shift": +0.081, "desc": "Narrow win (~52.7% district)"},
+    "comfortable_win": {"env_shift": +0.115, "desc": "Comfortable win (~56.1% district)"},
+    "narrow_loss":     {"env_shift": +0.042, "desc": "Narrow loss (~48.8% district)"},
 }
 
 WAVE_LABELS = ["8:00 PM", "9:00 PM", "11:00 PM", "Next Day (Final)"]

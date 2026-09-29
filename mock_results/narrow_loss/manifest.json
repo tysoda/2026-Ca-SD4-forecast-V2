@@ -1,6 +1,6 @@
 {
   "scenario": "narrow_loss",
-  "description": "Narrow loss (~47% district)",
+  "description": "Narrow loss (~48.8% district)",
   "waves": [
     "800_PM",
     "900_PM",

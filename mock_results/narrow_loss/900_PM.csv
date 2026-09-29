@@ -1,14 +1,14 @@
 county,precincts_reporting,precincts_total,dem_votes,rep_votes,other_votes,mail_dem,mail_rep,mail_other,source,last_updated
 Alpine,5,6,445,144,0,373,104,0,mock,9:00 PM
-Amador,43,68,5246,7321,0,4473,5580,0,mock,9:00 PM
-Calaveras,50,81,5362,9047,0,4747,7212,0,mock,9:00 PM
-El Dorado,64,155,20226,20192,0,16655,14871,0,mock,9:00 PM
-Inyo,34,42,3473,2853,0,2947,2177,0,mock,9:00 PM
-Madera,44,113,3458,4635,0,2657,3169,0,mock,9:00 PM
-Mariposa,30,34,3417,4107,0,3024,3265,0,mock,9:00 PM
-Merced,34,128,754,988,0,562,657,0,mock,9:00 PM
-Mono,23,27,3057,1586,0,2696,1250,0,mock,9:00 PM
-Nevada,50,70,5461,1028,0,4824,756,0,mock,9:00 PM
-Placer,90,233,1712,444,0,1400,303,0,mock,9:00 PM
-Stanislaus,58,230,21742,19973,0,16782,13669,0,mock,9:00 PM
-Tuolumne,40,69,6120,7822,0,5307,6125,0,mock,9:00 PM
+Amador,45,68,5578,7784,0,4756,5933,0,mock,9:00 PM
+Calaveras,52,81,5623,9487,0,4978,7563,0,mock,9:00 PM
+El Dorado,120,155,37791,37722,0,31118,27782,0,mock,9:00 PM
+Inyo,30,42,3057,2512,0,2594,1916,0,mock,9:00 PM
+Madera,67,113,5228,7006,0,4017,4791,0,mock,9:00 PM
+Mariposa,30,34,3408,4089,0,3024,3265,0,mock,9:00 PM
+Merced,42,128,916,1200,0,683,798,0,mock,9:00 PM
+Mono,23,27,3068,1591,0,2702,1252,0,mock,9:00 PM
+Nevada,15,70,1698,321,0,1500,236,0,mock,9:00 PM
+Placer,169,233,3210,833,0,2625,568,0,mock,9:00 PM
+Stanislaus,100,230,37141,34117,0,28668,23350,0,mock,9:00 PM
+Tuolumne,39,69,6016,7690,0,5217,6021,0,mock,9:00 PM
