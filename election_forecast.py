@@ -290,6 +290,9 @@ with st.sidebar:
             forecast_env = model_env_val
             st.caption(f"Model forecast: {fmt_pct(model_env_val)} (SD={fmt_pct(STATE_ENV_SD)})")
     
+    display_env = forecast_env
+    display_sd  = STATE_ENV_SD
+
     if st.session_state.get("candidate_adj_enabled", False):
         forecast_env = forecast_env + st.session_state["candidate_adj_pct"] / 100
         STATE_ENV_SD = (STATE_ENV_SD**2 + (st.session_state["candidate_adj_sd_pct"]/100)**2) ** 0.5
@@ -375,7 +378,7 @@ filtered_share = district_share[mask]; n_filtered = mask.sum()
 st.title("🗳️ SD4 Election Forecast")
 st.caption(
     f"Monte Carlo · {int(n_sims):,} simulations · Lean: {lean_method} · "
-    f"State env: {fmt_pct(forecast_env)} (SD={fmt_pct(STATE_ENV_SD)}) · "
+    f"State env: {fmt_pct(display_env)} (SD={fmt_pct(display_sd)}) · "
     f"District win threshold: 50%"
 )
 
