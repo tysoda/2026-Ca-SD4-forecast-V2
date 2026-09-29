@@ -668,59 +668,59 @@ with tab_model:
             st.success("Model updated! Hit ▶ Run Simulation in the sidebar to apply.")
             st.rerun()
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown('<div class="section-label">Candidate Adjustment — The Jaron Effect</div>', unsafe_allow_html=True)
-        st.markdown(
-            "Additive adjustment to the state environment to account for the candidate's "
-            "demonstrated ability to outperform a generic Democrat with Republican voters. "
-            "Derived from Tuolumne supervisor races (2020, 2024) vs 2016 baseline, "
-            "discounted 50% for generalisability to a state senate race."
-        )
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Candidate Adjustment — The Jaron Effect</div>', unsafe_allow_html=True)
+    st.markdown(
+        "Additive adjustment to the state environment to account for the candidate's "
+        "demonstrated ability to outperform a generic Democrat with Republican voters. "
+        "Derived from Tuolumne supervisor races (2020, 2024) vs 2016 baseline, "
+        "discounted 50% for generalisability to a state senate race."
+    )
 
-        ja1, ja2, ja3, ja4 = st.columns([1, 1, 1, 2])
-        with ja1:
-            adj_enabled = st.toggle("Apply adjustment", 
-                                    value=st.session_state.get("candidate_adj_enabled", False),
-                                    key="toggle_candidate_adj")
-            st.session_state["candidate_adj_enabled"] = adj_enabled
-        with ja2:
-            adj_val = st.number_input("Adjustment (%)", 
-                                    min_value=0.0, max_value=20.0, step=0.1,
-                                    format="%.1f",
-                                    value=float(st.session_state.get("candidate_adj_pct", 5.6)),
-                                    key="input_candidate_adj",
-                                    on_change=lambda: st.session_state.update(
-                                        {"candidate_adj_pct": st.session_state["input_candidate_adj"]}))
-        with ja3:
-            adj_sd = st.number_input("Uncertainty (%)",
-                                    min_value=0.0, max_value=20.0, step=0.1,
-                                    format="%.1f",
-                                    value=float(st.session_state.get("candidate_adj_sd_pct", 3.5)),
-                                    key="input_candidate_adj_sd",
-                                    on_change=lambda: st.session_state.update(
-                                        {"candidate_adj_sd_pct": st.session_state["input_candidate_adj_sd"]}))
+    ja1, ja2, ja3, ja4 = st.columns([1, 1, 1, 2])
+    with ja1:
+        adj_enabled = st.toggle("Apply adjustment", 
+                                value=st.session_state.get("candidate_adj_enabled", False),
+                                key="toggle_candidate_adj")
+        st.session_state["candidate_adj_enabled"] = adj_enabled
+    with ja2:
+        adj_val = st.number_input("Adjustment (%)", 
+                                min_value=0.0, max_value=20.0, step=0.1,
+                                format="%.1f",
+                                value=float(st.session_state.get("candidate_adj_pct", 5.6)),
+                                key="input_candidate_adj",
+                                on_change=lambda: st.session_state.update(
+                                    {"candidate_adj_pct": st.session_state["input_candidate_adj"]}))
+    with ja3:
+        adj_sd = st.number_input("Uncertainty (%)",
+                                min_value=0.0, max_value=20.0, step=0.1,
+                                format="%.1f",
+                                value=float(st.session_state.get("candidate_adj_sd_pct", 3.5)),
+                                key="input_candidate_adj_sd",
+                                on_change=lambda: st.session_state.update(
+                                    {"candidate_adj_sd_pct": st.session_state["input_candidate_adj_sd"]}))
 
-        if adj_enabled:
-            raw_effect   = 22.05
-            baseline     = 10.94
-            discount     = 0.50
-            derived      = (raw_effect - baseline) * (1 - discount)
-            adj_env      = (st.session_state.get("model_forecast_env", 59.8) / 100) + (adj_val / 100)
-            adj_sd_total = (STATE_ENV_SD**2 + (adj_sd/100)**2) ** 0.5
-            st.markdown(f"""
-            <div class="poll-blend">
-            <b>Adjustment active: +{adj_val:.1f}%</b> · 
-            Adjusted environment: {adj_env:.1%} · 
-            Combined SD: {fmt_pct(adj_sd_total)}<br>
-            <span style="font-size:0.82rem;color:#555">
-                Raw Jaron effect: {raw_effect:.1f}% − {baseline:.1f}% baseline = {raw_effect-baseline:.1f}pts · 
-                50% discount → {derived:.1f}pts default · 
-                Uncertainty added in quadrature to state env SD
-            </span>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.caption("Toggle on to apply the candidate adjustment to the simulation.")
+    if adj_enabled:
+        raw_effect   = 22.05
+        baseline     = 10.94
+        discount     = 0.50
+        derived      = (raw_effect - baseline) * (1 - discount)
+        adj_env      = (st.session_state.get("model_forecast_env", 59.8) / 100) + (adj_val / 100)
+        adj_sd_total = (STATE_ENV_SD**2 + (adj_sd/100)**2) ** 0.5
+        st.markdown(f"""
+        <div class="poll-blend">
+        <b>Adjustment active: +{adj_val:.1f}%</b> · 
+        Adjusted environment: {adj_env:.1%} · 
+        Combined SD: {fmt_pct(adj_sd_total)}<br>
+        <span style="font-size:0.82rem;color:#555">
+            Raw Jaron effect: {raw_effect:.1f}% − {baseline:.1f}% baseline = {raw_effect-baseline:.1f}pts · 
+            50% discount → {derived:.1f}pts default · 
+            Uncertainty added in quadrature to state env SD
+        </span>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.caption("Toggle on to apply the candidate adjustment to the simulation.")
 
    # ── Polling inputs ────────────────────────────────────────────────────────
     st.markdown('<div class="section-label">Polling — State Environment</div>', unsafe_allow_html=True)
