@@ -1540,8 +1540,9 @@ with tab_night:
     dist_dem_share = total_dem / total_votes if total_votes > 0 else None
     pct_precincts  = total_prec / total_prec_all if total_prec_all > 0 else 0
 
-    # Compare reported dem share to model forecast environment
+    # Compare reported dem share to model's projected district share (mean of simulations)
     fp_env = st.session_state.get("model_forecast_env", 59.80) / 100
+    model_district_mean = float(np.mean(district_share))
 
     ns1, ns2, ns3, ns4, ns5 = st.columns(5)
     with ns1:
@@ -1554,10 +1555,10 @@ with tab_night:
         st.markdown(f'<div class="stat-card"><div class="label">Precincts In</div><div class="value">{pct_precincts*100:.0f}%</div><div class="sub">{total_prec:,} of {total_prec_all:,}</div></div>', unsafe_allow_html=True)
     with ns4:
         if dist_dem_share:
-            diff = dist_dem_share - fp_env
+            diff = dist_dem_share - model_district_mean
             arrow = "▲" if diff >= 0 else "▼"
             c2 = "#1a6b3c" if diff >= 0 else "#b91c1c"
-            st.markdown(f'<div class="stat-card"><div class="label">vs Model Forecast</div><div class="value" style="color:{c2}">{arrow} {abs(diff)*100:.1f}pt</div><div class="sub">Model: {fp_env*100:.1f}%</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="stat-card"><div class="label">vs Model Forecast</div><div class="value" style="color:{c2}">{arrow} {abs(diff)*100:.1f}pt</div><div class="sub">Model median: {model_district_mean*100:.1f}%</div></div>', unsafe_allow_html=True)
         else:
             st.markdown(f'<div class="stat-card"><div class="label">vs Model Forecast</div><div class="value">—</div><div class="sub">No results yet</div></div>', unsafe_allow_html=True)
     with ns5:
