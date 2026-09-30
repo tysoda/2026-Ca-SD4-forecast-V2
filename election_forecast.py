@@ -1648,6 +1648,86 @@ with tab_night:
             )
         st.caption("Enter results in the county table below or load a mock scenario to see live filtering.")
 
+    # ── County results table ───────────────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-label">County Results</div>', unsafe_allow_html=True)
+
+    crows = ""
+    for _, row in df_night.iterrows():
+        cn   = row.get("county", "")
+        d3   = row.get("dem_votes",  0); d3 = 0 if pd.isna(d3)  else int(d3)
+        r3   = row.get("rep_votes",  0); r3 = 0 if pd.isna(r3)  else int(r3)
+        o3   = row.get("other_votes",0); o3 = 0 if pd.isna(o3)  else int(o3)
+        tv3  = d3 + r3 + o3
+        pr3  = row.get("precincts_reporting", 0); pr3 = 0 if pd.isna(pr3) else int(pr3)
+        pt3  = row.get("precincts_total", 1);     pt3 = 1 if (pd.isna(pt3) or pt3==0) else int(pt3)
+        pct3 = pr3 / pt3 if pt3 > 0 else 0
+
+        if tv3 > 0:
+            rep_share3 = d3 / tv3
+            model_share3 = forecast_env + COUNTIES.get(cn, {}).get("lean_lin", 0)
+            diff3 = rep_share3 - model_share3
+            share_str = f"{rep_share3*100:.1f}%"
+            diff_str  = f"{'▲' if diff3>=0 else '▼'} {abs(diff3)*100:.1f}pt"
+            diff_col  = "#1a6b3c" if diff3 >= 0 else "#b91c1c"
+            status_icon = "🟢" if rep_share3 >= 0.50 else "🔴"
+        else:
+            share_str = "—"; diff_str = "—"; diff_col = "#888"; status_icon = "⚪"
+
+        pct_str = f"{pct3*100:.0f}%" if pct3 > 0 else "—"
+        crows += (
+            f"<tr><td>{status_icon} {cn}</td>"
+            f"<td>{d3:,}</td><td>{r3:,}</td>"
+            f"<td>{share_str}</td>"
+            f"<td style='color:{diff_col}'>{diff_str}</td>"
+            f"<td>{pct_str}</td></tr>"
+        )
+
+    st.markdown(
+        f'<table class="styled-table">'
+        f'<thead><tr><th>County</th><th>Dem Votes</th><th>Rep Votes</th>'
+        f'<th>Dem Share</th><th>vs Forecast</th><th>Precincts In</th>'
+        f'</tr></thead><tbody>{crows}</tbody></table>'
+        f'<p style="font-size:0.72rem;color:#999;margin-top:0.4rem">'
+        f'🟢 leading · 🔴 trailing · ⚪ no results · vs Forecast uses linear lean</p>',
+        unsafe_allow_html=True
+    )
+
+    # ── Manual data entry ──────────────────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    with st.expander("✏️ Enter / update county results"):
+        st.caption("Edit cells and click **Save results** to write to election_night.csv.")
+        df_edit = df_night[["county","precincts_reporting","precincts_total","dem_votes","rep_votes","other_votes"]].copy()
+        for col in ["dem_votes","rep_votes","other_votes","precincts_reporting"]:
+            df_edit[col] = pd.to_numeric(df_edit[col], errors="coerce").fillna(0).astype(int)
+
+        edited_night = st.data_editor(
+            df_edit,
+            hide_index=True,
+            width="stretch",
+            disabled=["county"],
+            column_config={
+                "county":              st.column_config.TextColumn("County", width="medium"),
+                "precincts_reporting": st.column_config.NumberColumn("Prec. Reporting", min_value=0, step=1),
+                "precincts_total":     st.column_config.NumberColumn("Prec. Total",     min_value=1, step=1),
+                "dem_votes":           st.column_config.NumberColumn("Dem Votes",   min_value=0, step=1),
+                "rep_votes":           st.column_config.NumberColumn("Rep Votes",   min_value=0, step=1),
+                "other_votes":         st.column_config.NumberColumn("Other Votes", min_value=0, step=1),
+            },
+            key="night_editor"
+        )
+        if st.button("💾 Save results", key="night_save"):
+            # Merge back into the full night csv preserving other columns
+            df_out_night = df_night.copy()
+            for col in ["precincts_reporting","precincts_total","dem_votes","rep_votes","other_votes"]:
+                df_out_night[col] = edited_night[col].values
+            import datetime as _dt
+            df_out_night["last_updated"] = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+            df_out_night.to_csv(night_path, index=False)
+            st.success("Results saved to election_night.csv")
+            st.cache_data.clear()
+            st.rerun()
+
     # ── Election Night Targets ─────────────────────────────────────────────────
     # Show what Dem share to expect per county at each reporting wave,
     # conditional on the district being won (filtering to winning simulations).
@@ -1837,102 +1917,16 @@ with tab_night:
 
             if watch_notes:
                 for cn, speed0, p50_final, w8_mid in watch_notes:
-                    mail_note = (
-                        "slightly above the final because mail ballots lean a few points more Democratic"
-                        if w8_mid > p50_final
-                        else "close to the final — mail-ballot lean doesn't change the picture much here"
-                    )
-                    direction = "above" if w8_mid > p50_final else "below"
+                    direction  = "above" if w8_mid > p50_final else "below"
+                    sign_word  = "positive" if p50_final >= 0.48 else "warning"
                     st.markdown(
-                        f"- **{cn}** — {speed0*100:.0f}% of votes are in by 8pm, making this one of "
-                        f"the earlier signals of the night. In simulations where the district is won, "
-                        f"the 8pm tally shows roughly **{w8_mid*100:.1f}% Dem** ({mail_note}), "
-                        f"settling to ~**{p50_final*100:.1f}%** once all votes are counted. "
+                        f"**{cn}** — approx {speed0*100:.0f}% of votes in by 8pm\n\n"
+                        f"Average 8pm tally in winning situations: {w8_mid*100:.1f}%.\n\n"
                         f"If the 8pm number comes in noticeably {direction} {w8_mid*100:.0f}%, "
-                        f"treat that as an early {'warning' if p50_final < 0.50 else 'positive'} sign."
+                        f"treat that as a {sign_word} sign."
                     )
             else:
                 st.caption("No county provides a strong early signal at the current forecast — check the district total.")
-
-    # ── County results table ───────────────────────────────────────────────────
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown('<div class="section-label">County Results</div>', unsafe_allow_html=True)
-
-    crows = ""
-    for _, row in df_night.iterrows():
-        cn   = row.get("county", "")
-        d3   = row.get("dem_votes",  0); d3 = 0 if pd.isna(d3)  else int(d3)
-        r3   = row.get("rep_votes",  0); r3 = 0 if pd.isna(r3)  else int(r3)
-        o3   = row.get("other_votes",0); o3 = 0 if pd.isna(o3)  else int(o3)
-        tv3  = d3 + r3 + o3
-        pr3  = row.get("precincts_reporting", 0); pr3 = 0 if pd.isna(pr3) else int(pr3)
-        pt3  = row.get("precincts_total", 1);     pt3 = 1 if (pd.isna(pt3) or pt3==0) else int(pt3)
-        pct3 = pr3 / pt3 if pt3 > 0 else 0
-
-        if tv3 > 0:
-            rep_share3 = d3 / tv3
-            model_share3 = forecast_env + COUNTIES.get(cn, {}).get("lean_lin", 0)
-            diff3 = rep_share3 - model_share3
-            share_str = f"{rep_share3*100:.1f}%"
-            diff_str  = f"{'▲' if diff3>=0 else '▼'} {abs(diff3)*100:.1f}pt"
-            diff_col  = "#1a6b3c" if diff3 >= 0 else "#b91c1c"
-            status_icon = "🟢" if rep_share3 >= 0.50 else "🔴"
-        else:
-            share_str = "—"; diff_str = "—"; diff_col = "#888"; status_icon = "⚪"
-
-        pct_str = f"{pct3*100:.0f}%" if pct3 > 0 else "—"
-        crows += (
-            f"<tr><td>{status_icon} {cn}</td>"
-            f"<td>{d3:,}</td><td>{r3:,}</td>"
-            f"<td>{share_str}</td>"
-            f"<td style='color:{diff_col}'>{diff_str}</td>"
-            f"<td>{pct_str}</td></tr>"
-        )
-
-    st.markdown(
-        f'<table class="styled-table">'
-        f'<thead><tr><th>County</th><th>Dem Votes</th><th>Rep Votes</th>'
-        f'<th>Dem Share</th><th>vs Forecast</th><th>Precincts In</th>'
-        f'</tr></thead><tbody>{crows}</tbody></table>'
-        f'<p style="font-size:0.72rem;color:#999;margin-top:0.4rem">'
-        f'🟢 leading · 🔴 trailing · ⚪ no results · vs Forecast uses linear lean</p>',
-        unsafe_allow_html=True
-    )
-
-    # ── Manual data entry ──────────────────────────────────────────────────────
-    st.markdown("<br>", unsafe_allow_html=True)
-    with st.expander("✏️ Enter / update county results"):
-        st.caption("Edit cells and click **Save results** to write to election_night.csv.")
-        df_edit = df_night[["county","precincts_reporting","precincts_total","dem_votes","rep_votes","other_votes"]].copy()
-        for col in ["dem_votes","rep_votes","other_votes","precincts_reporting"]:
-            df_edit[col] = pd.to_numeric(df_edit[col], errors="coerce").fillna(0).astype(int)
-
-        edited_night = st.data_editor(
-            df_edit,
-            hide_index=True,
-            width="stretch",
-            disabled=["county"],
-            column_config={
-                "county":              st.column_config.TextColumn("County", width="medium"),
-                "precincts_reporting": st.column_config.NumberColumn("Prec. Reporting", min_value=0, step=1),
-                "precincts_total":     st.column_config.NumberColumn("Prec. Total",     min_value=1, step=1),
-                "dem_votes":           st.column_config.NumberColumn("Dem Votes",   min_value=0, step=1),
-                "rep_votes":           st.column_config.NumberColumn("Rep Votes",   min_value=0, step=1),
-                "other_votes":         st.column_config.NumberColumn("Other Votes", min_value=0, step=1),
-            },
-            key="night_editor"
-        )
-        if st.button("💾 Save results", key="night_save"):
-            # Merge back into the full night csv preserving other columns
-            df_out_night = df_night.copy()
-            for col in ["precincts_reporting","precincts_total","dem_votes","rep_votes","other_votes"]:
-                df_out_night[col] = edited_night[col].values
-            import datetime as _dt
-            df_out_night["last_updated"] = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
-            df_out_night.to_csv(night_path, index=False)
-            st.success("Results saved to election_night.csv")
-            st.cache_data.clear()
-            st.rerun()
 
     # ── Governor race panel ───────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
