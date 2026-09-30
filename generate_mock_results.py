@@ -137,56 +137,60 @@ PRECINCTS = {
 }
 
 # ── Reporting speeds ───────────────────────────────────────────────────────────
-# Fraction of final county votes reported by each wave:
-#   Wave 0 = 8:00 PM (first drop)
-#   Wave 1 = 9:00 PM
-#   Wave 2 = 11:00 PM
-#   Wave 3 = Next Day (effectively final)
+# Fraction of final county votes reported by each checkpoint:
+#   Index  0 = 8:00 PM    (election night, first drop)
+#   Index  1 = 9:00 PM
+#   Index  2 = 11:00 PM
+#   Index  3 = 9:00 AM    (next day, D+1)
+#   Index  4 = 4:00 PM    (next day, D+1)
+#   Index  5 = 4:00 PM D+2
+#   Index  6 = 4:00 PM D+3
+#   Index  7 = 4:00 PM D+4
+#   Index  8 = 4:00 PM D+5
+#   Index  9 = 4:00 PM D+6
+#   Index 10 = 4:00 PM D+7
 #
 # DATA-DERIVED values (marked [D]) come from CalVoter Foundation Close Count
 # Transparency Project 2024 General Election data. See ASSUMPTIONS section.
 # ESTIMATED values (marked [E]) are interpolated — see ASSUMPTIONS for method.
 #
-# The 8pm/9pm/11pm fractions are inferred from the election-night trajectory;
-# the 2024 data gives Nov 5 ~midnight and Nov 7 snapshots as anchors.
+# Key empirical anchors from 2024 general:
+#   Nevada: 15.7% EN / 51.9% D+7   (extreme outlier)
+#   Placer: 72% EN / 87% D+7 / 96% D+14
+#   Stanislaus: 65.1% D+2 / 72.9% D+14  (batch processor)
+#   Merced: 46.3% D+2  (slowest CV county)
+#   Madera: 67.6% D+2 / 80.7% D+7
 REPORTING_SPEED = {
-    # ── Fast reporters: tiny rural/foothill counties ───────────────────────────
-    # Alpine [D]: 95.7% by midnight election night in 2024. Tiny county (~750 votes).
-    "Alpine":    [0.80, 0.92, 0.96, 0.99],
-    # Mono [D]: 95.1% by midnight election night in 2024.
-    "Mono":      [0.78, 0.91, 0.95, 0.99],
-    # Mariposa [E]: Estimated from Mono (similar tiny rural character, ~9.6k votes cast).
-    "Mariposa":  [0.70, 0.86, 0.93, 0.98],
-    # Inyo [D]: 64.9% by midnight; 92.3% by day 2. Moderate pace.
-    "Inyo":      [0.55, 0.75, 0.88, 0.97],
-
-    # ── Medium reporters: mid-size rural foothill counties ─────────────────────
-    # Amador [E]: Estimated from Inyo (similar small rural foothill, ~16k votes cast).
-    "Amador":    [0.52, 0.72, 0.86, 0.97],
-    # Calaveras [E]: Blend of Inyo + Madera (slightly larger, ~22k votes cast).
-    "Calaveras": [0.45, 0.68, 0.82, 0.96],
-    # Tuolumne [E]: Blend of Madera + Inyo (largest of estimated four, ~29k votes).
-    "Tuolumne":  [0.40, 0.62, 0.78, 0.95],
-    # Nevada [D]: OUTLIER — only 15.7% by midnight, 51.9% by day 7. Very slow.
-    #             Likely large provisional/cured ballot operation. Treated as slow.
-    "Nevada":    [0.12, 0.20, 0.35, 0.75],
-
-    # ── Slow reporters: larger / Central Valley counties ───────────────────────
-    # El Dorado [D]: 78.1% by midnight, then stalls — batch processor pattern.
-    #               98.5% by day 2, barely moves after. Wave 3 = ~99%.
-    "El Dorado": [0.65, 0.78, 0.90, 0.98],
-    # Placer [D]: 72.0% by midnight, stalls to day 7 (87%), then ~96% by day 14.
-    "Placer":    [0.60, 0.72, 0.82, 0.95],
-    # Madera [D]: No election-night snapshot. 67.6% by day 2, 80.7% by day 7.
-    #             Election-night fraction extrapolated as ~40% (pre-processed mail drop).
-    "Madera":    [0.38, 0.55, 0.72, 0.92],
-    # Merced [D]: No election-night snapshot. 46.3% by day 2 — slowest CV county.
-    #             Election-night fraction extrapolated as ~25%.
-    "Merced":    [0.22, 0.38, 0.55, 0.88],
-    # Stanislaus [D]: No election-night snapshot. 65.1% by day 2, barely moves to
-    #                 day 7 (65.1%), then jumps to 72.9% by day 14 — pronounced batch
-    #                 processor. Election-night extrapolated as ~35%.
-    "Stanislaus":[0.32, 0.48, 0.62, 0.88],
+    #              8pm   9pm  11pm  9am+1 4pm+1 4pm+2 4pm+3 4pm+4 4pm+5 4pm+6 4pm+7
+    # ── Fast reporters ────────────────────────────────────────────────────────────
+    # Alpine [D]: ~100% by election night. Tiny county (~750 votes).
+    "Alpine":    [0.80, 0.92, 0.96, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],
+    # Mono [D]: 95.1% by midnight election night.
+    "Mono":      [0.78, 0.91, 0.95, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],
+    # Mariposa [E]: Anchored to Mono (similar tiny rural character, ~9.6k votes).
+    "Mariposa":  [0.70, 0.86, 0.93, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],
+    # Inyo [D]: 64.9% by midnight; 92.3% by D+2. Moderate pace.
+    "Inyo":      [0.55, 0.75, 0.88, 0.94, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99],
+    # ── Medium reporters ──────────────────────────────────────────────────────────
+    # Amador [E]: Anchored to Inyo (similar small rural foothill, ~16k votes).
+    "Amador":    [0.52, 0.72, 0.86, 0.93, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99],
+    # Calaveras [E]: Blend of Inyo + Madera (~22k votes).
+    "Calaveras": [0.45, 0.68, 0.82, 0.90, 0.95, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99],
+    # Tuolumne [E]: Blend of Madera + Inyo (~29k votes).
+    "Tuolumne":  [0.40, 0.62, 0.78, 0.87, 0.93, 0.96, 0.97, 0.98, 0.99, 0.99, 0.99],
+    # El Dorado [D]: 78.1% by midnight, 98.5% by D+2 — batch processor.
+    "El Dorado": [0.65, 0.78, 0.90, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],
+    # Placer [D]: 72% by midnight, slow tail: 87% D+7, 96% D+14.
+    "Placer":    [0.60, 0.72, 0.82, 0.85, 0.87, 0.89, 0.90, 0.91, 0.93, 0.95, 0.96],
+    # ── Slow reporters (Central Valley) ───────────────────────────────────────────
+    # Madera [D]: No EN snapshot; 67.6% D+2, 80.7% D+7. EN extrapolated.
+    "Madera":    [0.38, 0.55, 0.65, 0.68, 0.72, 0.76, 0.81, 0.86, 0.90, 0.93, 0.95],
+    # Merced [D]: No EN snapshot; 46.3% D+2 — slowest CV county. EN extrapolated.
+    "Merced":    [0.22, 0.38, 0.44, 0.46, 0.50, 0.56, 0.63, 0.70, 0.78, 0.85, 0.90],
+    # Stanislaus [D]: No EN snapshot; 65.1% D+2, flat to D+7, 72.9% D+14. EN extrapolated.
+    "Stanislaus":[0.32, 0.48, 0.62, 0.63, 0.65, 0.67, 0.73, 0.78, 0.84, 0.89, 0.93],
+    # Nevada [D]: OUTLIER — 15.7% EN, 51.9% D+7. Very slow; likely large provisional operation.
+    "Nevada":    [0.12, 0.20, 0.35, 0.38, 0.42, 0.46, 0.52, 0.59, 0.65, 0.70, 0.75],
 }
 
 # ── Mail ballot percentages ────────────────────────────────────────────────────
@@ -210,7 +214,40 @@ SCENARIOS = {
     "narrow_loss":     {"env_shift": +0.042, "desc": "Narrow loss (~48.8% district)"},
 }
 
-WAVE_LABELS = ["8:00 PM", "9:00 PM", "11:00 PM", "Next Day (Final)"]
+WAVE_LABELS = [
+    "8:00 PM",
+    "9:00 PM",
+    "11:00 PM",
+    "9:00 AM D+1",
+    "4:00 PM D+1",
+    "4:00 PM D+2",
+    "4:00 PM D+3",
+    "4:00 PM D+4",
+    "4:00 PM D+5",
+    "4:00 PM D+6",
+    "4:00 PM D+7",
+]
+
+# Filename-safe version of each wave label (used for CSV output)
+WAVE_FILENAMES = [
+    "800_PM",
+    "900_PM",
+    "1100_PM",
+    "900_AM_D1",
+    "400_PM_D1",
+    "400_PM_D2",
+    "400_PM_D3",
+    "400_PM_D4",
+    "400_PM_D5",
+    "400_PM_D6",
+    "400_PM_D7",
+]
+
+# Mail-ballot over-representation at each wave.
+# On election night, nearly all votes counted are pre-processed mail; ED ballots
+# trickle in over the following days. By D+7 the mix is roughly the true county mail_pct.
+# Values = additive pp above county mail_pct that are mail at each checkpoint.
+MAIL_OVERREP = [+0.18, +0.10, +0.04, +0.02, +0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 def generate_scenario(scenario_name: str, seed: int = 42) -> dict:
     """
@@ -258,7 +295,7 @@ def generate_scenario(scenario_name: str, seed: int = 42) -> dict:
         county_ed_votes[cn]   = {"n": n_ed,   "dem_share": ed_share}
 
     waves = {}
-    for wave_idx, wave_label in enumerate(WAVE_LABELS):
+    for wave_idx, (wave_label, wave_fn) in enumerate(zip(WAVE_LABELS, WAVE_FILENAMES)):
         rows = []
         for cn in COUNTIES:
             speed = REPORTING_SPEED[cn][wave_idx]
@@ -287,19 +324,10 @@ def generate_scenario(scenario_name: str, seed: int = 42) -> dict:
             n_ed = county_ed_votes[cn]["n"]
             ed_share = county_ed_votes[cn]["dem_share"]
 
-            # Early waves: mail-heavy (mail processed first in CA)
-            # Wave fractions: by wave_idx, what share of final is mail vs ED
-            mail_reporting_boost = [0.85, 0.75, 0.60, 0.50][wave_idx]
-            # What fraction of the reported votes are mail?
-            mail_frac_in_wave = min(1.0, MAIL_PCT[cn] + (1 - MAIL_PCT[cn]) * mail_reporting_boost * (1 - speed) / max(0.01, 1 - MAIL_PCT[cn]))
-            mail_frac_in_wave = min(MAIL_PCT[cn] + 0.25, max(MAIL_PCT[cn] - 0.10, MAIL_PCT[cn]))
-            # Simpler: at wave 0, mail is ~90% of ballots in; by final, back to mail_pct
-            mail_pct_in_wave = [
-                min(0.95, MAIL_PCT[cn] + 0.18),
-                min(0.95, MAIL_PCT[cn] + 0.10),
-                min(0.95, MAIL_PCT[cn] + 0.04),
-                MAIL_PCT[cn],
-            ][wave_idx]
+            # Mail over-representation: early waves are mail-heavy (CA processes
+            # mail first). Fraction of votes in this wave that are mail ballots
+            # is higher than the county's true mail_pct, tapering off by D+2.
+            mail_pct_in_wave = min(0.95, MAIL_PCT[cn] + MAIL_OVERREP[wave_idx])
 
             mail_in  = int(votes_in * mail_pct_in_wave)
             ed_in    = votes_in - mail_in
@@ -349,7 +377,7 @@ def generate_scenario(scenario_name: str, seed: int = 42) -> dict:
             })
 
         df = pd.DataFrame(rows)
-        waves[wave_label] = df
+        waves[(wave_label, wave_fn)] = df
 
         # Print district totals for this wave
         d_in = df.dem_votes.sum(); r_in = df.rep_votes.sum()
@@ -375,9 +403,8 @@ def main():
         os.makedirs(out_dir, exist_ok=True)
 
         waves = generate_scenario(sc_name, seed=args.seed)
-        for wave_label, df in waves.items():
-            safe_name = wave_label.replace(":", "").replace(" ", "_").replace("(", "").replace(")", "")
-            path = os.path.join(out_dir, f"{safe_name}.csv")
+        for (wave_label, wave_fn), df in waves.items():
+            path = os.path.join(out_dir, f"{wave_fn}.csv")
             df.to_csv(path, index=False)
             print(f"    → {path}")
 
@@ -385,11 +412,8 @@ def main():
         manifest = {
             "scenario": sc_name,
             "description": SCENARIOS[sc_name]["desc"],
-            "waves": [
-                wave_label.replace(":", "").replace(" ", "_").replace("(", "").replace(")", "")
-                for wave_label in waves.keys()
-            ],
-            "wave_labels": list(waves.keys()),
+            "wave_filenames": WAVE_FILENAMES,
+            "wave_labels": WAVE_LABELS,
         }
         with open(os.path.join(out_dir, "manifest.json"), "w") as f:
             json.dump(manifest, f, indent=2)

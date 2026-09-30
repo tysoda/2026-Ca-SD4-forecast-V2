@@ -1448,8 +1448,18 @@ with tab_night:
         "Comfortable win": "comfortable_win",
         "Narrow loss":   "narrow_loss",
     }
-    WAVE_LABELS_DISPLAY = ["8:00 PM", "9:00 PM", "11:00 PM", "Next Day (Final)"]
-    WAVE_FILENAMES      = ["800_PM.csv", "900_PM.csv", "1100_PM.csv", "Next_Day_Final.csv"]
+    WAVE_LABELS_DISPLAY = [
+        "8:00 PM", "9:00 PM", "11:00 PM",
+        "9:00 AM D+1", "4:00 PM D+1",
+        "4:00 PM D+2", "4:00 PM D+3", "4:00 PM D+4",
+        "4:00 PM D+5", "4:00 PM D+6", "4:00 PM D+7",
+    ]
+    WAVE_FILENAMES = [
+        "800_PM.csv", "900_PM.csv", "1100_PM.csv",
+        "900_AM_D1.csv", "400_PM_D1.csv",
+        "400_PM_D2.csv", "400_PM_D3.csv", "400_PM_D4.csv",
+        "400_PM_D5.csv", "400_PM_D6.csv", "400_PM_D7.csv",
+    ]
 
     mc1, mc2, mc3, mc4 = st.columns([2, 2, 1, 1])
     with mc1:
@@ -1827,11 +1837,19 @@ with tab_night:
 
             if watch_notes:
                 for cn, speed0, p50_final, w8_mid in watch_notes:
+                    mail_note = (
+                        "slightly above the final because mail ballots lean a few points more Democratic"
+                        if w8_mid > p50_final
+                        else "close to the final — mail-ballot lean doesn't change the picture much here"
+                    )
+                    direction = "above" if w8_mid > p50_final else "below"
                     st.markdown(
-                        f"- **{cn}** — {speed0*100:.0f}% of votes in by 8pm. "
-                        f"In winning simulations, expect to see roughly **{w8_mid*100:.1f}%** Dem at the first drop "
-                        f"(mail-heavy), converging to ~**{p50_final*100:.1f}%** as final count. "
-                        f"If the 8pm number is well below {w8_mid*100:.0f}%, that's a warning sign."
+                        f"- **{cn}** — {speed0*100:.0f}% of votes are in by 8pm, making this one of "
+                        f"the earlier signals of the night. In simulations where the district is won, "
+                        f"the 8pm tally shows roughly **{w8_mid*100:.1f}% Dem** ({mail_note}), "
+                        f"settling to ~**{p50_final*100:.1f}%** once all votes are counted. "
+                        f"If the 8pm number comes in noticeably {direction} {w8_mid*100:.0f}%, "
+                        f"treat that as an early {'warning' if p50_final < 0.50 else 'positive'} sign."
                     )
             else:
                 st.caption("No county provides a strong early signal at the current forecast — check the district total.")

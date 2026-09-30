@@ -1,16 +1,30 @@
 {
   "scenario": "narrow_win",
   "description": "Narrow win (~52.7% district)",
-  "waves": [
+  "wave_filenames": [
     "800_PM",
     "900_PM",
     "1100_PM",
-    "Next_Day_Final"
+    "900_AM_D1",
+    "400_PM_D1",
+    "400_PM_D2",
+    "400_PM_D3",
+    "400_PM_D4",
+    "400_PM_D5",
+    "400_PM_D6",
+    "400_PM_D7"
   ],
   "wave_labels": [
     "8:00 PM",
     "9:00 PM",
     "11:00 PM",
-    "Next Day (Final)"
+    "9:00 AM D+1",
+    "4:00 PM D+1",
+    "4:00 PM D+2",
+    "4:00 PM D+3",
+    "4:00 PM D+4",
+    "4:00 PM D+5",
+    "4:00 PM D+6",
+    "4:00 PM D+7"
   ]
 }
