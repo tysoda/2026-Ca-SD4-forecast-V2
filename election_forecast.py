@@ -1663,9 +1663,13 @@ with tab_night:
         pt3  = row.get("precincts_total", 1);     pt3 = 1 if (pd.isna(pt3) or pt3==0) else int(pt3)
         pct3 = pr3 / pt3 if pt3 > 0 else 0
 
+        county_data   = COUNTIES.get(cn, {})
+        est_total     = int(county_data.get("registration", 0) * county_data.get("turnout", 0))
+        votes_remaining = max(0, est_total - tv3) if est_total > 0 else None
+
         if tv3 > 0:
             rep_share3 = d3 / tv3
-            model_share3 = forecast_env + COUNTIES.get(cn, {}).get("lean_lin", 0)
+            model_share3 = forecast_env + county_data.get("lean_lin", 0)
             diff3 = rep_share3 - model_share3
             share_str = f"{rep_share3*100:.1f}%"
             diff_str  = f"{'▲' if diff3>=0 else '▼'} {abs(diff3)*100:.1f}pt"
@@ -1674,22 +1678,25 @@ with tab_night:
         else:
             share_str = "—"; diff_str = "—"; diff_col = "#888"; status_icon = "⚪"
 
-        pct_str = f"{pct3*100:.0f}%" if pct3 > 0 else "—"
+        pct_str  = f"{pct3*100:.0f}%" if pct3 > 0 else "—"
+        rem_str  = f"~{votes_remaining:,}" if votes_remaining is not None else "—"
         crows += (
             f"<tr><td>{status_icon} {cn}</td>"
             f"<td>{d3:,}</td><td>{r3:,}</td>"
             f"<td>{share_str}</td>"
             f"<td style='color:{diff_col}'>{diff_str}</td>"
-            f"<td>{pct_str}</td></tr>"
+            f"<td>{pct_str}</td>"
+            f"<td>{rem_str}</td></tr>"
         )
 
     st.markdown(
         f'<table class="styled-table">'
         f'<thead><tr><th>County</th><th>Dem Votes</th><th>Rep Votes</th>'
-        f'<th>Dem Share</th><th>vs Forecast</th><th>Precincts In</th>'
+        f'<th>Dem Share</th><th>vs Forecast</th><th>Precincts In</th><th>Est. Votes Remaining</th>'
         f'</tr></thead><tbody>{crows}</tbody></table>'
         f'<p style="font-size:0.72rem;color:#999;margin-top:0.4rem">'
-        f'🟢 leading · 🔴 trailing · ⚪ no results · vs Forecast uses linear lean</p>',
+        f'🟢 leading · 🔴 trailing · ⚪ no results · vs Forecast uses linear lean · '
+        f'Est. Votes Remaining = (registration × expected turnout) − votes counted</p>',
         unsafe_allow_html=True
     )
 
@@ -1812,12 +1819,34 @@ with tab_night:
     win_mask = district_share >= WIN_THRESHOLD
     n_win    = int(win_mask.sum())
 
-    with st.expander(f"📊 County targets ({n_win:,} winning simulations of {int(n_sims):,})", expanded=True):
+    # ── Build targets data (shared by both expanders) ────────────────────────
+    tgt_rows = []
+    for cn in sorted(county_shares.keys()):
+        final_arr = county_shares[cn][win_mask]
+        p25 = float(np.percentile(final_arr, 25))
+        p50 = float(np.percentile(final_arr, 50))
+        p75 = float(np.percentile(final_arr, 75))
+        wave_cells = [
+            (_wave_share(p25, cn, wi), _wave_share(p50, cn, wi), _wave_share(p75, cn, wi))
+            for wi in range(N_WAVES)
+        ]
+        tgt_rows.append({"county": cn, "p25": p25, "p50": p50, "p75": p75, "waves": wave_cells})
+
+    def _fmt_band(lo, mid, hi, f_in):
+        """Render a percentile cell; grey out if < 20% in."""
+        if f_in < 0.20:
+            return f"<span style='color:#ccc;font-size:0.72rem'>n/a<br><span style='font-size:0.60rem'>{f_in*100:.0f}% in</span></span>"
+        color = "#1a6b3c" if mid >= 0.50 else ("#d97706" if mid >= 0.48 else "#b91c1c")
+        weight = "700" if mid >= 0.50 else "400"
+        return (f"<span style='color:{color};font-weight:{weight}'>{mid*100:.1f}%</span>"
+                f"<br><span style='font-size:0.62rem;color:#777'>{lo*100:.1f}–{hi*100:.1f}%</span>")
+
+    # ── County targets table expander ────────────────────────────────────────
+    with st.expander(f"📊 County targets table ({n_win:,} winning simulations of {int(n_sims):,})", expanded=True):
         if n_win < 100:
             st.warning(f"Only {n_win} winning simulations — model gives low win probability. "
                        "Targets may be unreliable; consider adjusting the forecast environment.")
         else:
-            # ── Explanation ──────────────────────────────────────────────────────
             st.markdown(
                 "**How to read this table:** Each cell shows the Dem vote share you'd expect "
                 "to see *on the results page* at that checkpoint — not the final share. "
@@ -1835,29 +1864,6 @@ with tab_night:
             )
             st.markdown("")
 
-            # ── Build rows ───────────────────────────────────────────────────────
-            tgt_rows = []
-            for cn in sorted(county_shares.keys()):
-                final_arr = county_shares[cn][win_mask]
-                p25 = float(np.percentile(final_arr, 25))
-                p50 = float(np.percentile(final_arr, 50))
-                p75 = float(np.percentile(final_arr, 75))
-                wave_cells = [
-                    (_wave_share(p25, cn, wi), _wave_share(p50, cn, wi), _wave_share(p75, cn, wi))
-                    for wi in range(N_WAVES)
-                ]
-                tgt_rows.append({"county": cn, "p25": p25, "p50": p50, "p75": p75, "waves": wave_cells})
-
-            def _fmt_band(lo, mid, hi, f_in):
-                """Render a percentile cell; grey out if < 20% in."""
-                if f_in < 0.20:
-                    return f"<span style='color:#ccc;font-size:0.72rem'>n/a<br><span style='font-size:0.60rem'>{f_in*100:.0f}% in</span></span>"
-                color = "#1a6b3c" if mid >= 0.50 else ("#d97706" if mid >= 0.48 else "#b91c1c")
-                weight = "700" if mid >= 0.50 else "400"
-                return (f"<span style='color:{color};font-weight:{weight}'>{mid*100:.1f}%</span>"
-                        f"<br><span style='font-size:0.62rem;color:#777'>{lo*100:.1f}–{hi*100:.1f}%</span>")
-
-            # Header row — two rows: EN night | Next day | Days 2–7
             hdr = (
                 "<thead>"
                 "<tr>"
@@ -1871,7 +1877,6 @@ with tab_night:
                 + "".join(f"<th>{lbl}</th>" for lbl in _WAVE_LABELS_SHORT)
                 + "</tr></thead>"
             )
-
             tbody = "<tbody>"
             for r in tgt_rows:
                 cn         = r["county"]
@@ -1885,53 +1890,50 @@ with tab_night:
                 tbody += "</tr>"
             tbody += "</tbody>"
 
-            with st.expander("📊 County targets table", expanded=True):
+            st.markdown(
+                f'<div style="overflow-x:auto"><table class="styled-table" style="font-size:0.78rem;min-width:900px">'
+                f'{hdr}{tbody}</table></div>',
+                unsafe_allow_html=True
+            )
+            st.caption(
+                "Reporting speeds: empirically derived from CalVoter Foundation 2024 General Election data "
+                "for Alpine, El Dorado, Inyo, Madera, Merced, Mono, Nevada, Placer, Stanislaus. "
+                "Amador, Calaveras, Mariposa, Tuolumne are interpolated from similar counties."
+            )
+
+    # ── Key counties to watch expander ───────────────────────────────────────
+    with st.expander("🔍 Key counties to watch", expanded=True):
+        st.markdown(
+            "A county is worth watching closely if it reports a large share of its votes "
+            "early *and* its result is competitive enough to matter. "
+            "Fast counties that lean heavily one way tell you less — you already know what they'll do."
+        )
+        watch_notes = []
+        for r in tgt_rows:
+            cn        = r["county"]
+            p50_final = r["p50"]
+            speed0    = _SPEED.get(cn, [0.5]*N_WAVES)[0]
+            if speed0 >= 0.35 and 0.40 <= p50_final <= 0.62:
+                w8_lo, w8_mid, w8_hi = r["waves"][0]
+                watch_notes.append((cn, speed0, p50_final, w8_mid, w8_lo, w8_hi))
+
+        if watch_notes:
+            for cn, speed0, p50_final, w8_mid, w8_lo, w8_hi in watch_notes:
                 st.markdown(
-                    f'<div style="overflow-x:auto"><table class="styled-table" style="font-size:0.78rem;min-width:900px">'
-                    f'{hdr}{tbody}</table></div>',
+                    f'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:0.9rem 1.1rem;margin-bottom:0.75rem;background:#fafafa">'
+                    f'<div style="font-size:1rem;font-weight:700;margin-bottom:0.35rem">'
+                    f'{cn} <span style="font-weight:400;color:#555">— approx {speed0*100:.0f}% of votes in by 8pm</span></div>'
+                    f'<div style="margin-bottom:0.4rem">In winning simulations, the 8pm tally generally falls between '
+                    f'<strong>{w8_lo*100:.1f}%</strong> and <strong>{w8_hi*100:.1f}%</strong> (typical: {w8_mid*100:.1f}%).</div>'
+                    f'<div style="font-size:0.85rem;color:#444">'
+                    f'🟢 Above {w8_hi*100:.0f}% — strong positive sign &nbsp;·&nbsp; '
+                    f'🟡 {w8_lo*100:.0f}%–{w8_hi*100:.0f}% — within expected range &nbsp;·&nbsp; '
+                    f'🔴 Below {w8_lo*100:.0f}% — warning sign</div>'
+                    f'</div>',
                     unsafe_allow_html=True
                 )
-                st.caption(
-                    "Reporting speeds: empirically derived from CalVoter Foundation 2024 General Election data "
-                    "for Alpine, El Dorado, Inyo, Madera, Merced, Mono, Nevada, Placer, Stanislaus. "
-                    "Amador, Calaveras, Mariposa, Tuolumne are interpolated from similar counties."
-                )
-
-            # ── Key counties to watch ─────────────────────────────────────────────
-            with st.expander("🔍 Key counties to watch", expanded=True):
-                st.markdown(
-                    "A county is worth watching closely if it reports a large share of its votes "
-                    "early *and* its result is competitive enough to matter. "
-                    "Fast counties that lean heavily one way tell you less — you already know what they'll do."
-                )
-                watch_notes = []
-                for r in tgt_rows:
-                    cn        = r["county"]
-                    p50_final = r["p50"]
-                    speed0    = _SPEED.get(cn, [0.5]*N_WAVES)[0]
-                    # "Interesting" = fast (≥35% EN) AND competitive (40–62% final Dem share)
-                    if speed0 >= 0.35 and 0.40 <= p50_final <= 0.62:
-                        # What would 8pm show in a winning sim? (p25, p50, p75)
-                        w8_lo, w8_mid, w8_hi = r["waves"][0]
-                        watch_notes.append((cn, speed0, p50_final, w8_mid, w8_lo, w8_hi))
-
-                if watch_notes:
-                    for cn, speed0, p50_final, w8_mid, w8_lo, w8_hi in watch_notes:
-                        st.markdown(
-                            f'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:0.9rem 1.1rem;margin-bottom:0.75rem;background:#fafafa">'
-                            f'<div style="font-size:1rem;font-weight:700;margin-bottom:0.35rem">'
-                            f'{cn} <span style="font-weight:400;color:#555">— approx {speed0*100:.0f}% of votes in by 8pm</span></div>'
-                            f'<div style="margin-bottom:0.4rem">In winning simulations, the 8pm tally generally falls between '
-                            f'<strong>{w8_lo*100:.1f}%</strong> and <strong>{w8_hi*100:.1f}%</strong> (typical: {w8_mid*100:.1f}%).</div>'
-                            f'<div style="font-size:0.85rem;color:#444">'
-                            f'🟢 Above {w8_hi*100:.0f}% — strong positive sign &nbsp;·&nbsp; '
-                            f'🟡 {w8_lo*100:.0f}%–{w8_hi*100:.0f}% — within expected range &nbsp;·&nbsp; '
-                            f'🔴 Below {w8_lo*100:.0f}% — warning sign</div>'
-                            f'</div>',
-                            unsafe_allow_html=True
-                        )
-                else:
-                    st.caption("No county provides a strong early signal at the current forecast — check the district total.")
+        else:
+            st.caption("No county provides a strong early signal at the current forecast — check the district total.")
 
     # ── Governor race panel ───────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
