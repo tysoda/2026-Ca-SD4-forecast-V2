@@ -1927,9 +1927,29 @@ with tab_night:
                 watch_notes.append((cn, speed0, p50_final, w8_mid, w8_lo, w8_hi))
 
         if watch_notes:
+            # Build live dem-share lookup from df_night
+            live_share = {}
+            for _, _nr in df_night.iterrows():
+                _d = _nr.get("dem_votes", 0) or 0
+                _r = _nr.get("rep_votes", 0) or 0
+                _o = _nr.get("other_votes", 0) or 0
+                _tv = int(_d) + int(_r) + int(_o)
+                if _tv > 0:
+                    live_share[_nr.get("county", "")] = int(_d) / _tv
+
             for cn, speed0, p50_final, w8_mid, w8_lo, w8_hi in watch_notes:
+                actual = live_share.get(cn)
+                if actual is None:
+                    bg, border = "#fafafa", "#e2e8f0"
+                elif actual >= w8_hi:
+                    bg, border = "#f0fdf4", "#86efac"   # light green
+                elif actual >= w8_lo:
+                    bg, border = "#fefce8", "#fde047"   # light yellow
+                else:
+                    bg, border = "#fff1f2", "#fca5a5"   # light red
+
                 st.markdown(
-                    f'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:0.9rem 1.1rem;margin-bottom:0.75rem;background:#fafafa">'
+                    f'<div style="border:1px solid {border};border-radius:8px;padding:0.9rem 1.1rem;margin-bottom:0.75rem;background:{bg}">'
                     f'<div style="font-size:1rem;font-weight:700;margin-bottom:0.35rem">'
                     f'{cn} <span style="font-weight:400;color:#555">— approx {speed0*100:.0f}% of votes in by 8pm</span></div>'
                     f'<div style="margin-bottom:0.4rem">In winning simulations, the 8pm tally generally falls between '
