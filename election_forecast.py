@@ -1021,26 +1021,31 @@ with tab_mechanics:
     try:
         is_gen = fp2["context"]["general"]
         lean_key = "lean_avg" if lean_method == "Average" else "lean_lin"
+        cand_adj = st.session_state.get("candidate_adj_pct", 0) / 100 if st.session_state.get("candidate_adj_enabled", False) else 0
         frows = ""
         total_reg = 0; total_votes = 0; total_dem = 0
         for cn in county_names:
             cd = fp2["counties"][cn]
-            reg  = cd["registration"]
-            to   = cd["turnout"]
-            lean = cd[lean_key]
-            env  = fp2["state_environment"]["predicted_state_env"]
+            reg   = cd["registration"]
+            to    = cd["turnout"]
+            lean  = cd[lean_key]
+            base_env = fp2["state_environment"]["predicted_state_env"]
+            env   = base_env + cand_adj          # include Jaron adjustment
             share = env + lean
             votes = reg * to
             dem   = votes * share
             total_reg   += reg
             total_votes += votes
             total_dem   += dem
+            adj_cell = (f"<td style='color:#1a6b3c;font-weight:600'>{cand_adj*100:+.1f}%</td>"
+                        if cand_adj != 0 else "<td style='color:#aaa'>—</td>")
             frows += (
                 f"<tr><td>{cn}</td>"
                 f"<td>{reg:,}</td>"
                 f"<td>{to*100:.1f}%</td>"
                 f"<td>{votes:,.0f}</td>"
-                f"<td>{env*100:.1f}%</td>"
+                f"<td>{base_env*100:.1f}%</td>"
+                f"{adj_cell}"
                 f"<td>{lean*100:+.1f}%</td>"
                 f"<td>{share*100:.1f}%</td>"
                 f"<td>{dem:,.0f}</td></tr>"
@@ -1052,18 +1057,20 @@ with tab_mechanics:
             f"<td>{total_reg:,}</td>"
             f"<td>—</td>"
             f"<td>{total_votes:,.0f}</td>"
-            f"<td>—</td><td>—</td>"
+            f"<td>—</td><td>—</td><td>—</td>"
             f"<td>{dist_share*100:.1f}%</td>"
             f"<td>{total_dem:,.0f}</td></tr>"
         )
         st.markdown(
             f'<table class="styled-table">'
             f'<thead><tr><th>County</th><th>Registration</th><th>Turnout</th>'
-            f'<th>Est. Votes</th><th>State Env</th><th>Lean ({lean_method})</th>'
+            f'<th>Est. Votes</th><th>State Env</th><th>Cand. Adj.</th><th>Lean ({lean_method})</th>'
             f'<th>Forecast Share</th><th>Est. Dem Votes</th></tr></thead>'
             f'<tbody>{frows}</tbody></table>',
             unsafe_allow_html=True
         )
+        if cand_adj != 0:
+            st.caption(f"Candidate adjustment of {cand_adj*100:+.1f}% is included in Forecast Share and Est. Dem Votes.")
     except Exception as e:
         st.caption(f"Could not render forecast table: {e}")
 
