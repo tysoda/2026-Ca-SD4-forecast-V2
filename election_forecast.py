@@ -1567,28 +1567,41 @@ with tab_night:
     total_cast = total_dem + total_rep + total_other
     dist_est_remaining = max(0, dist_est_total - total_cast)
 
+    _sc = "padding:0.6rem 0.7rem"           # tighter card padding
+    _lbl = "font-size:0.62rem;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#666;margin-bottom:0.15rem"
+    _val = "font-family:'IBM Plex Mono',monospace;font-size:1.1rem;font-weight:600;color:#111;line-height:1"
+    _sub = "font-size:0.62rem;color:#888;margin-top:0.15rem"
+
+    def _ns_card(label, value, sub="", val_color=None, border_color=None):
+        bc = f"border-color:{border_color}" if border_color else ""
+        vc = f"color:{val_color}" if val_color else ""
+        s  = f'<div style="{_sub}">{sub}</div>' if sub else ""
+        return (f'<div class="stat-card" style="{_sc};{bc}">'
+                f'<div style="{_lbl}">{label}</div>'
+                f'<div style="{_val};{vc}">{value}</div>{s}</div>')
+
     ns1, ns2, ns3, ns4, ns5, ns6 = st.columns(6)
     with ns1:
         v = f"{dist_dem_share*100:.1f}%" if dist_dem_share else "—"
         color = ("#1a6b3c" if dist_dem_share and dist_dem_share >= 0.50 else "#b91c1c") if dist_dem_share else "#888"
-        st.markdown(f'<div class="stat-card" style="border-color:{color}"><div class="label">Dem Vote Share</div><div class="value" style="color:{color}">{v}</div><div class="sub">Combined election night</div></div>', unsafe_allow_html=True)
+        st.markdown(_ns_card("Dem Vote Share", v, "Combined election night", val_color=color, border_color=color), unsafe_allow_html=True)
     with ns2:
-        st.markdown(f'<div class="stat-card"><div class="label">Counties Reporting</div><div class="value">{counties_reporting}/13</div></div>', unsafe_allow_html=True)
+        st.markdown(_ns_card("Counties Reporting", f"{counties_reporting}/13"), unsafe_allow_html=True)
     with ns3:
-        st.markdown(f'<div class="stat-card"><div class="label">Precincts In</div><div class="value">{pct_precincts*100:.0f}%</div><div class="sub">{total_prec:,} of {total_prec_all:,}</div></div>', unsafe_allow_html=True)
+        st.markdown(_ns_card("Precincts In", f"{pct_precincts*100:.0f}%", f"{total_prec:,} of {total_prec_all:,}"), unsafe_allow_html=True)
     with ns4:
         if dist_dem_share:
             diff = dist_dem_share - model_district_mean
             arrow = "▲" if diff >= 0 else "▼"
             c2 = "#1a6b3c" if diff >= 0 else "#b91c1c"
-            st.markdown(f'<div class="stat-card"><div class="label">vs Model Forecast</div><div class="value" style="color:{c2}">{arrow} {abs(diff)*100:.1f}pt</div><div class="sub">Model median: {model_district_mean*100:.1f}%</div></div>', unsafe_allow_html=True)
+            st.markdown(_ns_card("vs Model Forecast", f"{arrow} {abs(diff)*100:.1f}pt", f"Model median: {model_district_mean*100:.1f}%", val_color=c2), unsafe_allow_html=True)
         else:
-            st.markdown(f'<div class="stat-card"><div class="label">vs Model Forecast</div><div class="value">—</div><div class="sub">No results yet</div></div>', unsafe_allow_html=True)
+            st.markdown(_ns_card("vs Model Forecast", "—", "No results yet"), unsafe_allow_html=True)
     with ns5:
-        st.markdown(f'<div class="stat-card"><div class="label">Total Votes Cast</div><div class="value">{total_cast:,}</div></div>', unsafe_allow_html=True)
+        st.markdown(_ns_card("Total Votes Cast", f"{total_cast:,}"), unsafe_allow_html=True)
     with ns6:
         rem_str = f"~{dist_est_remaining:,}" if dist_est_total > 0 else "—"
-        st.markdown(f'<div class="stat-card"><div class="label">Est. Votes Remaining</div><div class="value">{rem_str}</div><div class="sub">of ~{dist_est_total:,} est. total</div></div>', unsafe_allow_html=True)
+        st.markdown(_ns_card("Est. Votes Remaining", rem_str, f"of ~{dist_est_total:,} est. total"), unsafe_allow_html=True)
 
     # ── Mail-ballot timing model (used by live win prob + targets) ───────────
     # Reporting speed: fraction of final county votes in at each of 11 checkpoints.
