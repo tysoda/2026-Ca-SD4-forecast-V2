@@ -1889,6 +1889,28 @@ with tab_night:
     }
     _MAIL_BOOST = 0.04  # mail votes ~4pp more Dem than county average (CA research)
 
+    def _implied_final_share(reported: float, county: str, f: float) -> float:
+        """Back-calculate the implied FINAL Dem share from a reported share.
+
+        Inverts _wave_share() analytically.  Given:
+          - reported  : observed dem share (votes_in / total_in)
+          - county    : county name (for mail pct lookup)
+          - f         : fraction of estimated total votes that are reported
+
+        Returns the implied true final share that would produce this reported share.
+        Clamped to [0, 1].
+        """
+        mp = _MAIL_PCT.get(county, 0.68)
+        if f <= 0 or f > 1:
+            return reported
+        if f < mp:
+            # Only partial mail counted; reported = final + MAIL_BOOST*(1-mp)
+            implied = reported - _MAIL_BOOST * (1 - mp)
+        else:
+            # All mail + some ED; reported = final + MAIL_BOOST*mp*(1-f)/f
+            implied = reported - _MAIL_BOOST * mp * (1 - f) / f
+        return float(np.clip(implied, 0.0, 1.0))
+
     def _wave_share(final_share: float, county: str, wave_idx: int) -> float:
         """Estimate the REPORTED Dem share at a given wave checkpoint.
 
@@ -1914,28 +1936,6 @@ with tab_night:
             mail_frac_in = f / mp
             votes_in     = mail_frac_in * mp * mail_share
         return votes_in / f
-
-    def _implied_final_share(reported: float, county: str, f: float) -> float:
-        """Back-calculate the implied FINAL Dem share from a reported share.
-
-        Inverts _wave_share() analytically.  Given:
-          - reported  : observed dem share (votes_in / total_in)
-          - county    : county name (for mail pct lookup)
-          - f         : fraction of estimated total votes that are reported
-
-        Returns the implied true final share that would produce this reported share.
-        Clamped to [0, 1].
-        """
-        mp = _MAIL_PCT.get(county, 0.68)
-        if f <= 0 or f > 1:
-            return reported
-        if f < mp:
-            # Only partial mail counted; reported = final + MAIL_BOOST*(1-mp)
-            implied = reported - _MAIL_BOOST * (1 - mp)
-        else:
-            # All mail + some ED; reported = final + MAIL_BOOST*mp*(1-f)/f
-            implied = reported - _MAIL_BOOST * mp * (1 - f) / f
-        return float(np.clip(implied, 0.0, 1.0))
 
     # Filter to winning simulations
     win_mask = district_share >= WIN_THRESHOLD
