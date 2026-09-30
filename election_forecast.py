@@ -1030,15 +1030,15 @@ with tab_mechanics:
             to    = cd["turnout"]
             lean  = cd[lean_key]
             base_env = fp2["state_environment"]["predicted_state_env"]
-            env   = base_env + cand_adj          # include Jaron adjustment
+            env   = base_env + cand_adj
             share = env + lean
             votes = reg * to
             dem   = votes * share
             total_reg   += reg
             total_votes += votes
             total_dem   += dem
-            adj_cell = (f"<td style='color:#1a6b3c;font-weight:600'>{cand_adj*100:+.1f}%</td>"
-                        if cand_adj != 0 else "<td style='color:#aaa'>—</td>")
+            adj_style = "color:#1a6b3c;font-weight:600" if cand_adj > 0 else ("color:#b91c1c;font-weight:600" if cand_adj < 0 else "color:#aaa")
+            adj_cell  = f"<td style='{adj_style}'>{cand_adj*100:+.1f}%</td>"
             frows += (
                 f"<tr><td>{cn}</td>"
                 f"<td>{reg:,}</td>"
@@ -1069,8 +1069,7 @@ with tab_mechanics:
             f'<tbody>{frows}</tbody></table>',
             unsafe_allow_html=True
         )
-        if cand_adj != 0:
-            st.caption(f"Candidate adjustment of {cand_adj*100:+.1f}% is included in Forecast Share and Est. Dem Votes.")
+        st.caption("Cand. Adj. = Candidate (Jaron) effect, applied on top of State Env. +0.0% means adjustment is off.")
     except Exception as e:
         st.caption(f"Could not render forecast table: {e}")
 
