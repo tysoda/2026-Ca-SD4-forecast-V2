@@ -1885,53 +1885,53 @@ with tab_night:
                 tbody += "</tr>"
             tbody += "</tbody>"
 
-            st.markdown(
-                f'<div style="overflow-x:auto"><table class="styled-table" style="font-size:0.78rem;min-width:900px">'
-                f'{hdr}{tbody}</table></div>',
-                unsafe_allow_html=True
-            )
-            st.caption(
-                "Reporting speeds: empirically derived from CalVoter Foundation 2024 General Election data "
-                "for Alpine, El Dorado, Inyo, Madera, Merced, Mono, Nevada, Placer, Stanislaus. "
-                "Amador, Calaveras, Mariposa, Tuolumne are interpolated from similar counties."
-            )
+            with st.expander("📊 County targets table", expanded=True):
+                st.markdown(
+                    f'<div style="overflow-x:auto"><table class="styled-table" style="font-size:0.78rem;min-width:900px">'
+                    f'{hdr}{tbody}</table></div>',
+                    unsafe_allow_html=True
+                )
+                st.caption(
+                    "Reporting speeds: empirically derived from CalVoter Foundation 2024 General Election data "
+                    "for Alpine, El Dorado, Inyo, Madera, Merced, Mono, Nevada, Placer, Stanislaus. "
+                    "Amador, Calaveras, Mariposa, Tuolumne are interpolated from similar counties."
+                )
 
             # ── Key counties to watch ─────────────────────────────────────────────
-            st.markdown("---")
-            st.markdown("**Which counties give the earliest reliable signal?**")
-            st.markdown(
-                "A county is worth watching closely if it reports a large share of its votes "
-                "early *and* its result is competitive enough to matter. "
-                "Fast counties that lean heavily one way tell you less — you already know what they'll do."
-            )
-            watch_notes = []
-            for r in tgt_rows:
-                cn        = r["county"]
-                p50_final = r["p50"]
-                speed0    = _SPEED.get(cn, [0.5]*N_WAVES)[0]
-                # "Interesting" = fast (≥35% EN) AND competitive (40–62% final Dem share)
-                if speed0 >= 0.35 and 0.40 <= p50_final <= 0.62:
-                    # What would 8pm show in a winning sim? (p25, p50, p75)
-                    w8_lo, w8_mid, w8_hi = r["waves"][0]
-                    watch_notes.append((cn, speed0, p50_final, w8_mid, w8_lo, w8_hi))
+            with st.expander("🔍 Key counties to watch", expanded=True):
+                st.markdown(
+                    "A county is worth watching closely if it reports a large share of its votes "
+                    "early *and* its result is competitive enough to matter. "
+                    "Fast counties that lean heavily one way tell you less — you already know what they'll do."
+                )
+                watch_notes = []
+                for r in tgt_rows:
+                    cn        = r["county"]
+                    p50_final = r["p50"]
+                    speed0    = _SPEED.get(cn, [0.5]*N_WAVES)[0]
+                    # "Interesting" = fast (≥35% EN) AND competitive (40–62% final Dem share)
+                    if speed0 >= 0.35 and 0.40 <= p50_final <= 0.62:
+                        # What would 8pm show in a winning sim? (p25, p50, p75)
+                        w8_lo, w8_mid, w8_hi = r["waves"][0]
+                        watch_notes.append((cn, speed0, p50_final, w8_mid, w8_lo, w8_hi))
 
-            if watch_notes:
-                for cn, speed0, p50_final, w8_mid, w8_lo, w8_hi in watch_notes:
-                    st.markdown(
-                        f'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:0.9rem 1.1rem;margin-bottom:0.75rem;background:#fafafa">'
-                        f'<div style="font-size:1rem;font-weight:700;margin-bottom:0.35rem">'
-                        f'{cn} <span style="font-weight:400;color:#555">— approx {speed0*100:.0f}% of votes in by 8pm</span></div>'
-                        f'<div style="margin-bottom:0.4rem">In winning simulations, the 8pm tally generally falls between '
-                        f'<strong>{w8_lo*100:.1f}%</strong> and <strong>{w8_hi*100:.1f}%</strong> (typical: {w8_mid*100:.1f}%).</div>'
-                        f'<div style="font-size:0.85rem;color:#444">'
-                        f'🟢 Above {w8_hi*100:.0f}% — strong positive sign &nbsp;·&nbsp; '
-                        f'🟡 {w8_lo*100:.0f}%–{w8_hi*100:.0f}% — within expected range &nbsp;·&nbsp; '
-                        f'🔴 Below {w8_lo*100:.0f}% — warning sign</div>'
-                        f'</div>',
-                        unsafe_allow_html=True
-                    )
-            else:
-                st.caption("No county provides a strong early signal at the current forecast — check the district total.")
+                if watch_notes:
+                    for cn, speed0, p50_final, w8_mid, w8_lo, w8_hi in watch_notes:
+                        st.markdown(
+                            f'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:0.9rem 1.1rem;margin-bottom:0.75rem;background:#fafafa">'
+                            f'<div style="font-size:1rem;font-weight:700;margin-bottom:0.35rem">'
+                            f'{cn} <span style="font-weight:400;color:#555">— approx {speed0*100:.0f}% of votes in by 8pm</span></div>'
+                            f'<div style="margin-bottom:0.4rem">In winning simulations, the 8pm tally generally falls between '
+                            f'<strong>{w8_lo*100:.1f}%</strong> and <strong>{w8_hi*100:.1f}%</strong> (typical: {w8_mid*100:.1f}%).</div>'
+                            f'<div style="font-size:0.85rem;color:#444">'
+                            f'🟢 Above {w8_hi*100:.0f}% — strong positive sign &nbsp;·&nbsp; '
+                            f'🟡 {w8_lo*100:.0f}%–{w8_hi*100:.0f}% — within expected range &nbsp;·&nbsp; '
+                            f'🔴 Below {w8_lo*100:.0f}% — warning sign</div>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+                else:
+                    st.caption("No county provides a strong early signal at the current forecast — check the district total.")
 
     # ── Governor race panel ───────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
