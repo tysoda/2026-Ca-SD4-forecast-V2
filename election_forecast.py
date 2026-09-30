@@ -1918,12 +1918,17 @@ with tab_night:
             if watch_notes:
                 for cn, speed0, p50_final, w8_mid, w8_lo, w8_hi in watch_notes:
                     st.markdown(
-                        f"**{cn}** — approx {speed0*100:.0f}% of votes in by 8pm\n\n"
-                        f"In winning simulations, the 8pm tally generally falls between "
-                        f"**{w8_lo*100:.1f}%** and **{w8_hi*100:.1f}%** (typical: {w8_mid*100:.1f}%).\n\n"
-                        f"🟢 Above {w8_hi*100:.0f}% — strong positive sign · "
-                        f"🟡 {w8_lo*100:.0f}%–{w8_hi*100:.0f}% — within expected range · "
-                        f"🔴 Below {w8_lo*100:.0f}% — warning sign"
+                        f'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:0.9rem 1.1rem;margin-bottom:0.75rem;background:#fafafa">'
+                        f'<div style="font-size:1rem;font-weight:700;margin-bottom:0.35rem">'
+                        f'{cn} <span style="font-weight:400;color:#555">— approx {speed0*100:.0f}% of votes in by 8pm</span></div>'
+                        f'<div style="margin-bottom:0.4rem">In winning simulations, the 8pm tally generally falls between '
+                        f'<strong>{w8_lo*100:.1f}%</strong> and <strong>{w8_hi*100:.1f}%</strong> (typical: {w8_mid*100:.1f}%).</div>'
+                        f'<div style="font-size:0.85rem;color:#444">'
+                        f'🟢 Above {w8_hi*100:.0f}% — strong positive sign &nbsp;·&nbsp; '
+                        f'🟡 {w8_lo*100:.0f}%–{w8_hi*100:.0f}% — within expected range &nbsp;·&nbsp; '
+                        f'🔴 Below {w8_lo*100:.0f}% — warning sign</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
                     )
             else:
                 st.caption("No county provides a strong early signal at the current forecast — check the district total.")
