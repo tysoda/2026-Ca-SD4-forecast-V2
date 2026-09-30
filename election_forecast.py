@@ -1652,144 +1652,189 @@ with tab_night:
         "toward Democrats) are counted first."
     )
 
-    # Reporting speed fractions per county (fraction of final votes in by each wave).
-    # These match the values in generate_mock_results.py; kept in sync manually.
+    # ── Reporting speed table ─────────────────────────────────────────────────
+    # Fraction of final county votes reported by each checkpoint.
+    # 9 checkpoints: EN 8pm, 9pm, 11pm, next-day 9am, next-day 4pm, then 4pm daily D+2…D+7.
+    # Indices:          0     1     2         3             4           5    6    7    8
+    # Sources: CalVoter Foundation 2024 General data (D) + interpolation (E). See generate_mock_results.py.
+    # Key empirical anchors: Nevada 15.7% EN / 51.9% day-7; Placer 72% EN / 87% day-7;
+    # Stanislaus 65.1% day-2 / 72.9% day-14; Merced 46.3% day-2; Madera 67.6% day-2.
     _SPEED = {
-        "Alpine":    [0.80, 0.92, 0.96, 0.99],
-        "Mono":      [0.78, 0.91, 0.95, 0.99],
-        "Mariposa":  [0.70, 0.86, 0.93, 0.98],
-        "Inyo":      [0.55, 0.75, 0.88, 0.97],
-        "Amador":    [0.52, 0.72, 0.86, 0.97],
-        "Calaveras": [0.45, 0.68, 0.82, 0.96],
-        "Tuolumne":  [0.40, 0.62, 0.78, 0.95],
-        "Nevada":    [0.12, 0.20, 0.35, 0.75],
-        "El Dorado": [0.65, 0.78, 0.90, 0.98],
-        "Placer":    [0.60, 0.72, 0.82, 0.95],
-        "Madera":    [0.38, 0.55, 0.72, 0.92],
-        "Merced":    [0.22, 0.38, 0.55, 0.88],
-        "Stanislaus":[0.32, 0.48, 0.62, 0.88],
+        #                  8pm   9pm  11pm  9am+1 4pm+1  4pm+2 4pm+3 4pm+4 4pm+5 4pm+6 4pm+7
+        "Alpine":    [0.80, 0.92, 0.96, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],  # [D] ~100% by day 1
+        "Mono":      [0.78, 0.91, 0.95, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],  # [D]
+        "Mariposa":  [0.70, 0.86, 0.93, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],  # [E] anchored to Mono
+        "Inyo":      [0.55, 0.75, 0.88, 0.94, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99],  # [D] 92.3% day-2
+        "Amador":    [0.52, 0.72, 0.86, 0.93, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99],  # [E] anchored to Inyo
+        "Calaveras": [0.45, 0.68, 0.82, 0.90, 0.95, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99],  # [E] Inyo+Madera blend
+        "Tuolumne":  [0.40, 0.62, 0.78, 0.87, 0.93, 0.96, 0.97, 0.98, 0.99, 0.99, 0.99],  # [E] Madera+Inyo blend
+        "El Dorado": [0.65, 0.78, 0.90, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],  # [D] 98.5% by day 2
+        "Placer":    [0.60, 0.72, 0.82, 0.85, 0.87, 0.89, 0.90, 0.91, 0.93, 0.95, 0.96],  # [D] 87% day-7, 96% day-14
+        "Madera":    [0.38, 0.55, 0.65, 0.68, 0.72, 0.76, 0.81, 0.86, 0.90, 0.93, 0.95],  # [D] 67.6% day-2, 80.7% day-7
+        "Merced":    [0.22, 0.38, 0.44, 0.46, 0.50, 0.56, 0.63, 0.70, 0.78, 0.85, 0.90],  # [D] 46.3% day-2 — slowest CV
+        "Stanislaus":[0.32, 0.48, 0.62, 0.63, 0.65, 0.67, 0.73, 0.78, 0.84, 0.89, 0.93],  # [D] 65.1% day-2, 72.9% day-14
+        "Nevada":    [0.12, 0.20, 0.35, 0.38, 0.42, 0.46, 0.52, 0.59, 0.65, 0.70, 0.75],  # [D] OUTLIER: 51.9% day-7
     }
-    # Mail Dem boost: mail ballots arrive first and lean +4pp Dem vs election-day.
-    # At wave w, fraction f of votes are in.  Of those f, approximately
-    # mail_pct fraction are mail (all reported early), so the remaining
-    # (f - mail_pct) / (1 - mail_pct) are ED ballots (fraction of ED in).
-    # A county's "wave share" blends mail share (final + boost) with ED share (final - adjust).
-    _MAIL_PCT = {   # fraction of final votes that are mail (from generate_mock_results.py)
-        "Alpine":0.65,"Mono":0.70,"Mariposa":0.72,"Inyo":0.68,"Amador":0.67,
-        "Calaveras":0.65,"Tuolumne":0.66,"Nevada":0.73,"El Dorado":0.70,
-        "Placer":0.68,"Madera":0.60,"Merced":0.58,"Stanislaus":0.60,
+    # Wave display labels (matching index positions above)
+    _WAVE_LABELS = ["8 pm", "9 pm", "11 pm", "9 am\n+1 day", "4 pm\n+1 day",
+                    "4 pm\n+2 days", "4 pm\n+3 days", "4 pm\n+4 days",
+                    "4 pm\n+5 days", "4 pm\n+6 days", "4 pm\n+7 days"]
+    _WAVE_LABELS_SHORT = ["8pm", "9pm", "11pm", "D+1\n9am", "D+1\n4pm",
+                          "D+2", "D+3", "D+4", "D+5", "D+6", "D+7"]
+    N_WAVES = len(_WAVE_LABELS)
+
+    # Mail ballot percentages — from generate_mock_results.py (keep in sync)
+    _MAIL_PCT = {
+        "Alpine":0.72, "Amador":0.70, "Calaveras":0.73, "El Dorado":0.68,
+        "Inyo":0.71, "Madera":0.62, "Mariposa":0.74, "Merced":0.60,
+        "Mono":0.75, "Nevada":0.76, "Placer":0.69, "Stanislaus":0.63,
+        "Tuolumne":0.72,
     }
-    _MAIL_BOOST = 0.04  # +4pp mail over election-day Dem share
+    _MAIL_BOOST = 0.04  # mail votes ~4pp more Dem than county average (CA research)
 
     def _wave_share(final_share: float, county: str, wave_idx: int) -> float:
-        """Estimate reported Dem share at a given wave, accounting for mail-heavy early reporting."""
-        f      = _SPEED.get(county, [0.5, 0.65, 0.80, 0.95])[wave_idx]
-        mp     = _MAIL_PCT.get(county, 0.65)
-        boost  = _MAIL_BOOST
-        # mail share (shifted up), election-day share (shifted down to preserve weighted avg)
-        mail_share = min(1.0, final_share + boost * (1 - mp))
-        ed_share   = max(0.0, final_share - boost * mp)
-        # At wave f, all mail is in (mp fraction), plus (f - mp)/(1-mp) of ED if f > mp
+        """Estimate the REPORTED Dem share at a given wave checkpoint.
+
+        Because mail ballots are counted before election-day ballots, early
+        waves over-represent Democratic voters by ~4pp.  As ED votes come in,
+        the reported share gradually converges toward the true final share.
+
+        Model: mail share = final + boost*(1-mp); ED share = final - boost*mp.
+        At fraction f reported, all mail is in once f ≥ mp, with a growing
+        fraction of ED ballots making up the rest.
+        """
+        f  = _SPEED.get(county, [0.5]*N_WAVES)[wave_idx]
+        mp = _MAIL_PCT.get(county, 0.68)
+        mail_share = min(1.0, final_share + _MAIL_BOOST * (1 - mp))
+        ed_share   = max(0.0, final_share - _MAIL_BOOST * mp)
+        if f <= 0:
+            return final_share
         if f >= mp:
             ed_frac_in = (f - mp) / (1 - mp) if (1 - mp) > 0 else 1.0
+            votes_in   = mp * mail_share + ed_frac_in * (1 - mp) * ed_share
         else:
-            # Not even all mail in yet — partial mail, no ED
-            mail_frac_in = f / mp if mp > 0 else 1.0
-            ed_frac_in   = 0.0
-            votes_in  = mail_frac_in * mp * mail_share
-            return votes_in / f if f > 0 else final_share
-        votes_in  = mp * mail_share + ed_frac_in * (1 - mp) * ed_share
-        return votes_in / f if f > 0 else final_share
+            # Not all mail in yet; no ED ballots
+            mail_frac_in = f / mp
+            votes_in     = mail_frac_in * mp * mail_share
+        return votes_in / f
 
     # Filter to winning simulations
     win_mask = district_share >= WIN_THRESHOLD
     n_win    = int(win_mask.sum())
 
-    with st.expander(f"📊 County targets table ({n_win:,} winning simulations of {int(n_sims):,})", expanded=True):
+    with st.expander(f"📊 County targets ({n_win:,} winning simulations of {int(n_sims):,})", expanded=True):
         if n_win < 100:
             st.warning(f"Only {n_win} winning simulations — model gives low win probability. "
                        "Targets may be unreliable; consider adjusting the forecast environment.")
         else:
-            wave_cols = ["County", "Final (target)", "8:00 PM", "9:00 PM", "11:00 PM", "Next Day"]
-            tgt_rows  = []
+            # ── Explanation ──────────────────────────────────────────────────────
+            st.markdown(
+                "**How to read this table:** Each cell shows the Dem vote share you'd expect "
+                "to see *on the results page* at that checkpoint — not the final share. "
+                "Early numbers are inflated because pre-processed mail ballots (which lean "
+                "~4 points more Democratic) are counted first. As election-day ballots are "
+                "added over the following days, the share drifts down toward the **Final** column. "
+                "Numbers are from simulations where the district is won; the range (small–**median**–large) "
+                "covers the middle 50% of those outcomes."
+            )
+            st.caption(
+                "Color guide: 🟢 **bold green** = median above 50% (county-level lead) · "
+                "🟡 amber = 48–50%, marginal · 🔴 red = below 48% "
+                "(trailing in this county but still winning the district overall in these sims). "
+                "Grey 'n/a' = fewer than 20% of votes in — number not yet meaningful."
+            )
+            st.markdown("")
+
+            # ── Build rows ───────────────────────────────────────────────────────
+            tgt_rows = []
             for cn in sorted(county_shares.keys()):
-                final_arr = county_shares[cn][win_mask]    # final county share in winning sims
+                final_arr = county_shares[cn][win_mask]
                 p25 = float(np.percentile(final_arr, 25))
                 p50 = float(np.percentile(final_arr, 50))
                 p75 = float(np.percentile(final_arr, 75))
+                wave_cells = [
+                    (_wave_share(p25, cn, wi), _wave_share(p50, cn, wi), _wave_share(p75, cn, wi))
+                    for wi in range(N_WAVES)
+                ]
+                tgt_rows.append({"county": cn, "p25": p25, "p50": p50, "p75": p75, "waves": wave_cells})
 
-                wave_cells = []
-                for wi in range(4):
-                    # Apply wave transformation to each percentile
-                    w25 = _wave_share(p25, cn, wi)
-                    w50 = _wave_share(p50, cn, wi)
-                    w75 = _wave_share(p75, cn, wi)
-                    wave_cells.append((w25, w50, w75))
+            def _fmt_band(lo, mid, hi, f_in):
+                """Render a percentile cell; grey out if < 20% in."""
+                if f_in < 0.20:
+                    return f"<span style='color:#ccc;font-size:0.72rem'>n/a<br><span style='font-size:0.60rem'>{f_in*100:.0f}% in</span></span>"
+                color = "#1a6b3c" if mid >= 0.50 else ("#d97706" if mid >= 0.48 else "#b91c1c")
+                weight = "700" if mid >= 0.50 else "400"
+                return (f"<span style='color:{color};font-weight:{weight}'>{mid*100:.1f}%</span>"
+                        f"<br><span style='font-size:0.62rem;color:#777'>{lo*100:.1f}–{hi*100:.1f}%</span>")
 
-                tgt_rows.append({
-                    "county": cn,
-                    "final_p25": p25, "final_p50": p50, "final_p75": p75,
-                    "wave_cells": wave_cells,
-                })
-
-            # Render as HTML table for compact display
-            hdr = ("<thead><tr>"
-                   "<th>County</th>"
-                   "<th>Final<br><span style='font-size:0.65rem;font-weight:400'>25–50–75th pct</span></th>"
-                   "<th>8:00 PM</th><th>9:00 PM</th><th>11:00 PM</th><th>Next Day</th>"
-                   "</tr></thead>")
-
-            def _fmt_band(lo, mid, hi, county_name=""):
-                """Format a percentile band; color red if below 50%, amber if close."""
-                color = ("#1a6b3c" if mid >= 0.505 else ("#d97706" if mid >= 0.485 else "#b91c1c"))
-                return (f"<span style='color:{color};font-weight:600'>{mid*100:.1f}%</span>"
-                        f"<br><span style='font-size:0.65rem;color:#666'>"
-                        f"{lo*100:.1f}–{hi*100:.1f}%</span>")
+            # Header row — two rows: EN night | Next day | Days 2–7
+            hdr = (
+                "<thead>"
+                "<tr>"
+                "<th rowspan='2' style='vertical-align:bottom'>County</th>"
+                "<th rowspan='2' style='vertical-align:bottom'>Final<br><span style='font-size:0.62rem;font-weight:400'>(true target)</span></th>"
+                "<th colspan='3' style='text-align:center;border-bottom:1px solid #ddd'>Election night</th>"
+                "<th colspan='2' style='text-align:center;border-bottom:1px solid #ddd'>Next day</th>"
+                "<th colspan='6' style='text-align:center;border-bottom:1px solid #ddd'>Days 2–7 (4 pm each day)</th>"
+                "</tr>"
+                "<tr>"
+                + "".join(f"<th>{lbl}</th>" for lbl in _WAVE_LABELS_SHORT)
+                + "</tr></thead>"
+            )
 
             tbody = "<tbody>"
             for r in tgt_rows:
-                speed_list = _SPEED.get(r["county"], [0.5, 0.65, 0.80, 0.95])
-                spd_note   = f"{speed_list[0]*100:.0f}% EN"
-                tbody += (f"<tr><td><strong>{r['county']}</strong><br>"
-                          f"<span style='font-size:0.65rem;color:#888'>{spd_note} reported</span></td>")
-                tbody += f"<td>{_fmt_band(r['final_p25'], r['final_p50'], r['final_p75'])}</td>"
-                for wi, (w25, w50, w75) in enumerate(r["wave_cells"]):
-                    f_val = speed_list[wi]
-                    if f_val < 0.20:
-                        cell = f"<span style='color:#aaa;font-size:0.75rem'>~{f_val*100:.0f}% in<br>not meaningful</span>"
-                    else:
-                        cell = _fmt_band(w25, w50, w75)
-                    tbody += f"<td>{cell}</td>"
+                cn         = r["county"]
+                speed_list = _SPEED.get(cn, [0.5]*N_WAVES)
+                en_pct     = speed_list[0] * 100
+                tbody += (f"<tr><td><strong>{cn}</strong>"
+                          f"<br><span style='font-size:0.60rem;color:#999'>{en_pct:.0f}% in by 8pm</span></td>")
+                tbody += f"<td>{_fmt_band(r['p25'], r['p50'], r['p75'], 1.0)}</td>"
+                for wi, (w25, w50, w75) in enumerate(r["waves"]):
+                    tbody += f"<td>{_fmt_band(w25, w50, w75, speed_list[wi])}</td>"
                 tbody += "</tr>"
             tbody += "</tbody>"
 
             st.markdown(
-                f'<table class="styled-table" style="font-size:0.82rem">{hdr}{tbody}</table>'
-                '<p style="font-size:0.70rem;color:#999;margin-top:0.4rem">'
-                'Numbers show the <b>25th–median–75th percentile</b> Dem vote share '
-                'in winning simulations at each wave, adjusting for mail-ballot timing. '
-                'Green = comfortably leading · Amber = marginal · Red = trailing (but still winning district-wide).<br>'
-                'Reporting speeds are empirically derived from CalVoter Foundation 2024 General data '
-                'for 9 counties; 4 interpolated (Amador, Calaveras, Mariposa, Tuolumne).</p>',
+                f'<div style="overflow-x:auto"><table class="styled-table" style="font-size:0.78rem;min-width:900px">'
+                f'{hdr}{tbody}</table></div>',
                 unsafe_allow_html=True
             )
+            st.caption(
+                "Reporting speeds: empirically derived from CalVoter Foundation 2024 General Election data "
+                "for Alpine, El Dorado, Inyo, Madera, Merced, Mono, Nevada, Placer, Stanislaus. "
+                "Amador, Calaveras, Mariposa, Tuolumne are interpolated from similar counties."
+            )
 
-            # Highlight: which counties to watch most closely on election night?
-            st.markdown("**Key counties to watch:**")
+            # ── Key counties to watch ─────────────────────────────────────────────
+            st.markdown("---")
+            st.markdown("**Which counties give the earliest reliable signal?**")
+            st.markdown(
+                "A county is worth watching closely if it reports a large share of its votes "
+                "early *and* its result is competitive enough to matter. "
+                "Fast counties that lean heavily one way tell you less — you already know what they'll do."
+            )
             watch_notes = []
             for r in tgt_rows:
-                cn       = r["county"]
-                final_p50 = r["final_p50"]
-                speed0   = _SPEED.get(cn, [0.5])[0]
-                # Worth watching if: fast reporter (>40% EN) AND share is in play (40–60%)
-                if speed0 >= 0.40 and 0.38 <= final_p50 <= 0.62:
-                    watch_notes.append(
-                        f"**{cn}** ({speed0*100:.0f}% in by 8pm, target ~{final_p50*100:.1f}% final)"
-                    )
+                cn        = r["county"]
+                p50_final = r["p50"]
+                speed0    = _SPEED.get(cn, [0.5]*N_WAVES)[0]
+                # "Interesting" = fast (≥35% EN) AND competitive (40–62% final Dem share)
+                if speed0 >= 0.35 and 0.40 <= p50_final <= 0.62:
+                    # What would 8pm show in a winning sim?
+                    w8_mid = r["waves"][0][1]
+                    watch_notes.append((cn, speed0, p50_final, w8_mid))
+
             if watch_notes:
-                st.markdown("  \n".join(f"- {w}" for w in watch_notes))
+                for cn, speed0, p50_final, w8_mid in watch_notes:
+                    st.markdown(
+                        f"- **{cn}** — {speed0*100:.0f}% of votes in by 8pm. "
+                        f"In winning simulations, expect to see roughly **{w8_mid*100:.1f}%** Dem at the first drop "
+                        f"(mail-heavy), converging to ~**{p50_final*100:.1f}%** as final count. "
+                        f"If the 8pm number is well below {w8_mid*100:.0f}%, that's a warning sign."
+                    )
             else:
-                st.caption("No single county provides a clear early signal — check district total.")
+                st.caption("No county provides a strong early signal at the current forecast — check the district total.")
 
     # ── County results table ───────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
