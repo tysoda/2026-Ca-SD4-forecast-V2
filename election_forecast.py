@@ -1911,19 +1911,19 @@ with tab_night:
                 speed0    = _SPEED.get(cn, [0.5]*N_WAVES)[0]
                 # "Interesting" = fast (≥35% EN) AND competitive (40–62% final Dem share)
                 if speed0 >= 0.35 and 0.40 <= p50_final <= 0.62:
-                    # What would 8pm show in a winning sim?
-                    w8_mid = r["waves"][0][1]
-                    watch_notes.append((cn, speed0, p50_final, w8_mid))
+                    # What would 8pm show in a winning sim? (p25, p50, p75)
+                    w8_lo, w8_mid, w8_hi = r["waves"][0]
+                    watch_notes.append((cn, speed0, p50_final, w8_mid, w8_lo, w8_hi))
 
             if watch_notes:
-                for cn, speed0, p50_final, w8_mid in watch_notes:
-                    direction  = "above" if w8_mid > p50_final else "below"
-                    sign_word  = "positive" if p50_final >= 0.48 else "warning"
+                for cn, speed0, p50_final, w8_mid, w8_lo, w8_hi in watch_notes:
                     st.markdown(
                         f"**{cn}** — approx {speed0*100:.0f}% of votes in by 8pm\n\n"
-                        f"Average 8pm tally in winning situations: {w8_mid*100:.1f}%.\n\n"
-                        f"If the 8pm number comes in noticeably {direction} {w8_mid*100:.0f}%, "
-                        f"treat that as a {sign_word} sign."
+                        f"In winning simulations, the 8pm tally falls between "
+                        f"**{w8_lo*100:.1f}%** and **{w8_hi*100:.1f}%** (typical: {w8_mid*100:.1f}%).\n\n"
+                        f"🟢 Above {w8_hi*100:.0f}% — strong positive sign · "
+                        f"🟡 {w8_lo*100:.0f}%–{w8_hi*100:.0f}% — within expected range · "
+                        f"🔴 Below {w8_lo*100:.0f}% — warning sign"
                     )
             else:
                 st.caption("No county provides a strong early signal at the current forecast — check the district total.")
