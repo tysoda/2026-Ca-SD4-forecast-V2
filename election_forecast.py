@@ -1581,6 +1581,62 @@ with tab_night:
         total_cast = total_dem + total_rep + total_other
         st.markdown(f'<div class="stat-card"><div class="label">Total Votes Cast</div><div class="value">{total_cast:,}</div></div>', unsafe_allow_html=True)
 
+    # ── Mail-ballot timing model (used by live win prob + targets) ───────────
+    # Reporting speed: fraction of final county votes in at each of 11 checkpoints.
+    _SPEED = {
+        #                  8pm   9pm  11pm  9am+1 4pm+1  4pm+2 4pm+3 4pm+4 4pm+5 4pm+6 4pm+7
+        "Alpine":    [0.80, 0.92, 0.96, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],
+        "Mono":      [0.78, 0.91, 0.95, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],
+        "Mariposa":  [0.70, 0.86, 0.93, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],
+        "Inyo":      [0.55, 0.75, 0.88, 0.94, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99],
+        "Amador":    [0.52, 0.72, 0.86, 0.93, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99],
+        "Calaveras": [0.45, 0.68, 0.82, 0.90, 0.95, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99],
+        "Tuolumne":  [0.40, 0.62, 0.78, 0.87, 0.93, 0.96, 0.97, 0.98, 0.99, 0.99, 0.99],
+        "El Dorado": [0.65, 0.78, 0.90, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],
+        "Placer":    [0.60, 0.72, 0.82, 0.85, 0.87, 0.89, 0.90, 0.91, 0.93, 0.95, 0.96],
+        "Madera":    [0.38, 0.55, 0.65, 0.68, 0.72, 0.76, 0.81, 0.86, 0.90, 0.93, 0.95],
+        "Merced":    [0.22, 0.38, 0.44, 0.46, 0.50, 0.56, 0.63, 0.70, 0.78, 0.85, 0.90],
+        "Stanislaus":[0.32, 0.48, 0.62, 0.63, 0.65, 0.67, 0.73, 0.78, 0.84, 0.89, 0.93],
+        "Nevada":    [0.12, 0.20, 0.35, 0.38, 0.42, 0.46, 0.52, 0.59, 0.65, 0.70, 0.75],
+    }
+    _MAIL_PCT = {
+        "Alpine":0.72, "Amador":0.70, "Calaveras":0.73, "El Dorado":0.68,
+        "Inyo":0.71, "Madera":0.62, "Mariposa":0.74, "Merced":0.60,
+        "Mono":0.75, "Nevada":0.76, "Placer":0.69, "Stanislaus":0.63,
+        "Tuolumne":0.72,
+    }
+    _MAIL_BOOST = 0.04
+
+    def _implied_final_share(reported: float, county: str, f: float) -> float:
+        """Back-calculate the implied FINAL Dem share from a reported share.
+        Inverts _wave_share() analytically.
+        f = fraction of estimated total votes that are reported.
+        """
+        mp = _MAIL_PCT.get(county, 0.68)
+        if f <= 0 or f > 1:
+            return reported
+        if f < mp:
+            implied = reported - _MAIL_BOOST * (1 - mp)
+        else:
+            implied = reported - _MAIL_BOOST * mp * (1 - f) / f
+        return float(np.clip(implied, 0.0, 1.0))
+
+    def _wave_share(final_share: float, county: str, wave_idx: int) -> float:
+        """Estimate the REPORTED Dem share at a given wave checkpoint."""
+        f  = _SPEED.get(county, [0.5]*N_WAVES)[wave_idx]
+        mp = _MAIL_PCT.get(county, 0.68)
+        mail_share = min(1.0, final_share + _MAIL_BOOST * (1 - mp))
+        ed_share   = max(0.0, final_share - _MAIL_BOOST * mp)
+        if f <= 0:
+            return final_share
+        if f >= mp:
+            ed_frac_in = (f - mp) / (1 - mp) if (1 - mp) > 0 else 1.0
+            votes_in   = mp * mail_share + ed_frac_in * (1 - mp) * ed_share
+        else:
+            mail_frac_in = f / mp
+            votes_in     = mail_frac_in * mp * mail_share
+        return votes_in / f
+
     # ── Live win probability ───────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-label">Live Win Probability</div>', unsafe_allow_html=True)
@@ -1850,92 +1906,13 @@ with tab_night:
     )
 
     # ── Reporting speed table ─────────────────────────────────────────────────
-    # Fraction of final county votes reported by each checkpoint.
-    # 9 checkpoints: EN 8pm, 9pm, 11pm, next-day 9am, next-day 4pm, then 4pm daily D+2…D+7.
-    # Indices:          0     1     2         3             4           5    6    7    8
-    # Sources: CalVoter Foundation 2024 General data (D) + interpolation (E). See generate_mock_results.py.
-    # Key empirical anchors: Nevada 15.7% EN / 51.9% day-7; Placer 72% EN / 87% day-7;
-    # Stanislaus 65.1% day-2 / 72.9% day-14; Merced 46.3% day-2; Madera 67.6% day-2.
-    _SPEED = {
-        #                  8pm   9pm  11pm  9am+1 4pm+1  4pm+2 4pm+3 4pm+4 4pm+5 4pm+6 4pm+7
-        "Alpine":    [0.80, 0.92, 0.96, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],  # [D] ~100% by day 1
-        "Mono":      [0.78, 0.91, 0.95, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],  # [D]
-        "Mariposa":  [0.70, 0.86, 0.93, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],  # [E] anchored to Mono
-        "Inyo":      [0.55, 0.75, 0.88, 0.94, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99],  # [D] 92.3% day-2
-        "Amador":    [0.52, 0.72, 0.86, 0.93, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99],  # [E] anchored to Inyo
-        "Calaveras": [0.45, 0.68, 0.82, 0.90, 0.95, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99],  # [E] Inyo+Madera blend
-        "Tuolumne":  [0.40, 0.62, 0.78, 0.87, 0.93, 0.96, 0.97, 0.98, 0.99, 0.99, 0.99],  # [E] Madera+Inyo blend
-        "El Dorado": [0.65, 0.78, 0.90, 0.97, 0.98, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],  # [D] 98.5% by day 2
-        "Placer":    [0.60, 0.72, 0.82, 0.85, 0.87, 0.89, 0.90, 0.91, 0.93, 0.95, 0.96],  # [D] 87% day-7, 96% day-14
-        "Madera":    [0.38, 0.55, 0.65, 0.68, 0.72, 0.76, 0.81, 0.86, 0.90, 0.93, 0.95],  # [D] 67.6% day-2, 80.7% day-7
-        "Merced":    [0.22, 0.38, 0.44, 0.46, 0.50, 0.56, 0.63, 0.70, 0.78, 0.85, 0.90],  # [D] 46.3% day-2 — slowest CV
-        "Stanislaus":[0.32, 0.48, 0.62, 0.63, 0.65, 0.67, 0.73, 0.78, 0.84, 0.89, 0.93],  # [D] 65.1% day-2, 72.9% day-14
-        "Nevada":    [0.12, 0.20, 0.35, 0.38, 0.42, 0.46, 0.52, 0.59, 0.65, 0.70, 0.75],  # [D] OUTLIER: 51.9% day-7
-    }
-    # Wave display labels (matching index positions above)
+    # Wave display labels (matching index positions in _SPEED above)
     _WAVE_LABELS = ["8 pm", "9 pm", "11 pm", "9 am\n+1 day", "4 pm\n+1 day",
                     "4 pm\n+2 days", "4 pm\n+3 days", "4 pm\n+4 days",
                     "4 pm\n+5 days", "4 pm\n+6 days", "4 pm\n+7 days"]
     _WAVE_LABELS_SHORT = ["8pm", "9pm", "11pm", "D+1\n9am", "D+1\n4pm",
                           "D+2", "D+3", "D+4", "D+5", "D+6", "D+7"]
     N_WAVES = len(_WAVE_LABELS)
-
-    # Mail ballot percentages — from generate_mock_results.py (keep in sync)
-    _MAIL_PCT = {
-        "Alpine":0.72, "Amador":0.70, "Calaveras":0.73, "El Dorado":0.68,
-        "Inyo":0.71, "Madera":0.62, "Mariposa":0.74, "Merced":0.60,
-        "Mono":0.75, "Nevada":0.76, "Placer":0.69, "Stanislaus":0.63,
-        "Tuolumne":0.72,
-    }
-    _MAIL_BOOST = 0.04  # mail votes ~4pp more Dem than county average (CA research)
-
-    def _implied_final_share(reported: float, county: str, f: float) -> float:
-        """Back-calculate the implied FINAL Dem share from a reported share.
-
-        Inverts _wave_share() analytically.  Given:
-          - reported  : observed dem share (votes_in / total_in)
-          - county    : county name (for mail pct lookup)
-          - f         : fraction of estimated total votes that are reported
-
-        Returns the implied true final share that would produce this reported share.
-        Clamped to [0, 1].
-        """
-        mp = _MAIL_PCT.get(county, 0.68)
-        if f <= 0 or f > 1:
-            return reported
-        if f < mp:
-            # Only partial mail counted; reported = final + MAIL_BOOST*(1-mp)
-            implied = reported - _MAIL_BOOST * (1 - mp)
-        else:
-            # All mail + some ED; reported = final + MAIL_BOOST*mp*(1-f)/f
-            implied = reported - _MAIL_BOOST * mp * (1 - f) / f
-        return float(np.clip(implied, 0.0, 1.0))
-
-    def _wave_share(final_share: float, county: str, wave_idx: int) -> float:
-        """Estimate the REPORTED Dem share at a given wave checkpoint.
-
-        Because mail ballots are counted before election-day ballots, early
-        waves over-represent Democratic voters by ~4pp.  As ED votes come in,
-        the reported share gradually converges toward the true final share.
-
-        Model: mail share = final + boost*(1-mp); ED share = final - boost*mp.
-        At fraction f reported, all mail is in once f ≥ mp, with a growing
-        fraction of ED ballots making up the rest.
-        """
-        f  = _SPEED.get(county, [0.5]*N_WAVES)[wave_idx]
-        mp = _MAIL_PCT.get(county, 0.68)
-        mail_share = min(1.0, final_share + _MAIL_BOOST * (1 - mp))
-        ed_share   = max(0.0, final_share - _MAIL_BOOST * mp)
-        if f <= 0:
-            return final_share
-        if f >= mp:
-            ed_frac_in = (f - mp) / (1 - mp) if (1 - mp) > 0 else 1.0
-            votes_in   = mp * mail_share + ed_frac_in * (1 - mp) * ed_share
-        else:
-            # Not all mail in yet; no ED ballots
-            mail_frac_in = f / mp
-            votes_in     = mail_frac_in * mp * mail_share
-        return votes_in / f
 
     # Filter to winning simulations
     win_mask = district_share >= WIN_THRESHOLD
@@ -2052,10 +2029,10 @@ with tab_night:
             # Build live dem-share lookup from df_night
             live_share = {}
             for _, _nr in df_night.iterrows():
-                _d = _nr.get("dem_votes", 0) or 0
-                _r = _nr.get("rep_votes", 0) or 0
-                _o = _nr.get("other_votes", 0) or 0
-                _tv = int(_d) + int(_r) + int(_o)
+                _d = _nr.get("dem_votes", 0);  _d = 0 if pd.isna(_d) else int(_d)
+                _r = _nr.get("rep_votes", 0);  _r = 0 if pd.isna(_r) else int(_r)
+                _o = _nr.get("other_votes", 0); _o = 0 if pd.isna(_o) else int(_o)
+                _tv = _d + _r + _o
                 if _tv > 0:
                     live_share[_nr.get("county", "")] = int(_d) / _tv
 
