@@ -1560,7 +1560,14 @@ with tab_night:
     fp_env = st.session_state.get("model_forecast_env", 59.80) / 100
     model_district_mean = float(np.mean(district_share))
 
-    ns1, ns2, ns3, ns4, ns5 = st.columns(5)
+    dist_est_total = sum(
+        int(cd.get("registration", 0) * cd.get("turnout", 0))
+        for cd in COUNTIES.values()
+    )
+    total_cast = total_dem + total_rep + total_other
+    dist_est_remaining = max(0, dist_est_total - total_cast)
+
+    ns1, ns2, ns3, ns4, ns5, ns6 = st.columns(6)
     with ns1:
         v = f"{dist_dem_share*100:.1f}%" if dist_dem_share else "—"
         color = ("#1a6b3c" if dist_dem_share and dist_dem_share >= 0.50 else "#b91c1c") if dist_dem_share else "#888"
@@ -1578,8 +1585,10 @@ with tab_night:
         else:
             st.markdown(f'<div class="stat-card"><div class="label">vs Model Forecast</div><div class="value">—</div><div class="sub">No results yet</div></div>', unsafe_allow_html=True)
     with ns5:
-        total_cast = total_dem + total_rep + total_other
         st.markdown(f'<div class="stat-card"><div class="label">Total Votes Cast</div><div class="value">{total_cast:,}</div></div>', unsafe_allow_html=True)
+    with ns6:
+        rem_str = f"~{dist_est_remaining:,}" if dist_est_total > 0 else "—"
+        st.markdown(f'<div class="stat-card"><div class="label">Est. Votes Remaining</div><div class="value">{rem_str}</div><div class="sub">of ~{dist_est_total:,} est. total</div></div>', unsafe_allow_html=True)
 
     # ── Mail-ballot timing model (used by live win prob + targets) ───────────
     # Reporting speed: fraction of final county votes in at each of 11 checkpoints.
