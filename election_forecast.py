@@ -1919,7 +1919,7 @@ with tab_night:
                 for cn, speed0, p50_final, w8_mid, w8_lo, w8_hi in watch_notes:
                     st.markdown(
                         f"**{cn}** — approx {speed0*100:.0f}% of votes in by 8pm\n\n"
-                        f"In winning simulations, the 8pm tally falls between "
+                        f"In winning simulations, the 8pm tally generally falls between "
                         f"**{w8_lo*100:.1f}%** and **{w8_hi*100:.1f}%** (typical: {w8_mid*100:.1f}%).\n\n"
                         f"🟢 Above {w8_hi*100:.0f}% — strong positive sign · "
                         f"🟡 {w8_lo*100:.0f}%–{w8_hi*100:.0f}% — within expected range · "
