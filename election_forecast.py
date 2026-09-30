@@ -1860,7 +1860,8 @@ with tab_night:
                 "Color guide: 🟢 **bold green** = median above 50% (county-level lead) · "
                 "🟡 amber = 48–50%, marginal · 🔴 red = below 48% "
                 "(trailing in this county but still winning the district overall in these sims). "
-                "Grey 'n/a' = fewer than 20% of votes in — number not yet meaningful."
+                "Grey 'n/a' = fewer than 20% of votes in — number not yet meaningful. "
+                "Small grey '% in' beneath each cell shows the expected share of votes reported at that checkpoint."
             )
             st.markdown("")
 
@@ -1877,16 +1878,24 @@ with tab_night:
                 + "".join(f"<th>{lbl}</th>" for lbl in _WAVE_LABELS_SHORT)
                 + "</tr></thead>"
             )
+            def _fmt_band_with_speed(lo, mid, hi, f_in):
+                """Like _fmt_band but appends a '% in' sub-line."""
+                if f_in < 0.20:
+                    return f"<span style='color:#ccc;font-size:0.72rem'>n/a<br><span style='font-size:0.60rem'>{f_in*100:.0f}% in</span></span>"
+                color = "#1a6b3c" if mid >= 0.50 else ("#d97706" if mid >= 0.48 else "#b91c1c")
+                weight = "700" if mid >= 0.50 else "400"
+                return (f"<span style='color:{color};font-weight:{weight}'>{mid*100:.1f}%</span>"
+                        f"<br><span style='font-size:0.62rem;color:#777'>{lo*100:.1f}–{hi*100:.1f}%</span>"
+                        f"<br><span style='font-size:0.60rem;color:#aaa'>{f_in*100:.0f}% in</span>")
+
             tbody = "<tbody>"
             for r in tgt_rows:
                 cn         = r["county"]
                 speed_list = _SPEED.get(cn, [0.5]*N_WAVES)
-                en_pct     = speed_list[0] * 100
-                tbody += (f"<tr><td><strong>{cn}</strong>"
-                          f"<br><span style='font-size:0.60rem;color:#999'>{en_pct:.0f}% in by 8pm</span></td>")
+                tbody += f"<tr><td><strong>{cn}</strong></td>"
                 tbody += f"<td>{_fmt_band(r['p25'], r['p50'], r['p75'], 1.0)}</td>"
                 for wi, (w25, w50, w75) in enumerate(r["waves"]):
-                    tbody += f"<td>{_fmt_band(w25, w50, w75, speed_list[wi])}</td>"
+                    tbody += f"<td>{_fmt_band_with_speed(w25, w50, w75, speed_list[wi])}</td>"
                 tbody += "</tr>"
             tbody += "</tbody>"
 
