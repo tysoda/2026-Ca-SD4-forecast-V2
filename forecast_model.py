@@ -63,13 +63,26 @@ def forecast_registration() -> dict:
     partial = pd.read_csv(DATA_DIR / "partial_county_fractions.csv")
     partial_dict = dict(zip(partial.county, partial.sd4_fraction))
 
-    # Use Nov 2026 forecasted row; fall back to most recent Nov if not present
+    # Priority:
+    #   1. SOS 60-day report (month=9, year=2026) — SD4-portion already applied
+    #   2. Nov 2026 forecasted row (month=11, year=2026)
+    #   3. Linear extrapolation from last two Nov values
     results = {}
     for county in COUNTIES:
         c_df = df[df.county == county].copy()
+        sos60 = c_df[(c_df.year == 2026) & (c_df.month == 9)]
         nov26 = c_df[(c_df.year == 2026) & (c_df.month == 11)]
-        if len(nov26) > 0:
+        if len(sos60) > 0:
+            # SOS 60-day report: value is already the SD4 portion for split counties
+            reg_sd4 = float(sos60.iloc[-1]["registered_voters"])
+            fraction = partial_dict.get(county, 1.0)
+            # Back-calculate total so the existing fraction logic still works
+            reg_total = reg_sd4 / fraction if fraction > 0 else reg_sd4
+            source = "SOS 60-day"
+        elif len(nov26) > 0:
             reg_total = float(nov26.iloc[-1]["registered_voters"])
+            fraction = partial_dict.get(county, 1.0)
+            source = "Nov26 forecast"
         else:
             # Fallback: linear extrapolation from last two Nov values
             nov_df = c_df[c_df.month == 11].sort_values("year")
@@ -80,12 +93,14 @@ def forecast_registration() -> dict:
                 reg_total = float(last_two.iloc[1]["registered_voters"] + slope)
             else:
                 reg_total = float(nov_df.iloc[-1]["registered_voters"])
+            fraction = partial_dict.get(county, 1.0)
+            source = "extrapolated"
 
-        fraction = partial_dict.get(county, 1.0)
         results[county] = {
             "predicted_registration_total": round(reg_total),
             "sd4_fraction":                 round(fraction, 8),
             "predicted_registration_sd4":   round(reg_total * fraction),
+            "registration_source":          source,
         }
 
     return results
