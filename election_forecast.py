@@ -718,6 +718,124 @@ with tab_turnout:
 
         st.caption("Age codes: 1=18–34 · 3=35–49 · 4=50–64 · 6=65+ · Ethnicity: modeled/attributed via voter file · Data: Optiq Data (abev.optiqdata.com)")
 
+    # ── Party Return Rate Trajectory ─────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Party Return Rate Trajectory</div>', unsafe_allow_html=True)
+    st.caption(
+        "Daily party-level VBM return rates from Optiq snapshots. "
+        "Dashed lines show each party's share of total SD4 VBM ballots issued (proxy for registration share). "
+        "When a party's return rate exceeds its issued share, that party is outperforming proportionally."
+    )
+
+    _CROSSTAB_CSV = "optiq_crosstabs.csv"
+
+    @st.cache_data(ttl=3600)
+    def _load_crosstabs(path: str) -> pd.DataFrame:
+        if not os.path.exists(path):
+            return pd.DataFrame()
+        df = pd.read_csv(path)
+        if df.empty or "snapshot_date" not in df.columns:
+            return pd.DataFrame()
+        df["snapshot_date"] = pd.to_datetime(df["snapshot_date"])
+        for col in ("issued", "returned"):
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+        return df
+
+    _ct_df = _load_crosstabs(_CROSSTAB_CSV)
+
+    # Load party registration benchmarks
+    _REG_CSV = "sd4_party_registration.csv"
+    @st.cache_data(ttl=86400)
+    def _load_party_reg(path: str) -> dict:
+        if not os.path.exists(path):
+            return {}
+        df = pd.read_csv(path)
+        return dict(zip(df["party"], df["registered"]))
+
+    _party_reg = _load_party_reg(_REG_CSV)
+    _total_reg = sum(_party_reg.values())
+
+    if _ct_df.empty:
+        st.info(
+            "Party trajectory data not yet available — the daily snapshot pipeline will populate this "
+            "automatically starting tonight. Check back tomorrow."
+        )
+    else:
+        # Aggregate to daily party totals
+        _daily = (
+            _ct_df.groupby(["snapshot_date", "party"])
+            .agg(issued=("issued", "sum"), returned=("returned", "sum"))
+            .reset_index()
+        )
+        _daily["return_rate"] = _daily["returned"] / _daily["issued"].replace(0, pd.NA)
+
+        # Compute issued-share benchmark (most recent snapshot)
+        _latest_snap = _ct_df["snapshot_date"].max()
+        _latest = _ct_df[_ct_df["snapshot_date"] == _latest_snap]
+        _total_issued_latest = int(_latest["issued"].sum())
+        _issued_share = {}
+        for _p in ["D", "R", "O"]:
+            _pissued = int(_latest[_latest["party"] == _p]["issued"].sum())
+            _issued_share[_p] = _pissued / _total_issued_latest if _total_issued_latest > 0 else 0
+
+        # Build Altair / plotly-free chart using st.line_chart with a pivot
+        _party_labels_traj = {"D": "Democrat", "R": "Republican", "O": "Other/NPP"}
+        _dates_sorted = sorted(_daily["snapshot_date"].unique())
+        _n_snaps = len(_dates_sorted)
+
+        if _n_snaps < 2:
+            # Only one snapshot — show a simple summary instead of a time series
+            st.info(f"Only one snapshot collected so far ({_latest_snap.strftime('%-d %b')}). "
+                    "The trajectory chart will appear once daily snapshots accumulate.")
+            # Show current rates vs benchmarks as a bar-style comparison
+            _bench_rows = []
+            for _p in ["D", "R", "O"]:
+                _pslice = _latest[_latest["party"] == _p]
+                _pissued = int(_pslice["issued"].sum())
+                _preturned = int(_pslice["returned"].sum())
+                _prate = _preturned / _pissued if _pissued > 0 else 0
+                _pissued_share = _issued_share.get(_p, 0)
+                _preg_share = _party_reg.get(_p, 0) / _total_reg if _total_reg > 0 else 0
+                _bench_rows.append({
+                    "Party":          _party_labels_traj[_p],
+                    "Return Rate":    f"{_prate:.1%}",
+                    "Share of Issued": f"{_pissued_share:.1%}",
+                    "Reg Share (Apr 2026)": f"{_preg_share:.1%}",
+                    "vs Reg Share":   f"{_prate - _preg_share:+.1%}",
+                })
+            st.dataframe(pd.DataFrame(_bench_rows), hide_index=True, use_container_width=True)
+        else:
+            # Pivot for line chart: index = date, columns = party return rate
+            _pivot = _daily.pivot(index="snapshot_date", columns="party", values="return_rate")
+            _pivot = _pivot.rename(columns=_party_labels_traj)
+            _pivot.index = _pivot.index.strftime("%b %-d")
+
+            st.markdown("**Return rate over time**")
+            st.line_chart(_pivot, color=["#1565c0", "#555", "#b71c1c"])
+
+            # Also show vs issued share and registration share benchmark table
+            st.markdown("**Latest snapshot vs benchmarks**")
+            _bench_rows = []
+            for _p in ["D", "R", "O"]:
+                _pslice = _daily[(_daily["party"] == _p) & (_daily["snapshot_date"] == _latest_snap)]
+                _prate = float(_pslice["return_rate"].iloc[0]) if len(_pslice) > 0 else 0
+                _pissued_share = _issued_share.get(_p, 0)
+                _preg_share = _party_reg.get(_p, 0) / _total_reg if _total_reg > 0 else 0
+                _bench_rows.append({
+                    "Party":               _party_labels_traj[_p],
+                    "Return Rate":         f"{_prate:.1%}",
+                    "Share of Issued":     f"{_pissued_share:.1%}",
+                    "Reg Share (Apr '26)": f"{_preg_share:.1%}",
+                    "Rate vs Reg Share":   f"{_prate - _preg_share:+.1%}",
+                })
+            st.dataframe(pd.DataFrame(_bench_rows), hide_index=True, use_container_width=True)
+
+        st.caption(
+            f"Registration benchmarks: D {_party_reg.get('D',0):,} · R {_party_reg.get('R',0):,} · "
+            f"O/NPP {_party_reg.get('O',0):,} (SOS 60-day primary report, Apr 2026). "
+            "Update sd4_party_registration.csv when general-election figures are available."
+        )
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3 — MAP
 # ══════════════════════════════════════════════════════════════════════════════
