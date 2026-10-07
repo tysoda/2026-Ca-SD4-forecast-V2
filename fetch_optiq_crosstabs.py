@@ -25,12 +25,11 @@ API_URL = f"https://abev.optiqdata.com/api/ballot-returns/{DISTRICT_SLUG}"
 OUTPUT_CSV = os.path.join(os.path.dirname(__file__), "optiq_crosstabs.csv")
 SNAPSHOT_DATE = date.today().isoformat()  # e.g. "2026-10-07"
 
-# SD4 party registration as of 60-day primary report (April 2026).
-# Update this dict when the general-election 60-day figures become available.
+# SD4 party registration as of 60-day general election report (September 4, 2026).
 SD4_PARTY_REG = {
-    "D": 207249,
-    "R": 251471,
-    "O": 124_064,  # NPP (120,593) + Other (4,471) — grouped to match Optiq "O"
+    "D": 207213,
+    "R": 250162,
+    "O": 178612,  # All non-D/R: NPP (121,703) + AIP (34,830) + Lib (8,975) + Green (2,802) + P&F (3,456) + Other (4,439) + Unknown (2,407)
 }
 
 

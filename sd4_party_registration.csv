@@ -1,4 +1,4 @@
 party,party_label,registered,report_date,notes
-D,Democrat,207249,2026-04-03,SOS 60-day primary report
-R,Republican,251471,2026-04-03,SOS 60-day primary report
-O,Other/NPP,124064,2026-04-03,NPP (120593) + Other (4471) combined to match Optiq party codes
+D,Democrat,207213,2026-09-04,SOS 60-day general election report
+R,Republican,250162,2026-09-04,SOS 60-day general election report
+O,Other/NPP,178612,2026-09-04,All non-D/R: NPP (121703) + AIP (34830) + Lib (8975) + Green (2802) + P&F (3456) + Other (4439) + Unknown (2407)
