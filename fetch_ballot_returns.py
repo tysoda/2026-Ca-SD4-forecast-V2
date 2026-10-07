@@ -139,11 +139,21 @@ def parse_xlsx(data: bytes, fractions: dict) -> tuple[datetime.date, list[dict]]
                 return 0
             return round(float(val) * fraction)
 
+        is_partial = fraction < 1.0
+
+        def raw(val) -> Optional[int]:
+            """Return raw county total for partial counties, else None."""
+            if not is_partial or val is None:
+                return None
+            return round(float(val))
+
         rows_out.append({
-            "county":       county,
-            "vbm_issued":   scale(row[COL_ISSUED]),
-            "vbm_returned": scale(row[COL_RETURNED]),
-            "vbm_accepted": scale(row[COL_ACCEPTED]),
+            "county":                county,
+            "vbm_issued":            scale(row[COL_ISSUED]),
+            "vbm_returned":          scale(row[COL_RETURNED]),
+            "vbm_accepted":          scale(row[COL_ACCEPTED]),
+            "county_total_issued":   raw(row[COL_ISSUED]),
+            "county_total_returned": raw(row[COL_RETURNED]),
         })
 
     return snapshot_date, rows_out
@@ -175,29 +185,37 @@ def append_rows(
         print(f"  ✓ All rows for {date_str} already present — nothing to append.")
         return 0
 
-    fieldnames = ["county", "snapshot_date", "vbm_issued", "vbm_returned", "vbm_accepted"]
+    fieldnames = [
+        "county", "snapshot_date",
+        "vbm_issued", "vbm_returned", "vbm_accepted",
+        "county_total_issued", "county_total_returned",
+    ]
     write_header = not OUTPUT_CSV.exists()
 
     if dry_run:
         print(f"  DRY RUN — would append {len(to_write)} rows for {date_str}:")
         for r in sorted(to_write, key=lambda x: x["county"]):
+            ct = (f"  county_total_returned={r['county_total_returned']:>7,}"
+                  if r["county_total_returned"] is not None else "")
             print(
                 f"    {r['county']:12s}  issued={r['vbm_issued']:>7,}  "
-                f"returned={r['vbm_returned']:>6,}  accepted={r['vbm_accepted']:>6,}"
+                f"returned={r['vbm_returned']:>6,}  accepted={r['vbm_accepted']:>6,}{ct}"
             )
         return len(to_write)
 
     with open(OUTPUT_CSV, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         if write_header:
             writer.writeheader()
         for r in sorted(to_write, key=lambda x: x["county"]):
             writer.writerow({
-                "county":        r["county"],
-                "snapshot_date": date_str,
-                "vbm_issued":    r["vbm_issued"],
-                "vbm_returned":  r["vbm_returned"],
-                "vbm_accepted":  r["vbm_accepted"],
+                "county":                r["county"],
+                "snapshot_date":         date_str,
+                "vbm_issued":            r["vbm_issued"],
+                "vbm_returned":          r["vbm_returned"],
+                "vbm_accepted":          r["vbm_accepted"],
+                "county_total_issued":   r.get("county_total_issued", ""),
+                "county_total_returned": r.get("county_total_returned", ""),
             })
 
     print(f"  ✓ Appended {len(to_write)} rows for {date_str} → {OUTPUT_CSV}")
