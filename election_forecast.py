@@ -606,6 +606,118 @@ with tab_turnout:
 
         st.caption("🔵 Pace thresholds: High ≥ 110% of 2022 final rate · On pace 85–110% · Low < 85%")
 
+    # ── Optiq Crosstab Data ───────────────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-label">VBM Crosstab Breakdown (via Optiq Data)</div>', unsafe_allow_html=True)
+    st.caption("Party, age, gender, and ethnicity breakdown of SD4 VBM ballots. Source: Optiq Data API (voter-file matched, ~98% coverage). Updated daily.")
+
+    @st.cache_data(ttl=3600)
+    def _fetch_optiq(district_slug: str) -> list:
+        """Fetch Optiq ballot-return crosstabs; cached for 1 hour."""
+        import urllib.request, json as _json, ssl as _ssl, os as _os
+        url = f"https://abev.optiqdata.com/api/ballot-returns/{district_slug}"
+        ca_bundle = "/root/.ccr/ca-bundle.crt"
+        ctx = _ssl.create_default_context(cafile=ca_bundle if _os.path.exists(ca_bundle) else None)
+        try:
+            with urllib.request.urlopen(url, timeout=10, context=ctx) as r:
+                return _json.loads(r.read())["ballotReturns"]
+        except Exception:
+            return []
+
+    _optiq_rows = _fetch_optiq("STATE%20SENATE%204")
+
+    if not _optiq_rows:
+        st.info("Crosstab data unavailable — Optiq API could not be reached.")
+    else:
+        _odf = pd.DataFrame(_optiq_rows)
+        _odf["voters"] = pd.to_numeric(_odf["voters"], errors="coerce").fillna(0).astype(int)
+        _odf["returned"] = _odf["returnDate"].notna()
+
+        # ── Age / gender / ethnicity label maps ──────────────────────────────
+        _age_labels = {"1": "18–34", "3": "35–49", "4": "50–64", "6": "65+"}
+        _eth_labels = {"A": "Asian", "B": "Black", "H": "Hispanic", "W": "White"}
+        _gen_labels = {"F": "Female", "M": "Male", "U": "Unknown"}
+        _party_labels = {"D": "Democrat", "R": "Republican", "O": "Other / NPP"}
+        _party_colors = {"D": "#1565c0", "R": "#b71c1c", "O": "#555"}
+
+        # ── Helper: issued / returned for a filtered slice ───────────────────
+        def _optiq_counts(df):
+            issued   = df["voters"].sum()
+            returned = df[df["returned"]]["voters"].sum()
+            rate     = returned / issued if issued > 0 else 0.0
+            return int(issued), int(returned), rate
+
+        # ════════════════════════════════════════════════════════════════════
+        # PARTY (front and centre)
+        # ════════════════════════════════════════════════════════════════════
+        st.markdown("**Party**")
+        _pcols = st.columns(3)
+        for _i, _p in enumerate(["D", "R", "O"]):
+            _pslice = _odf[_odf["party"] == _p]
+            _pissued, _preturned, _prate = _optiq_counts(_pslice)
+            _pcolor = _party_colors[_p]
+            with _pcols[_i]:
+                st.markdown(
+                    f'<div class="stat-card" style="border-left-color:{_pcolor}">'
+                    f'<div class="label" style="color:{_pcolor}">{_party_labels[_p]}</div>'
+                    f'<div class="value">{_preturned:,}</div>'
+                    f'<div class="sub">returned · {_prate:.1%} of {_pissued:,} issued</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # Party summary table with share of returns
+        _ptable_rows = []
+        _tot_returned_optiq = int(_odf[_odf["returned"]]["voters"].sum())
+        for _p in ["D", "R", "O"]:
+            _pslice = _odf[_odf["party"] == _p]
+            _pissued, _preturned, _prate = _optiq_counts(_pslice)
+            _share = _preturned / _tot_returned_optiq if _tot_returned_optiq > 0 else 0
+            _ptable_rows.append({
+                "Party":            _party_labels[_p],
+                "Issued":           f"{_pissued:,}",
+                "Returned":         f"{_preturned:,}",
+                "Return Rate":      f"{_prate:.1%}",
+                "Share of Returns": f"{_share:.1%}",
+            })
+        st.dataframe(pd.DataFrame(_ptable_rows), hide_index=True, use_container_width=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ════════════════════════════════════════════════════════════════════
+        # AGE / GENDER / ETHNICITY — side by side
+        # ════════════════════════════════════════════════════════════════════
+        _col_age, _col_gen, _col_eth = st.columns(3)
+
+        with _col_age:
+            st.markdown("**Age group**")
+            _age_rows = []
+            for _a, _albl in _age_labels.items():
+                _aslice = _odf[_odf["age"] == _a]
+                _aissued, _areturned, _arate = _optiq_counts(_aslice)
+                _age_rows.append({"Age": _albl, "Issued": f"{_aissued:,}", "Returned": f"{_areturned:,}", "Rate": f"{_arate:.1%}"})
+            st.dataframe(pd.DataFrame(_age_rows), hide_index=True, use_container_width=True)
+
+        with _col_gen:
+            st.markdown("**Gender**")
+            _gen_rows = []
+            for _g, _glbl in _gen_labels.items():
+                _gslice = _odf[_odf["gender"] == _g]
+                _gissued, _greturned, _grate = _optiq_counts(_gslice)
+                _gen_rows.append({"Gender": _glbl, "Issued": f"{_gissued:,}", "Returned": f"{_greturned:,}", "Rate": f"{_grate:.1%}"})
+            st.dataframe(pd.DataFrame(_gen_rows), hide_index=True, use_container_width=True)
+
+        with _col_eth:
+            st.markdown("**Ethnicity**")
+            _eth_rows = []
+            for _e, _elbl in _eth_labels.items():
+                _eslice = _odf[_odf["ethnicity"] == _e]
+                _eissued, _ereturned, _erate = _optiq_counts(_eslice)
+                _eth_rows.append({"Ethnicity": _elbl, "Issued": f"{_eissued:,}", "Returned": f"{_ereturned:,}", "Rate": f"{_erate:.1%}"})
+            st.dataframe(pd.DataFrame(_eth_rows), hide_index=True, use_container_width=True)
+
+        st.caption("Age codes: 1=18–34 · 3=35–49 · 4=50–64 · 6=65+ · Ethnicity: modeled/attributed via voter file · Data: Optiq Data (abev.optiqdata.com)")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3 — MAP
 # ══════════════════════════════════════════════════════════════════════════════
