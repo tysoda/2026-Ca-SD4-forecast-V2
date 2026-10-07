@@ -521,6 +521,91 @@ with tab_turnout:
             st.markdown(f'<div class="stat-card"><div class="label">{lbl}</div><div class="value">{("▲" if ds>=0 else "▼") + " " if lbl=="Share Change" else ""}{fmt_pct(abs(val) if lbl=="Share Change" else val)}</div></div>', unsafe_allow_html=True)
     st.info("💡 Hit **▶ Run Simulation** in the sidebar to run the full Monte Carlo with these turnout adjustments.")
 
+    # ── Ballot Return Tracker ─────────────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-label">VBM Ballot Return Tracker</div>', unsafe_allow_html=True)
+    st.caption("Live early-vote return rates vs. 2022 final baseline. Updated daily by automated fetch.")
+
+    _bsr_path      = DATA_DIR / "ballot_returns.csv"
+    _base_path     = DATA_DIR / "vbm_2022_baseline.csv"
+
+    if not _bsr_path.exists() or not _base_path.exists():
+        st.info("No ballot return data yet. Data will appear once the daily fetch has run.")
+    else:
+        _bsr_df  = pd.read_csv(_bsr_path,  parse_dates=["snapshot_date"])
+        _base_df = pd.read_csv(_base_path)
+        _base    = _base_df.set_index("county")
+
+        # Most recent snapshot
+        _latest_date = _bsr_df["snapshot_date"].max()
+        _latest      = _bsr_df[_bsr_df["snapshot_date"] == _latest_date].set_index("county")
+
+        st.caption(f"Latest snapshot: **{_latest_date.strftime('%B %-d, %Y')}**")
+
+        _tracker_rows = []
+        for _cn in county_names:
+            if _cn not in _latest.index or _cn not in _base.index:
+                continue
+            _row   = _latest.loc[_cn]
+            _b22   = _base.loc[_cn]
+
+            _issued_26   = int(_row.get("vbm_issued",   0) or 0)
+            _returned_26 = int(_row.get("vbm_returned", 0) or 0)
+            _issued_22   = int(_b22.get("vbm_issued_sd4",   0) or 0)
+            _returned_22 = int(_b22.get("vbm_returned_sd4", 0) or 0)
+
+            _rate_26  = _returned_26 / _issued_26  if _issued_26  > 0 else 0.0
+            _rate_22  = _returned_22 / _issued_22  if _issued_22  > 0 else 0.0
+            _pct_of_baseline = (_rate_26 / _rate_22) if _rate_22 > 0 else 0.0
+
+            # Pace label
+            if _rate_26 == 0:
+                _pace = "—"
+            elif _pct_of_baseline >= 1.10:
+                _pace = "🟢 High"
+            elif _pct_of_baseline >= 0.85:
+                _pace = "🟡 On pace"
+            else:
+                _pace = "🔴 Low"
+
+            _tracker_rows.append({
+                "County":           _cn,
+                "2026 Issued":      f"{_issued_26:,}",
+                "2026 Returned":    f"{_returned_26:,}",
+                "2026 Rate":        f"{_rate_26:.1%}",
+                "2022 Final Rate":  f"{_rate_22:.1%}",
+                "% of Baseline":    f"{_pct_of_baseline:.0%}" if _rate_26 > 0 else "—",
+                "Pace":             _pace,
+            })
+
+        if _tracker_rows:
+            _tracker_df = pd.DataFrame(_tracker_rows)
+            st.dataframe(_tracker_df, hide_index=True, use_container_width=True)
+
+            # District-level rollup
+            _tot_issued_26   = sum(int(_latest.loc[c].get("vbm_issued",   0) or 0) for c in county_names if c in _latest.index)
+            _tot_returned_26 = sum(int(_latest.loc[c].get("vbm_returned", 0) or 0) for c in county_names if c in _latest.index)
+            _tot_issued_22   = int(_base_df["vbm_issued_sd4"].sum())
+            _tot_returned_22 = int(_base_df["vbm_returned_sd4"].sum())
+            _dist_rate_26 = _tot_returned_26 / _tot_issued_26  if _tot_issued_26  > 0 else 0
+            _dist_rate_22 = _tot_returned_22 / _tot_issued_22  if _tot_issued_22  > 0 else 0
+
+            _rc1, _rc2, _rc3, _rc4 = st.columns(4)
+            with _rc1:
+                st.markdown(f'<div class="stat-card"><div class="label">District Ballots Returned</div><div class="value">{_tot_returned_26:,}</div><div class="sub">of {_tot_issued_26:,} issued</div></div>', unsafe_allow_html=True)
+            with _rc2:
+                st.markdown(f'<div class="stat-card"><div class="label">District Return Rate</div><div class="value">{_dist_rate_26:.1%}</div><div class="sub">2022 final: {_dist_rate_22:.1%}</div></div>', unsafe_allow_html=True)
+            with _rc3:
+                _vs_base = (_dist_rate_26 / _dist_rate_22) if _dist_rate_22 > 0 else 0
+                _col = "#2e7d32" if _vs_base >= 1.10 else ("#f57c00" if _vs_base >= 0.85 else "#c62828") if _dist_rate_26 > 0 else "#888"
+                st.markdown(f'<div class="stat-card"><div class="label">vs 2022 Baseline</div><div class="value" style="color:{_col}">{_vs_base:.0%}</div><div class="sub">of 2022 final return rate</div></div>', unsafe_allow_html=True)
+            with _rc4:
+                # Snapshots collected so far
+                _n_snaps = _bsr_df["snapshot_date"].nunique()
+                st.markdown(f'<div class="stat-card"><div class="label">Snapshots Collected</div><div class="value">{_n_snaps}</div><div class="sub">since {_bsr_df["snapshot_date"].min().strftime("%-d %b")}</div></div>', unsafe_allow_html=True)
+
+        st.caption("🔵 Pace thresholds: High ≥ 110% of 2022 final rate · On pace 85–110% · Low < 85%")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3 — MAP
 # ══════════════════════════════════════════════════════════════════════════════
