@@ -161,19 +161,21 @@ def run_forecast_model(ctx: dict) -> dict:
 
 # ── Hardcoded fallback defaults (used only if forecast_params.json absent) ───
 FALLBACK_COUNTIES = {
-    "Alpine":     {"registration":944,   "turnout":0.7074,"lean_avg":0.0388,"lean_lin":0.0995,"lean_sd":0.0293,"hist_avg":0.6221},
-    "Amador":     {"registration":27416, "turnout":0.7110,"lean_avg":-0.2465,"lean_lin":-0.2444,"lean_sd":0.0143,"hist_avg":0.3481},
-    "Calaveras":  {"registration":33312, "turnout":0.6702,"lean_avg":-0.2404,"lean_lin":-0.2538,"lean_sd":0.0162,"hist_avg":0.3581},
-    "El Dorado":  {"registration":142947,"turnout":0.6630,"lean_avg":-0.1784,"lean_lin":-0.1531,"lean_sd":0.0140,"hist_avg":0.4079},
-    "Inyo":       {"registration":11037, "turnout":0.6890,"lean_avg":-0.1280,"lean_lin":-0.0973,"lean_sd":0.0122,"hist_avg":0.4570},
-    "Madera":     {"registration":34903, "turnout":0.5690,"lean_avg":-0.2700,"lean_lin":-0.2325,"lean_sd":0.0182,"hist_avg":0.3155},
-    "Mariposa":   {"registration":11862, "turnout":0.6941,"lean_avg":-0.2083,"lean_lin":-0.2038,"lean_sd":0.0065,"hist_avg":0.3772},
-    "Merced":     {"registration":12842, "turnout":0.4989,"lean_avg":-0.2673,"lean_lin":-0.2239,"lean_sd":0.0231,"hist_avg":0.3182},
-    "Mono":       {"registration":8286,  "turnout":0.6654,"lean_avg":-0.0251,"lean_lin":-0.0033,"lean_sd":0.0173,"hist_avg":0.5628},
-    "Nevada":     {"registration":12680, "turnout":0.6959,"lean_avg":0.1353,"lean_lin":0.1741,"lean_sd":0.0181,"hist_avg":0.7208},
-    "Placer":     {"registration":8640,  "turnout":0.6520,"lean_avg":0.1224,"lean_lin":0.1462,"lean_sd":0.0113,"hist_avg":0.7079},
-    "Stanislaus": {"registration":304987,"turnout":0.5178,"lean_avg":-0.1553,"lean_lin":-0.1540,"lean_sd":0.0123,"hist_avg":0.4357},
-    "Tuolumne":   {"registration":36167, "turnout":0.6736,"lean_avg":-0.2092,"lean_lin":-0.2034,"lean_sd":0.0140,"hist_avg":0.3763},
+    # Registration figures from SOS 60-day General Election report, Sep 4, 2026.
+    # (Used only if forecast_params.json is absent.)
+    "Alpine":     {"registration":922,   "turnout":0.7074,"lean_avg":0.0388,"lean_lin":0.0995,"lean_sd":0.0293,"hist_avg":0.6221},
+    "Amador":     {"registration":27073, "turnout":0.7110,"lean_avg":-0.2465,"lean_lin":-0.2444,"lean_sd":0.0143,"hist_avg":0.3481},
+    "Calaveras":  {"registration":32716, "turnout":0.6702,"lean_avg":-0.2404,"lean_lin":-0.2538,"lean_sd":0.0162,"hist_avg":0.3581},
+    "El Dorado":  {"registration":137303,"turnout":0.6630,"lean_avg":-0.1784,"lean_lin":-0.1531,"lean_sd":0.0140,"hist_avg":0.4079},
+    "Inyo":       {"registration":10889, "turnout":0.6890,"lean_avg":-0.1280,"lean_lin":-0.0973,"lean_sd":0.0122,"hist_avg":0.4570},
+    "Madera":     {"registration":36317, "turnout":0.5690,"lean_avg":-0.2700,"lean_lin":-0.2325,"lean_sd":0.0182,"hist_avg":0.3155},
+    "Mariposa":   {"registration":11780, "turnout":0.6941,"lean_avg":-0.2083,"lean_lin":-0.2038,"lean_sd":0.0065,"hist_avg":0.3772},
+    "Merced":     {"registration":12835, "turnout":0.4989,"lean_avg":-0.2673,"lean_lin":-0.2239,"lean_sd":0.0231,"hist_avg":0.3182},
+    "Mono":       {"registration":7945,  "turnout":0.6654,"lean_avg":-0.0251,"lean_lin":-0.0033,"lean_sd":0.0173,"hist_avg":0.5628},
+    "Nevada":     {"registration":12563, "turnout":0.6959,"lean_avg":0.1353,"lean_lin":0.1741,"lean_sd":0.0181,"hist_avg":0.7208},
+    "Placer":     {"registration":8657,  "turnout":0.6520,"lean_avg":0.1224,"lean_lin":0.1462,"lean_sd":0.0113,"hist_avg":0.7079},
+    "Stanislaus": {"registration":301306,"turnout":0.5178,"lean_avg":-0.1553,"lean_lin":-0.1540,"lean_sd":0.0123,"hist_avg":0.4357},
+    "Tuolumne":   {"registration":35681, "turnout":0.6736,"lean_avg":-0.2092,"lean_lin":-0.2034,"lean_sd":0.0140,"hist_avg":0.3763},
 }
 WIN_THRESHOLD = 0.50
 N_DEFAULT     = 10_000
@@ -352,6 +354,68 @@ def counties_to_frozen(d):
 if "turnout_adj" not in st.session_state:
     st.session_state["turnout_adj"] = {cn: 0.0 for cn in COUNTIES}
 
+# ── VBM-pace-based turnout adjustment helper ─────────────────────────────────
+@st.cache_data(ttl=3600)
+def _compute_vbm_pace_adj(bsr_path: str, base_path: str) -> dict | None:
+    """
+    Compute per-county turnout adjustments implied by current VBM return pace.
+
+    Logic:
+      issued_ratio = issued_26 / issued_22
+        → how do this cycle's ballot issuances compare to 2022? If more ballots
+          were sent, expect more returns proportionally.
+      return_ratio = returned_26 / issued_26   (current 2026 return rate)
+                   / (returned_22 / issued_22) (2022 final return rate)
+        → is the 2026 return RATE ahead or behind 2022 final pace?
+
+    We compare 2026 return rate to 2022 *final* return rate.  This means early
+    in the VBM window the ratio will be << 1, which is expected — adjustments
+    will naturally be small.  We apply a ±5 pp cap to prevent extreme early-
+    cycle swings.
+
+    adj = (return_ratio - 1.0) × base_turnout × _VBM_WEIGHT
+    _VBM_WEIGHT = 0.40 (VBM is ~65-75% of total votes, but incomplete at any
+    given moment; 0.40 is conservative to avoid over-fitting early data).
+
+    Returns None if fewer than 20% of ballots have been returned in any county
+    (signal too noisy to be meaningful).
+    """
+    _VBM_WEIGHT  = 0.40
+    _MIN_RATE_26 = 0.20  # require at least 20% return rate for the sync to be meaningful
+    _MAX_ADJ_PP  = 0.05  # cap adjustments at ±5 percentage points
+    try:
+        bsr_df  = pd.read_csv(bsr_path,  parse_dates=["snapshot_date"])
+        base_df = pd.read_csv(base_path)
+    except Exception:
+        return {}
+    if bsr_df.empty or base_df.empty:
+        return {}
+    base    = base_df.set_index("county")
+    latest  = bsr_df[bsr_df["snapshot_date"] == bsr_df["snapshot_date"].max()].set_index("county")
+    adj = {}
+    all_rates: list[float] = []
+    for cn, cd in COUNTIES.items():
+        if cn not in latest.index or cn not in base.index:
+            continue
+        issued_26   = int(latest.loc[cn].get("vbm_issued",   0) or 0)
+        returned_26 = int(latest.loc[cn].get("vbm_returned", 0) or 0)
+        issued_22   = int(base.loc[cn].get("vbm_issued_sd4",   0) or 0)
+        returned_22 = int(base.loc[cn].get("vbm_returned_sd4", 0) or 0)
+        if issued_26 == 0 or issued_22 == 0 or returned_22 == 0:
+            continue
+        rate_26 = returned_26 / issued_26
+        rate_22 = returned_22 / issued_22
+        all_rates.append(rate_26)
+        pace_ratio   = rate_26 / rate_22          # >1 = ahead of 2022 final pace
+        base_turnout = cd.get("turnout", 0.60)
+        raw_adj      = (pace_ratio - 1.0) * base_turnout * _VBM_WEIGHT
+        adj[cn] = round(float(np.clip(raw_adj, -_MAX_ADJ_PP, _MAX_ADJ_PP)), 4)
+
+    # Return None if VBM returns are too sparse to be meaningful
+    if not all_rates or max(all_rates) < _MIN_RATE_26:
+        return None
+    return adj
+
 if "sim_results" not in st.session_state or run:
     seed = np.random.randint(0, 2**31)
     st.session_state["sim_results"] = run_simulation(
@@ -497,8 +561,21 @@ with tab_turnout:
                               key=f"ts_{cn}")
             new_adj[cn]=adj_pct/100
     st.session_state["turnout_adj"]=new_adj
-    if st.button("↩ Reset all turnout adjustments"):
-        st.session_state["turnout_adj"]={cn:0.0 for cn in COUNTIES}; st.rerun()
+    _btn_col1, _btn_col2 = st.columns(2)
+    with _btn_col1:
+        if st.button("↩ Reset all turnout adjustments"):
+            st.session_state["turnout_adj"]={cn:0.0 for cn in COUNTIES}; st.rerun()
+    with _btn_col2:
+        if st.button("📊 Sync from VBM pace", help="Auto-set adjustments based on current VBM return pace vs 2022 baseline (requires ≥20% return rate)"):
+            _pace_adj = _compute_vbm_pace_adj(str(DATA_DIR/"ballot_returns.csv"), str(DATA_DIR/"vbm_2022_baseline.csv"))
+            if _pace_adj is None:
+                st.warning("VBM returns are too sparse to sync (<20% return rate). Check back closer to election day.")
+            elif _pace_adj:
+                _merged = {cn: _pace_adj.get(cn, 0.0) for cn in COUNTIES}
+                st.session_state["turnout_adj"] = _merged
+                st.rerun()
+            else:
+                st.warning("VBM data not yet available — run the daily fetch first.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-label">Projected Impact</div>', unsafe_allow_html=True)
@@ -1942,28 +2019,97 @@ with tab_night:
         "Mono":0.75, "Nevada":0.76, "Placer":0.69, "Stanislaus":0.63,
         "Tuolumne":0.72,
     }
-    _MAIL_BOOST = 0.04
+    _MAIL_BOOST = 0.04  # fallback: fixed 4pp Dem mail advantage
+
+    # ── Dynamic mail-ballot Dem boost from Optiq outstanding ballots ──────────
+    # Use Optiq crosstab data (D/R/O issued vs returned) to estimate what the
+    # outstanding (unreturned) VBM ballots look like by party, then calculate
+    # an expected Dem share of outstanding mail, compared to Dem share of total
+    # mail issued — the gap becomes our _mail_boost_live.
+    #
+    # Method:
+    #   outstanding_D = issued_D - returned_D  (Dems who haven't voted yet)
+    #   outstanding_R = issued_R - returned_R
+    #   outstanding_O = issued_O - returned_O
+    #   outstanding_dem_share = outstanding_D / (outstanding_D + outstanding_R + outstanding_O)
+    #   overall_dem_share     = issued_D / total_issued
+    #
+    # The "boost" is: how much more Democratic are the outstanding ballots vs
+    # the overall electorate? This drives how reported share understates final.
+    #
+    # Historical vote share by party is assumed from forecast lean:
+    #   Dem support: D votes 95% Dem, R 5% Dem, O 40% Dem (rough priors)
+    _PARTY_DEM_VOTE_SHARE = {"D": 0.95, "R": 0.05, "O": 0.38}
+
+    @st.cache_data(ttl=3600)
+    def _outstanding_mail_boost(crosstab_csv: str) -> float:
+        """
+        Estimate mail-ballot Dem advantage from Optiq party composition.
+        Returns the implied boost (Dem mail share - overall mail share),
+        scaled to vote share (not registration share).
+        Falls back to _MAIL_BOOST if data unavailable.
+        """
+        try:
+            ct = pd.read_csv(crosstab_csv)
+        except Exception:
+            return _MAIL_BOOST
+        if ct.empty or "snapshot_date" not in ct.columns:
+            return _MAIL_BOOST
+        latest_ct = ct[ct["snapshot_date"] == ct["snapshot_date"].max()]
+        if latest_ct.empty:
+            return _MAIL_BOOST
+        # Aggregate to party level
+        party_agg = (latest_ct.groupby("party")[["issued","returned"]]
+                     .sum().reset_index())
+        party_agg = party_agg[party_agg["party"].isin(["D","R","O"])]
+        if party_agg.empty:
+            return _MAIL_BOOST
+        pa = party_agg.set_index("party")
+        for p in ["D","R","O"]:
+            if p not in pa.index:
+                pa.loc[p] = {"issued": 0, "returned": 0}
+        pa["outstanding"] = (pa["issued"] - pa["returned"]).clip(lower=0)
+        total_outstanding = pa["outstanding"].sum()
+        total_issued      = pa["issued"].sum()
+        if total_outstanding < 1000 or total_issued == 0:
+            return _MAIL_BOOST  # too few outstanding ballots to be meaningful
+        # Weighted Dem vote share of outstanding vs overall issued
+        out_dem_vote  = sum(pa.loc[p,"outstanding"] * _PARTY_DEM_VOTE_SHARE.get(p,0.5)
+                            for p in ["D","R","O"])
+        iss_dem_vote  = sum(pa.loc[p,"issued"]      * _PARTY_DEM_VOTE_SHARE.get(p,0.5)
+                            for p in ["D","R","O"])
+        out_dem_share = out_dem_vote / total_outstanding if total_outstanding > 0 else 0.5
+        iss_dem_share = iss_dem_vote / total_issued      if total_issued      > 0 else 0.5
+        boost = float(np.clip(out_dem_share - iss_dem_share, -0.08, 0.12))
+        return boost if abs(boost) > 0.005 else _MAIL_BOOST
+
+    _CROSSTAB_CSV_PATH = str(DATA_DIR / "optiq_crosstabs.csv")
+    _mail_boost_live   = _outstanding_mail_boost(_CROSSTAB_CSV_PATH)
 
     def _implied_final_share(reported: float, county: str, f: float) -> float:
         """Back-calculate the implied FINAL Dem share from a reported share.
         Inverts _wave_share() analytically.
         f = fraction of estimated total votes that are reported.
+        Uses _mail_boost_live (from Optiq outstanding-ballot party composition)
+        when available; falls back to static _MAIL_BOOST = 0.04.
         """
+        boost = _mail_boost_live
         mp = _MAIL_PCT.get(county, 0.68)
         if f <= 0 or f > 1:
             return reported
         if f < mp:
-            implied = reported - _MAIL_BOOST * (1 - mp)
+            implied = reported - boost * (1 - mp)
         else:
-            implied = reported - _MAIL_BOOST * mp * (1 - f) / f
+            implied = reported - boost * mp * (1 - f) / f
         return float(np.clip(implied, 0.0, 1.0))
 
     def _wave_share(final_share: float, county: str, wave_idx: int) -> float:
         """Estimate the REPORTED Dem share at a given wave checkpoint."""
+        boost = _mail_boost_live
         f  = _SPEED.get(county, [0.5]*N_WAVES)[wave_idx]
         mp = _MAIL_PCT.get(county, 0.68)
-        mail_share = min(1.0, final_share + _MAIL_BOOST * (1 - mp))
-        ed_share   = max(0.0, final_share - _MAIL_BOOST * mp)
+        mail_share = min(1.0, final_share + boost * (1 - mp))
+        ed_share   = max(0.0, final_share - boost * mp)
         if f <= 0:
             return final_share
         if f >= mp:
@@ -1973,6 +2119,16 @@ with tab_night:
             mail_frac_in = f / mp
             votes_in     = mail_frac_in * mp * mail_share
         return votes_in / f
+
+    # ── Outstanding-ballot model info ─────────────────────────────────────────
+    _boost_src = "Optiq party composition" if abs(_mail_boost_live - _MAIL_BOOST) > 0.001 else "static fallback"
+    st.caption(
+        f"✉️ Mail-ballot Dem advantage used in adjustments: **{_mail_boost_live:+.1%}** "
+        f"({_boost_src}). "
+        + ("Derived from D/R/O outstanding VBM party composition (Optiq)."
+           if _boost_src != "static fallback"
+           else "Optiq crosstab data not yet available — using fixed +4 pp assumption.")
+    )
 
     # ── Live win probability ───────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
