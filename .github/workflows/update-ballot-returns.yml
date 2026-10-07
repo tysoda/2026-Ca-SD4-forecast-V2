@@ -1,0 +1,53 @@
+name: Update Ballot Returns
+
+on:
+  schedule:
+    # Run daily at 07:00 UTC (midnight PT)
+    - cron: '0 7 * * *'
+  workflow_dispatch:  # Allow manual trigger from the Actions tab
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install openpyxl requests
+
+      - name: Download SOS ballot return XLSX
+        run: |
+          curl -fsSL \
+            "https://elections.cdn.sos.ca.gov/statewide-elections/2026-general/bsr-statistics.xlsx" \
+            -o bsr-statistics.xlsx
+
+      - name: Run fetch script
+        run: python3 fetch_ballot_returns.py --file bsr-statistics.xlsx
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ballot_returns.csv
+          if git diff --cached --quiet; then
+            echo "No changes to commit — ballot_returns.csv already up to date."
+          else
+            SNAPSHOT=$(python3 -c "
+          import openpyxl, datetime
+          wb = openpyxl.load_workbook('bsr-statistics.xlsx')
+          ws = wb.active
+          d = ws.cell(1,1).value
+          print(d.date().isoformat() if isinstance(d, datetime.datetime) else d)
+          ")
+            git commit -m "chore: update ballot returns for ${SNAPSHOT} [skip ci]"
+            git push
+          fi
