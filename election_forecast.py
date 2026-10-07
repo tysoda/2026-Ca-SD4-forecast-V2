@@ -4,7 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
 import matplotlib.patheffects as pe
-import json, sys
+import json, sys, os
 from pathlib import Path
 
 st.set_page_config(page_title="Election Forecast — SD4", page_icon="🗳️", layout="wide")
@@ -580,7 +580,7 @@ with tab_turnout:
 
         if _tracker_rows:
             _tracker_df = pd.DataFrame(_tracker_rows)
-            st.dataframe(_tracker_df, hide_index=True, use_container_width=True)
+            st.dataframe(_tracker_df, hide_index=True, width="stretch")
 
             # District-level rollup
             _tot_issued_26   = sum(int(_latest.loc[c].get("vbm_issued",   0) or 0) for c in county_names if c in _latest.index)
@@ -680,7 +680,7 @@ with tab_turnout:
                 "Return Rate":      f"{_prate:.1%}",
                 "Share of Returns": f"{_share:.1%}",
             })
-        st.dataframe(pd.DataFrame(_ptable_rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(_ptable_rows), hide_index=True, width="stretch")
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -696,7 +696,7 @@ with tab_turnout:
                 _aslice = _odf[_odf["age"] == _a]
                 _aissued, _areturned, _arate = _optiq_counts(_aslice)
                 _age_rows.append({"Age": _albl, "Issued": f"{_aissued:,}", "Returned": f"{_areturned:,}", "Rate": f"{_arate:.1%}"})
-            st.dataframe(pd.DataFrame(_age_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(_age_rows), hide_index=True, width="stretch")
 
         with _col_gen:
             st.markdown("**Gender**")
@@ -705,7 +705,7 @@ with tab_turnout:
                 _gslice = _odf[_odf["gender"] == _g]
                 _gissued, _greturned, _grate = _optiq_counts(_gslice)
                 _gen_rows.append({"Gender": _glbl, "Issued": f"{_gissued:,}", "Returned": f"{_greturned:,}", "Rate": f"{_grate:.1%}"})
-            st.dataframe(pd.DataFrame(_gen_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(_gen_rows), hide_index=True, width="stretch")
 
         with _col_eth:
             st.markdown("**Ethnicity**")
@@ -714,7 +714,7 @@ with tab_turnout:
                 _eslice = _odf[_odf["ethnicity"] == _e]
                 _eissued, _ereturned, _erate = _optiq_counts(_eslice)
                 _eth_rows.append({"Ethnicity": _elbl, "Issued": f"{_eissued:,}", "Returned": f"{_ereturned:,}", "Rate": f"{_erate:.1%}"})
-            st.dataframe(pd.DataFrame(_eth_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(_eth_rows), hide_index=True, width="stretch")
 
         st.caption("Age codes: 1=18–34 · 3=35–49 · 4=50–64 · 6=65+ · Ethnicity: modeled/attributed via voter file · Data: Optiq Data (abev.optiqdata.com)")
 
@@ -803,7 +803,7 @@ with tab_turnout:
                     "Reg Share (Apr 2026)": f"{_preg_share:.1%}",
                     "vs Reg Share":   f"{_prate - _preg_share:+.1%}",
                 })
-            st.dataframe(pd.DataFrame(_bench_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(_bench_rows), hide_index=True, width="stretch")
         else:
             # Pivot for line chart: index = date, columns = party return rate
             _pivot = _daily.pivot(index="snapshot_date", columns="party", values="return_rate")
@@ -828,7 +828,7 @@ with tab_turnout:
                     "Reg Share (Apr '26)": f"{_preg_share:.1%}",
                     "Rate vs Reg Share":   f"{_prate - _preg_share:+.1%}",
                 })
-            st.dataframe(pd.DataFrame(_bench_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(_bench_rows), hide_index=True, width="stretch")
 
         st.caption(
             f"Registration benchmarks: D {_party_reg.get('D',0):,} · R {_party_reg.get('R',0):,} · "
