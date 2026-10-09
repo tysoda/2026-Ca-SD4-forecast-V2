@@ -619,6 +619,21 @@ with tab_turnout:
 
         st.caption(f"Latest snapshot: **{_latest_date.strftime('%B %-d, %Y')}**")
 
+        # ── 2022 linear-interpolation baseline at current cycle point ────────
+        # CA 2022 general: election day Nov 8. VBM mail-out began ~Oct 10.
+        # CA 2026 general: election day Nov 3. We interpolate where 2022
+        # returns would have been at the same number of days before election day,
+        # assuming linear growth from 0 at mail-out to final total at E-day.
+        _EDAY_2022   = pd.Timestamp("2022-11-08")
+        _MAILOUT_2022 = pd.Timestamp("2022-10-10")   # ~29-day window
+        _EDAY_2026   = pd.Timestamp("2026-11-03")
+        _days_remaining_26 = (_EDAY_2026 - _latest_date).days
+        _equiv_2022_date   = _EDAY_2022 - pd.Timedelta(days=_days_remaining_26)
+        # Fraction of the 2022 window elapsed at the equivalent point
+        _window_22   = (_EDAY_2022 - _MAILOUT_2022).days
+        _elapsed_22  = (_equiv_2022_date - _MAILOUT_2022).days
+        _interp_frac = max(0.0, min(1.0, _elapsed_22 / _window_22))
+
         _tracker_rows = []
         for _cn in county_names:
             if _cn not in _latest.index or _cn not in _base.index:
@@ -632,27 +647,29 @@ with tab_turnout:
             _returned_22 = int(_b22.get("vbm_returned_sd4", 0) or 0)
 
             _rate_26  = _returned_26 / _issued_26  if _issued_26  > 0 else 0.0
-            _rate_22  = _returned_22 / _issued_22  if _issued_22  > 0 else 0.0
-            _pct_of_baseline = (_rate_26 / _rate_22) if _rate_22 > 0 else 0.0
+            _rate_22_final = _returned_22 / _issued_22 if _issued_22 > 0 else 0.0
+            # Interpolated 2022 rate at equivalent cycle point
+            _rate_22_interp = _rate_22_final * _interp_frac
+            _pct_of_interp = (_rate_26 / _rate_22_interp) if _rate_22_interp > 0 else 0.0
 
-            # Pace label
+            # Pace label (vs interpolated 2022 baseline)
             if _rate_26 == 0:
                 _pace = "—"
-            elif _pct_of_baseline >= 1.10:
+            elif _pct_of_interp >= 1.10:
                 _pace = "🟢 High"
-            elif _pct_of_baseline >= 0.85:
+            elif _pct_of_interp >= 0.85:
                 _pace = "🟡 On pace"
             else:
                 _pace = "🔴 Low"
 
             _tracker_rows.append({
-                "County":           _cn,
-                "2026 Issued":      f"{_issued_26:,}",
-                "2026 Returned":    f"{_returned_26:,}",
-                "2026 Rate":        f"{_rate_26:.1%}",
-                "2022 Final Rate":  f"{_rate_22:.1%}",
-                "% of Baseline":    f"{_pct_of_baseline:.0%}" if _rate_26 > 0 else "—",
-                "Pace":             _pace,
+                "County":             _cn,
+                "2026 Issued":        f"{_issued_26:,}",
+                "2026 Returned":      f"{_returned_26:,}",
+                "2026 Rate":          f"{_rate_26:.1%}",
+                "2022 Est. Rate":     f"{_rate_22_interp:.1%}",
+                "vs 2022 Pace":       f"{_pct_of_interp:.0%}" if _rate_26 > 0 else "—",
+                "Pace":               _pace,
             })
 
         if _tracker_rows:
@@ -665,23 +682,27 @@ with tab_turnout:
             _tot_issued_22   = int(_base_df["vbm_issued_sd4"].sum())
             _tot_returned_22 = int(_base_df["vbm_returned_sd4"].sum())
             _dist_rate_26 = _tot_returned_26 / _tot_issued_26  if _tot_issued_26  > 0 else 0
-            _dist_rate_22 = _tot_returned_22 / _tot_issued_22  if _tot_issued_22  > 0 else 0
+            _dist_rate_22_final  = _tot_returned_22 / _tot_issued_22  if _tot_issued_22  > 0 else 0
+            _dist_rate_22_interp = _dist_rate_22_final * _interp_frac
 
             _rc1, _rc2, _rc3, _rc4 = st.columns(4)
             with _rc1:
                 st.markdown(f'<div class="stat-card"><div class="label">District Ballots Returned</div><div class="value">{_tot_returned_26:,}</div><div class="sub">of {_tot_issued_26:,} issued</div></div>', unsafe_allow_html=True)
             with _rc2:
-                st.markdown(f'<div class="stat-card"><div class="label">District Return Rate</div><div class="value">{_dist_rate_26:.1%}</div><div class="sub">2022 final: {_dist_rate_22:.1%}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-card"><div class="label">District Return Rate</div><div class="value">{_dist_rate_26:.1%}</div><div class="sub">2022 final: {_dist_rate_22_final:.1%}</div></div>', unsafe_allow_html=True)
             with _rc3:
-                _vs_base = (_dist_rate_26 / _dist_rate_22) if _dist_rate_22 > 0 else 0
+                _vs_base = (_dist_rate_26 / _dist_rate_22_interp) if _dist_rate_22_interp > 0 else 0
                 _col = "#2e7d32" if _vs_base >= 1.10 else ("#f57c00" if _vs_base >= 0.85 else "#c62828") if _dist_rate_26 > 0 else "#888"
-                st.markdown(f'<div class="stat-card"><div class="label">vs 2022 Baseline</div><div class="value" style="color:{_col}">{_vs_base:.0%}</div><div class="sub">of 2022 final return rate</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-card"><div class="label">vs 2022 Pace</div><div class="value" style="color:{_col}">{_vs_base:.0%}</div><div class="sub">est. 2022 rate at E−{_days_remaining_26}d: {_dist_rate_22_interp:.1%}</div></div>', unsafe_allow_html=True)
             with _rc4:
                 # Snapshots collected so far
                 _n_snaps = _bsr_df["snapshot_date"].nunique()
                 st.markdown(f'<div class="stat-card"><div class="label">Snapshots Collected</div><div class="value">{_n_snaps}</div><div class="sub">since {_bsr_df["snapshot_date"].min().strftime("%-d %b")}</div></div>', unsafe_allow_html=True)
 
-        st.caption("🔵 Pace thresholds: High ≥ 110% of 2022 final rate · On pace 85–110% · Low < 85%")
+        st.caption(
+            f"🔵 Pace thresholds vs interpolated 2022 baseline: High ≥ 110% · On pace 85–110% · Low < 85% · "
+            f"2022 est. rate = 2022 final × {_interp_frac:.0%} ({_days_remaining_26}d to E-day, linear interpolation from Oct 10 mail-out)"
+        )
 
     # ── Optiq Crosstab Data ───────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
@@ -723,6 +744,22 @@ with tab_turnout:
             returned = df[df["returned"]]["voters"].sum()
             rate     = returned / issued if issued > 0 else 0.0
             return int(issued), int(returned), rate
+
+        # ── District total (Optiq) ───────────────────────────────────────────
+        _tot_issued_optiq   = int(_odf["voters"].sum())
+        _tot_returned_optiq_all = int(_odf[_odf["returned"]]["voters"].sum())
+        _tot_rate_optiq     = _tot_returned_optiq_all / _tot_issued_optiq if _tot_issued_optiq > 0 else 0.0
+        _oc1, _oc2 = st.columns([1, 2])
+        with _oc1:
+            st.markdown(
+                f'<div class="stat-card">'
+                f'<div class="label">Total Ballots Returned (Optiq)</div>'
+                f'<div class="value">{_tot_returned_optiq_all:,}</div>'
+                f'<div class="sub">{_tot_rate_optiq:.1%} of {_tot_issued_optiq:,} issued</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown("<br>", unsafe_allow_html=True)
 
         # ════════════════════════════════════════════════════════════════════
         # PARTY (front and centre)
