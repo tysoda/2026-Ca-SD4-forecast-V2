@@ -932,8 +932,16 @@ with tab_turnout:
             st.markdown("**Return rate over time**")
             # Use matplotlib with spline smoothing (st.line_chart can't smooth)
             _traj_colors = {"Democrat": "#1565c0", "Republican": "#b71c1c", "Other/NPP": "#555555"}
+            # Raw returned counts lookup: party label → array aligned with _pivot.index
+            _party_key_map = {"Democrat": "D", "Republican": "R", "Other/NPP": "O"}
+            _raw_lookup = {}
+            for _lbl, _pk in _party_key_map.items():
+                _raw_lookup[_lbl] = [
+                    int(_daily[(_daily["party"] == _pk) & (_daily["snapshot_date"] == _d)]["returned"].sum())
+                    for _d in _pivot.index
+                ]
             _x_num = (_pivot.index - _pivot.index[0]).days.astype(float)
-            _fig_traj, _ax_traj = plt.subplots(figsize=(9, 3))
+            _fig_traj, _ax_traj = plt.subplots(figsize=(9, 3.6))
             _fig_traj.patch.set_facecolor("#f7f7f5"); _ax_traj.set_facecolor("#f7f7f5")
             for _col in _pivot.columns:
                 _y = _pivot[_col].values.astype(float)
@@ -946,9 +954,18 @@ with tab_turnout:
                     _ax_traj.scatter(_x_num, _y, color=_traj_colors[_col], s=30, zorder=5)
                 else:
                     _ax_traj.plot(_x_num, _y, color=_traj_colors[_col], linewidth=2, label=_col, marker="o", markersize=4)
+                # Annotate each dot with "X.XX% (N,NNN)"
+                for _xi, (_yi, _raw) in enumerate(zip(_y, _raw_lookup[_col])):
+                    _ax_traj.annotate(
+                        f"{_yi:.2%}\n({_raw:,})",
+                        xy=(_x_num[_xi], _yi),
+                        xytext=(0, 8), textcoords="offset points",
+                        ha="center", va="bottom", fontsize=7,
+                        color=_traj_colors[_col],
+                    )
             _tick_labels = [d.strftime("%-d %b") for d in _pivot.index]
             _ax_traj.set_xticks(_x_num); _ax_traj.set_xticklabels(_tick_labels, fontsize=9)
-            _ax_traj.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1, decimals=1))
+            _ax_traj.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1, decimals=2))
             _ax_traj.tick_params(axis="y", labelsize=9)
             _ax_traj.legend(fontsize=9, framealpha=0)
             _ax_traj.spines[["top","right"]].set_visible(False)
