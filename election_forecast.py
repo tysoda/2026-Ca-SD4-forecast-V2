@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
 import matplotlib.patheffects as pe
 import json, sys, os
+import plotly.graph_objects as go
 from pathlib import Path
 
 st.set_page_config(page_title="Election Forecast — SD4", page_icon="🗳️", layout="wide")
@@ -930,46 +931,56 @@ with tab_turnout:
             # ("Oct 10" < "Oct 7"), but handles datetime axes correctly.
 
             st.markdown("**Return rate over time**")
-            # Use matplotlib with spline smoothing (st.line_chart can't smooth)
             _traj_colors = {"Democrat": "#1565c0", "Republican": "#b71c1c", "Other/NPP": "#555555"}
-            # Raw returned counts lookup: party label → array aligned with _pivot.index
             _party_key_map = {"Democrat": "D", "Republican": "R", "Other/NPP": "O"}
-            _raw_lookup = {}
-            for _lbl, _pk in _party_key_map.items():
-                _raw_lookup[_lbl] = [
-                    int(_daily[(_daily["party"] == _pk) & (_daily["snapshot_date"] == _d)]["returned"].sum())
-                    for _d in _pivot.index
-                ]
-            _x_num = (_pivot.index - _pivot.index[0]).days.astype(float)
-            _fig_traj, _ax_traj = plt.subplots(figsize=(9, 3.6))
-            _fig_traj.patch.set_facecolor("#f7f7f5"); _ax_traj.set_facecolor("#f7f7f5")
+            _fig_traj = go.Figure()
             for _col in _pivot.columns:
+                _pk = _party_key_map[_col]
                 _y = _pivot[_col].values.astype(float)
-                if len(_x_num) >= 4:
+                _dates = _pivot.index.tolist()
+                _raw = [
+                    int(_daily[(_daily["party"] == _pk) & (_daily["snapshot_date"] == _d)]["returned"].sum())
+                    for _d in _dates
+                ]
+                _hover = [f"<b>{_col}</b><br>{_d.strftime('%-d %b')}<br>{_r / _i:.2%} ({_r:,} of {_i:,})"
+                          for _d, _r, _i in zip(_dates, _raw,
+                              [int(_daily[(_daily["party"]==_pk)&(_daily["snapshot_date"]==_d)]["issued"].sum()) for _d in _dates])]
+                # Spline smoothing via scipy if ≥4 points
+                if len(_dates) >= 4:
                     from scipy.interpolate import make_interp_spline
-                    _x_smooth = np.linspace(_x_num[0], _x_num[-1], 300)
-                    _y_smooth = make_interp_spline(_x_num, _y, k=3)(_x_smooth)
-                    _y_smooth = np.clip(_y_smooth, 0, None)
-                    _ax_traj.plot(_x_smooth, _y_smooth, color=_traj_colors[_col], linewidth=2, label=_col)
-                    _ax_traj.scatter(_x_num, _y, color=_traj_colors[_col], s=30, zorder=5)
+                    _x_num = np.array(range(len(_dates)), dtype=float)
+                    _x_smooth = np.linspace(0, len(_dates) - 1, 300)
+                    _y_smooth = np.clip(make_interp_spline(_x_num, _y, k=3)(_x_smooth), 0, None)
+                    # Map smooth x back to dates for plotly
+                    _t0, _t1 = _dates[0].timestamp(), _dates[-1].timestamp()
+                    _dates_smooth = pd.to_datetime([_t0 + (_t1 - _t0) * xi / (_x_smooth[-1]) for xi in _x_smooth], unit="s")
+                    _fig_traj.add_trace(go.Scatter(
+                        x=_dates_smooth, y=_y_smooth,
+                        mode="lines", line=dict(color=_traj_colors[_col], width=2),
+                        name=_col, legendgroup=_col, showlegend=True, hoverinfo="skip",
+                    ))
+                    _fig_traj.add_trace(go.Scatter(
+                        x=_dates, y=_y,
+                        mode="markers", marker=dict(color=_traj_colors[_col], size=7),
+                        name=_col, legendgroup=_col, showlegend=False,
+                        hovertemplate="%{customdata}<extra></extra>", customdata=_hover,
+                    ))
                 else:
-                    _ax_traj.plot(_x_num, _y, color=_traj_colors[_col], linewidth=2, label=_col, marker="o", markersize=4)
-                # Annotate each dot with "X.XX% (N,NNN)"
-                for _xi, (_yi, _raw) in enumerate(zip(_y, _raw_lookup[_col])):
-                    _ax_traj.annotate(
-                        f"{_yi:.2%}\n({_raw:,})",
-                        xy=(_x_num[_xi], _yi),
-                        xytext=(0, 8), textcoords="offset points",
-                        ha="center", va="bottom", fontsize=7,
-                        color=_traj_colors[_col],
-                    )
-            _tick_labels = [d.strftime("%-d %b") for d in _pivot.index]
-            _ax_traj.set_xticks(_x_num); _ax_traj.set_xticklabels(_tick_labels, fontsize=9)
-            _ax_traj.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1, decimals=2))
-            _ax_traj.tick_params(axis="y", labelsize=9)
-            _ax_traj.legend(fontsize=9, framealpha=0)
-            _ax_traj.spines[["top","right"]].set_visible(False)
-            plt.tight_layout(); st.pyplot(_fig_traj, width="stretch"); plt.close()
+                    _fig_traj.add_trace(go.Scatter(
+                        x=_dates, y=_y,
+                        mode="lines+markers", line=dict(color=_traj_colors[_col], width=2),
+                        marker=dict(size=7), name=_col,
+                        hovertemplate="%{customdata}<extra></extra>", customdata=_hover,
+                    ))
+            _fig_traj.update_layout(
+                yaxis=dict(tickformat=".2%", title=None, gridcolor="#e0e0e0"),
+                xaxis=dict(title=None, gridcolor="#e0e0e0"),
+                plot_bgcolor="#f7f7f5", paper_bgcolor="#f7f7f5",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                margin=dict(l=10, r=10, t=30, b=10), height=320,
+                hovermode="closest",
+            )
+            st.plotly_chart(_fig_traj, use_container_width=True)
 
             # Also show vs issued share and registration share benchmark table
             st.markdown("**Latest snapshot vs benchmarks**")
