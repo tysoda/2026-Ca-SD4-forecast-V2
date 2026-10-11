@@ -876,11 +876,14 @@ with tab_turnout:
         )
     else:
         # Aggregate to daily party totals
+        _ct_df = _ct_df.copy()
+        _ct_df["snapshot_date"] = pd.to_datetime(_ct_df["snapshot_date"])
         _daily = (
             _ct_df.groupby(["snapshot_date", "party"])
             .agg(issued=("issued", "sum"), returned=("returned", "sum"))
             .reset_index()
         )
+        _daily = _daily.sort_values("snapshot_date")  # ensure chronological order
         _daily["return_rate"] = _daily["returned"] / _daily["issued"].replace(0, pd.NA)
 
         # Compute issued-share benchmark (most recent snapshot)
@@ -920,7 +923,6 @@ with tab_turnout:
             st.dataframe(pd.DataFrame(_bench_rows), hide_index=True, width="stretch")
         else:
             # Pivot for line chart: index = date, columns = party return rate
-            _daily["snapshot_date"] = pd.to_datetime(_daily["snapshot_date"])
             _pivot = _daily.pivot(index="snapshot_date", columns="party", values="return_rate")
             _pivot = _pivot.sort_index()   # ensure chronological order before label conversion
             _pivot = _pivot.rename(columns=_party_labels_traj)
