@@ -924,9 +924,10 @@ with tab_turnout:
         else:
             # Pivot for line chart: index = date, columns = party return rate
             _pivot = _daily.pivot(index="snapshot_date", columns="party", values="return_rate")
-            _pivot = _pivot.sort_index()   # ensure chronological order before label conversion
+            _pivot = _pivot.sort_index()
             _pivot = _pivot.rename(columns=_party_labels_traj)
-            _pivot.index = _pivot.index.strftime("%b %-d")
+            # Keep DatetimeIndex — st.line_chart sorts string labels alphabetically
+            # ("Oct 10" < "Oct 7"), but handles datetime axes correctly.
 
             st.markdown("**Return rate over time**")
             st.line_chart(_pivot, color=["#1565c0", "#555", "#b71c1c"])
