@@ -920,6 +920,7 @@ with tab_turnout:
             st.dataframe(pd.DataFrame(_bench_rows), hide_index=True, width="stretch")
         else:
             # Pivot for line chart: index = date, columns = party return rate
+            _daily["snapshot_date"] = pd.to_datetime(_daily["snapshot_date"])
             _pivot = _daily.pivot(index="snapshot_date", columns="party", values="return_rate")
             _pivot = _pivot.sort_index()   # ensure chronological order before label conversion
             _pivot = _pivot.rename(columns=_party_labels_traj)
