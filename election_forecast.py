@@ -321,7 +321,8 @@ with st.sidebar:
     _lean_opts = ["Linear", "Average"]
     if BG_COUNTY_LEANS is not None:
         _lean_opts.append("Block Group")
-    lean_method = st.radio("Lean Method", _lean_opts, horizontal=True)
+    _lean_default = _lean_opts.index("Block Group") if "Block Group" in _lean_opts else 0
+    lean_method = st.radio("Lean Method", _lean_opts, index=_lean_default, horizontal=True)
     if lean_method == "Block Group" and BG_COUNTY_LEANS is not None:
         _bg_sds = [d["lean_sd"] for d in BG_COUNTY_LEANS.values() if np.isfinite(d["lean_sd"])]
         _avg_sd = float(np.mean(_bg_sds)) if _bg_sds else 0.05
