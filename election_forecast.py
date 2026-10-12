@@ -160,6 +160,31 @@ def run_forecast_model(ctx: dict) -> dict:
         st.error(f"Forecast model error: {e}")
         return None
 
+# ── Block-group district lean ─────────────────────────────────────────────────
+def load_bg_district_lean() -> dict | None:
+    """Load district_series_sd4.csv and return BG lean values for generals."""
+    p = DATA_DIR / "data" / "processed" / "district_series_sd4.csv"
+    if not p.exists():
+        return None
+    try:
+        s = pd.read_csv(p)
+        g = s[s["general"] == 1].sort_values("year")
+        if len(g) < 2:
+            return None
+        weighted = float(g.tail(3)["lean"].mean())
+        b = np.polyfit(g["year"].values.astype(float), g["lean"].values, 1)
+        linear = float(np.polyval(b, 2026))
+        return {
+            "lean_avg": weighted,   # 3-election weighted mean
+            "lean_lin": linear,     # linear trend to 2026
+            "lean_sd_avg": 0.0546,  # walk-forward SD (weighted method)
+            "lean_sd_lin": 0.0484,  # walk-forward SD (linear method)
+        }
+    except Exception:
+        return None
+
+BG_DISTRICT_LEAN = load_bg_district_lean()
+
 # ── Hardcoded fallback defaults (used only if forecast_params.json absent) ───
 FALLBACK_COUNTIES = {
     # Registration figures from SOS 60-day General Election report, Sep 4, 2026.
@@ -301,7 +326,14 @@ with st.sidebar:
         STATE_ENV_SD = (STATE_ENV_SD**2 + (st.session_state["candidate_adj_sd_pct"]/100)**2) ** 0.5
         st.caption(f"Candidate adj: +{st.session_state['candidate_adj_pct']:.1f}% · Adj SD: {fmt_pct(STATE_ENV_SD)}")
     
-    lean_method = st.radio("County Lean Method", ["Linear", "Average"], horizontal=True)
+    _lean_opts = ["Linear", "Average"]
+    if BG_DISTRICT_LEAN is not None:
+        _lean_opts.append("Block Group")
+    lean_method = st.radio("Lean Method", _lean_opts, horizontal=True)
+    if lean_method == "Block Group" and BG_DISTRICT_LEAN is not None:
+        _bg_val = BG_DISTRICT_LEAN["lean_avg"]
+        _bg_sd  = BG_DISTRICT_LEAN["lean_sd_avg"]
+        st.caption(f"BG district lean: {fmt_pct(_bg_val)} (SD={fmt_pct(_bg_sd)}) · replaces per-county leans")
 
     st.markdown("---")
     st.markdown("### 🔍 Conditional Filters")
@@ -321,21 +353,33 @@ with st.sidebar:
 @st.cache_data(show_spinner="Running simulations…")
 def run_simulation(n, forecast_env, lean_method_str, seed,
                    district_sd, county_sd, state_sd,
-                   counties_frozen, turnout_adj_frozen):
+                   counties_frozen, turnout_adj_frozen,
+                   bg_lean=None, bg_lean_sd=None):
     rng = np.random.default_rng(seed); n = int(n)
     counties    = {name: dict(fields) for name, fields in counties_frozen}
     turnout_adj = dict(turnout_adj_frozen)
     env_error              = rng.normal(0, state_sd, n)
     sim_env                = forecast_env + env_error
     district_turnout_shift = rng.normal(0, district_sd, n)
-    lean_key = "lean_avg" if lean_method_str == "Average" else "lean_lin"
+
+    use_bg = (lean_method_str == "Block Group" and bg_lean is not None)
+    if use_bg:
+        # Single district lean replaces per-county leans; county lean SD set to 0
+        district_lean_error = rng.normal(0, bg_lean_sd, n)
+        sim_env_with_lean   = sim_env + bg_lean + district_lean_error
+    else:
+        lean_key = "lean_avg" if lean_method_str == "Average" else "lean_lin"
+
     county_shares={}; county_votes={}; county_dem_votes={}; county_turnouts={}
     for name, data in counties.items():
         adj = turnout_adj.get(name, 0.0)
         turnout_sim = np.clip(
             data["turnout"] + adj + district_turnout_shift + rng.normal(0, county_sd, n), 0.01, 1.0)
-        lean_error = rng.normal(0, data["lean_sd"], n)
-        share      = np.clip(sim_env + data[lean_key] + lean_error, 0.0, 1.0)
+        if use_bg:
+            share = np.clip(sim_env_with_lean, 0.0, 1.0)
+        else:
+            lean_error = rng.normal(0, data["lean_sd"], n)
+            share      = np.clip(sim_env + data[lean_key] + lean_error, 0.0, 1.0)
         votes      = data["registration"] * turnout_sim
         dem_votes  = votes * share
         county_shares[name]=share; county_votes[name]=votes
@@ -419,11 +463,14 @@ def _compute_vbm_pace_adj(bsr_path: str, base_path: str) -> dict | None:
 
 if "sim_results" not in st.session_state or run:
     seed = np.random.randint(0, 2**31)
+    _bg_lean    = BG_DISTRICT_LEAN["lean_avg"]    if lean_method == "Block Group" and BG_DISTRICT_LEAN else None
+    _bg_lean_sd = BG_DISTRICT_LEAN["lean_sd_avg"] if lean_method == "Block Group" and BG_DISTRICT_LEAN else None
     st.session_state["sim_results"] = run_simulation(
         n_sims, forecast_env, lean_method, seed,
         DISTRICT_TURNOUT_SD, COUNTY_TURNOUT_SD, STATE_ENV_SD,
         counties_to_frozen(COUNTIES),
-        tuple(sorted(st.session_state["turnout_adj"].items()))
+        tuple(sorted(st.session_state["turnout_adj"].items())),
+        bg_lean=_bg_lean, bg_lean_sd=_bg_lean_sd,
     )
 
 res            = st.session_state["sim_results"]
@@ -442,9 +489,9 @@ filtered_share = district_share[mask]; n_filtered = mask.sum()
 # ══════════════════════════════════════════════════════════════════════════════
 st.title("🗳️ SD4 Election Forecast")
 st.caption(
-    f"Monte Carlo · {int(n_sims):,} simulations · Lean: {lean_method} · "
-    f"State env: {fmt_pct(display_env)} (SD={fmt_pct(display_sd)}) · "
-    f"District win threshold: 50%"
+    f"Monte Carlo · {int(n_sims):,} simulations · Lean: {lean_method}"
+    + (f" ({fmt_pct(BG_DISTRICT_LEAN['lean_avg'])})" if lean_method == "Block Group" and BG_DISTRICT_LEAN else "")
+    + f" · State env: {fmt_pct(display_env)} (SD={fmt_pct(display_sd)}) · District win threshold: 50%"
 )
 
 tab_dash, tab_turnout, tab_map, tab_model, tab_mechanics, tab_hood, tab_night = st.tabs([
