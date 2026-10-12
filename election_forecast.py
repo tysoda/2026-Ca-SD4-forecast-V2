@@ -797,18 +797,17 @@ with tab_turnout:
             tot_ret = row.get("totalReturned", 0) or 0
             dem_rate = dem_ret / dem_reg if dem_reg > 0 else float("nan")
             rep_rate = rep_ret / rep_reg if rep_reg > 0 else float("nan")
-            dem_reg_share = dem_reg / tot_reg if tot_reg > 0 else float("nan")
-            rep_reg_share = rep_reg / tot_reg if tot_reg > 0 else float("nan")
-            dem_ret_share = dem_ret / tot_ret if tot_ret > 0 else float("nan")
-            rep_ret_share = rep_ret / tot_ret if tot_ret > 0 else float("nan")
-            dem_adv = dem_ret_share - dem_reg_share
-            rep_adv = rep_ret_share - rep_reg_share
+            dr_reg = dem_reg + rep_reg
+            dr_ret = dem_ret + rep_ret
+            dem_reg_share = dem_reg / dr_reg if dr_reg > 0 else float("nan")
+            dem_ret_share = dem_ret / dr_ret if dr_ret > 0 else float("nan")
             out[cn] = {
                 "dem_rate": dem_rate,
                 "rep_rate": rep_rate,
-                # (Dem return share − Dem reg share) − (Rep return share − Rep reg share)
-                # positive = Dems over-performing relative to Reps, net of registration
-                "return_share_adv": dem_adv - rep_adv,
+                # Dem share of (D+R) returns minus Dem share of (D+R) registration
+                # Matches Optiq's Return Margin methodology (NPP excluded)
+                # positive = Dems over-performing their D+R registration share
+                "return_share_adv": dem_ret_share - dem_reg_share,
             }
         return out
 
