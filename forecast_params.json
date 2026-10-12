@@ -4,19 +4,24 @@
     "general": true,
     "presidential": false,
     "inflation": 3.8,
-    "approval": 0.39
+    "approval": 0.39,
+    "president_party": "R"
   },
   "state_environment": {
-    "predicted_state_env": 0.601098,
-    "state_env_sd": 0.06149,
+    "predicted_state_env": 0.636272,
+    "state_env_sd": 0.027561,
     "coefficients": {
-      "intercept": 0.51744909,
-      "presidential": -0.01118568,
-      "inflation": -0.00258075,
-      "approval": 0.23963107
+      "intercept": 0.60805142,
+      "presidential": 0.00963915,
+      "signed_approval": 0.25655408
     },
+    "features": [
+      "presidential",
+      "signed_approval"
+    ],
+    "walk_fwd_start": 2020,
     "n_obs": 22,
-    "n_walk_fwd_errors": 16
+    "n_walk_fwd_errors": 10
   },
   "turnout_sds": {
     "district_turnout_sd": 0.071215,

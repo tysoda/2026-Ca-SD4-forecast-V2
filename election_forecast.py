@@ -1115,7 +1115,8 @@ with tab_model:
         ctx = fp.get("context", {})
         st.success(
             f"Model last run: **{ctx.get('year','')} {'General' if ctx.get('general') else 'Primary'}** · "
-            f"Inflation: {ctx.get('inflation','?')}% · Approval: {ctx.get('approval',0):.0%} · "
+            f"Inflation: {ctx.get('inflation','?')}% · Approval: {ctx.get('approval',0):.0%} "
+            f"({ctx.get('president_party','R')} president) · "
             f"Predicted env: {fp['state_environment']['predicted_state_env']:.1%}"
         )
     else:
@@ -1131,6 +1132,11 @@ with tab_model:
     with c2:
         ctx_inflation = st.number_input("Inflation (CPI YoY %)", value=float(fp["context"]["inflation"]) if fp else 3.8, step=0.1, format="%.1f")
         ctx_approval  = st.number_input("Presidential Approval (0–1)", value=float(fp["context"]["approval"]) if fp else 0.39, step=0.01, format="%.2f", min_value=0.0, max_value=1.0)
+    with c3:
+        _party_default = (fp["context"].get("president_party", "R") if fp else "R")
+        ctx_party = st.selectbox("President's party", ["R", "D"], index=0 if _party_default == "R" else 1,
+                                 help="Approval is signed by the president's party: an unpopular Republican "
+                                      "president raises the predicted Dem share.")
     with c4:
         st.markdown("<br>", unsafe_allow_html=True)
         run_model = st.button("🔄 Run Forecast Model", type="primary", width="stretch")
@@ -1140,7 +1146,7 @@ with tab_model:
         ctx_input = {
             "year": int(ctx_year), "general": bool(ctx_general),
             "presidential": bool(ctx_pres), "inflation": float(ctx_inflation),
-            "approval": float(ctx_approval),
+            "approval": float(ctx_approval), "president_party": ctx_party,
         }
         with st.spinner("Running forecast model…"):
             new_params = run_forecast_model(ctx_input)
@@ -1393,7 +1399,9 @@ with tab_mechanics:
     st.markdown('<div class="section-label">State Environment Model</div>', unsafe_allow_html=True)
     st.markdown(
         f"OLS regression on {state2['n_obs']} historical CA statewide elections. "
-        f"Features: presidential cycle dummy, inflation (CPI YoY %), presidential approval (0–1)."
+        f"Features: presidential cycle dummy and presidential approval signed by the president's party "
+        f"((approval − 0.5) × +1 Democratic / −1 Republican). Inflation is shown for context but no longer "
+        f"in the model. Walk-forward SD from {state2.get('walk_fwd_start', 2016)} onward."
     )
     sc = state2["coefficients"]
     coef_cols = st.columns(4)
@@ -1404,12 +1412,11 @@ with tab_mechanics:
     st.markdown("<br>", unsafe_allow_html=True)
     # Back-test chart: predicted vs actual
     try:
-        df_se = pd.read_csv(DATA_DIR / "state_environment_history.csv")
+        from forecast_model import add_state_env_features
+        df_se = add_state_env_features(pd.read_csv(DATA_DIR / "state_environment_history.csv"))
         coefs = sc
-        df_se["predicted"] = (coefs["intercept"]
-            + coefs["presidential"] * df_se["presidential"]
-            + coefs["inflation"]    * df_se["inflation"]
-            + coefs["approval"]     * df_se["approval"])
+        df_se["predicted"] = coefs["intercept"] + sum(
+            v * df_se[k] for k, v in coefs.items() if k != "intercept")
         df_se["residual"] = df_se["dem_share"] - df_se["predicted"]
 
         fig_bt, axes_bt = plt.subplots(1, 2, figsize=(12, 3.5))

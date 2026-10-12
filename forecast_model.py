@@ -6,7 +6,7 @@ Run this (or trigger via the Streamlit app) whenever new data is available.
 Outputs forecast_params.json which is read by election_forecast.py.
 
 Usage:
-    python forecast_model.py [general] [approval=0.42] [inflation=3.2]
+    python forecast_model.py [general] [approval=0.42] [inflation=3.2] [president_party=R]
 """
 
 import pandas as pd
@@ -24,7 +24,26 @@ ELECTION_CONTEXT = {
     "presidential":        False,   # midterm cycle
     "inflation":           3.8,     # CPI YoY % at time of election
     "approval":            0.39,    # Presidential net approval (0–1 scale)
+    "president_party":     "R",     # sitting president's party: "D" or "R"
 }
+
+# Years whose campaigns ran under a Democratic president (all others: Republican).
+# Used to sign approval: an unpopular Republican president helps Democrats.
+DEM_PRESIDENT_YEARS = {2012, 2014, 2016, 2022, 2024}
+STATE_ENV_FEATURES = ["presidential", "signed_approval"]
+# Walk-forward starts in 2020: the first year whose training data includes a
+# Republican-president year (2018), so the sign of approval can be learned.
+STATE_ENV_WF_START = 2020
+
+
+def add_state_env_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add signed_approval = (approval − 0.5) × (+1 Democratic / −1 Republican president)."""
+    df = df.copy()
+    year = df["election"].str.extract(r"(\d{4})")[0].astype(int)
+    sign = np.where(year.isin(DEM_PRESIDENT_YEARS), 1.0, -1.0)
+    df["signed_approval"] = (df["approval"] - 0.5) * sign
+    return df
+
 
 COUNTIES = [
     "Alpine", "Amador", "Calaveras", "El Dorado", "Inyo",
@@ -190,15 +209,17 @@ def forecast_turnout(ctx: dict) -> tuple:
 # OLS: presidential dummy + inflation + presidential approval
 # ══════════════════════════════════════════════════════════════════════════════
 def forecast_state_environment(ctx: dict) -> dict:
-    df = pd.read_csv(DATA_DIR / "state_environment_history.csv")
-    features = ["presidential", "inflation", "approval"]
+    """Statewide Dem share: OLS on the presidential-cycle dummy and approval signed by the
+    president's party. (Before Oct 2026 this used unsigned approval plus inflation, which
+    predicted a *lower* Dem share under an unpopular Republican president.)"""
+    df = add_state_env_features(pd.read_csv(DATA_DIR / "state_environment_history.csv"))
+    features = STATE_ENV_FEATURES
 
     # Extract year from election name for year-by-year back-test
     df["year_inferred"] = df["election"].str.extract(r"(\d{4})").astype(int)
-    test_years = sorted(df[df["year_inferred"] >= 2016]["year_inferred"].unique())
+    test_years = sorted(df[df["year_inferred"] >= STATE_ENV_WF_START]["year_inferred"].unique())
 
-    # Back-test: for each year from 2016 onwards, fit on all prior years,
-    # predict all elections in the current year. This matches the spreadsheet method.
+    # Back-test: for each test year, fit on all prior years and predict that year's elections.
     errors = []
     for yr in test_years:
         train_df = df[df["year_inferred"] < yr]
@@ -213,38 +234,27 @@ def forecast_state_environment(ctx: dict) -> dict:
 
     walk_fwd_sd = float(np.std(errors, ddof=1))
 
-    # Full-sample fit for the actual 2026 forecast
-    X = df[features].values
-    y = df["dem_share"].values
-    X_b = np.column_stack([np.ones(len(X)), X])
-    coeffs, _, _, _ = np.linalg.lstsq(X_b, y, rcond=None)
+    # Full-sample fit for the actual forecast
+    X_b = np.column_stack([np.ones(len(df)), df[features].values])
+    coeffs, _, _, _ = np.linalg.lstsq(X_b, df["dem_share"].values, rcond=None)
     coeff_names = ["intercept"] + features
 
-    x_row = [float(ctx["presidential"]), float(ctx["inflation"]), float(ctx["approval"])]
-    predicted = float(predict_ols(coeffs, x_row))
+    sign = 1.0 if str(ctx.get("president_party", "R")).upper().startswith("D") else -1.0
+    x_ctx = {"presidential": float(ctx["presidential"]),
+             "signed_approval": (float(ctx["approval"]) - 0.5) * sign}
+    predicted = float(predict_ols(coeffs, [x_ctx[f] for f in features]))
 
     return {
         "predicted_state_env":   round(predicted, 6),
         "state_env_sd":          round(walk_fwd_sd, 6),
         "coefficients":          {n: round(float(c), 8) for n, c in zip(coeff_names, coeffs)},
+        "features":              features,
+        "walk_fwd_start":        STATE_ENV_WF_START,
         "n_obs":                 int(len(df)),
         "n_walk_fwd_errors":     int(len(errors)),
     }
-    # Back-test residuals for SD (already computed in ols)
-    return {
-        "predicted_state_env": round(predicted, 6),
-        "state_env_sd":        round(float(resid_std), 6),
-        "coefficients":        {n: round(float(c), 8) for n, c in zip(coeff_names, coeffs)},
-        "n_obs":               int(len(y)),
-    }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# STEP 4: County lean calculation
-# lean = county_dem_share − state_dem_share, weighted average across elections
-# Linear lean: OLS on election sequence to project trend forward
-# SD: standard deviation of historical lean values around the weighted mean
-# ══════════════════════════════════════════════════════════════════════════════
 def forecast_county_leans() -> dict:
     df = pd.read_csv(DATA_DIR / "historical_voting.csv")
 
@@ -446,7 +456,8 @@ def run_forecast(ctx: dict = None, verbose: bool = True) -> dict:
     if verbose:
         print("Running SD4 Election Forecast Model...")
         print(f"  Context: {ctx['year']} {'General' if ctx['general'] else 'Primary'}")
-        print(f"  Inflation: {ctx['inflation']}%  Approval: {ctx['approval']:.0%}")
+        print(f"  Inflation: {ctx['inflation']}%  Approval: {ctx['approval']:.0%}"
+              f"  President: {ctx.get('president_party', 'R')}")
 
     reg     = forecast_registration()
     turnout, _, turnout_coeffs = forecast_turnout(ctx)
@@ -506,7 +517,9 @@ if __name__ == "__main__":
             ctx["general"] = False
         elif "=" in arg:
             k, v = arg.split("=", 1)
-            if k in ctx:
+            if k == "president_party":
+                ctx[k] = v.upper()[:1]
+            elif k in ctx:
                 try:
                     ctx[k] = float(v)
                 except ValueError:
