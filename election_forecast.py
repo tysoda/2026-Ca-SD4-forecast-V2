@@ -60,7 +60,60 @@ COUNTY_CENTROIDS = {
     "Nevada":(-120.83,39.27),"Placer":(-120.74,38.90),"Stanislaus":(-120.70,37.47),
     "Tuolumne":(-119.94,37.86),
 }
+
+# Label offsets (dx, dy in degrees) and arrow anchor for small/awkward counties.
+# Counties not listed get their label placed directly on the centroid.
+COUNTY_LABEL_OFFSETS = {
+    "Alpine":     ( 0.60, -0.30),   # tiny county — shift right+down, arrow points to centroid
+    "Mono":       (-0.55,  0.00),   # tall thin strip — shift left
+    "Amador":     ( 0.00,  0.20),   # nudge up clear of Calaveras
+    "Calaveras":  ( 0.35, -0.30),   # nudge right+down clear of Amador/Tuolumne
+    "Mariposa":   (-0.40, -0.15),   # nudge left clear of Tuolumne
+}
 SD4_COUNTIES = set(COUNTY_CENTROIDS.keys())
+
+def _draw_county_labels(ax, county_names, county_polys, value_labels):
+    """Draw county name + value labels on a map axes.
+
+    Counties in COUNTY_LABEL_OFFSETS get an offset annotation with a thin
+    leader line; all others get a centroid label directly on the polygon.
+
+    Args:
+        ax: matplotlib axes
+        county_names: list of county name strings
+        county_polys: dict {county_name: ring_of_(lon,lat) tuples}
+        value_labels: dict {county_name: label_string}
+    """
+    import matplotlib.patheffects as _pe
+    stroke = [_pe.withStroke(linewidth=1.6, foreground="#222")]
+    for cn in county_names:
+        if cn not in county_polys:
+            continue
+        ring = county_polys[cn]
+        xs = [float(p[0]) for p in ring]
+        ys = [float(p[1]) for p in ring]
+        cx, cy = COUNTY_CENTROIDS.get(cn, (float(np.mean(xs)), float(np.mean(ys))))
+        label = f"{cn}\n{value_labels.get(cn, '')}"
+        offset = COUNTY_LABEL_OFFSETS.get(cn)
+        if offset:
+            dx, dy = offset
+            tx, ty = cx + dx, cy + dy
+            ax.annotate(
+                label,
+                xy=(cx, cy), xytext=(tx, ty),
+                fontsize=5.2, fontweight="bold", color="white",
+                ha="center", va="center", zorder=6,
+                multialignment="center",
+                path_effects=stroke,
+                arrowprops=dict(
+                    arrowstyle="-", color="#ddd", lw=0.7,
+                    shrinkA=0, shrinkB=2,
+                ),
+            )
+        else:
+            ax.text(cx, cy, label, ha="center", va="center",
+                    fontsize=5.5, fontweight="bold", color="white",
+                    zorder=5, path_effects=stroke, multialignment="center")
 
 DATA_DIR = Path(__file__).parent
 
@@ -1156,20 +1209,18 @@ with tab_returns:
                 color = _vbm_cmap(t)
                 xs = [float(p[0]) for p in ring]; ys = [float(p[1]) for p in ring]
                 _vbm_ax.fill(xs, ys, color=color, alpha=0.88, zorder=1, linewidth=0.6, edgecolor="#ffffff")
-                cx, cy = COUNTY_CENTROIDS.get(cn, (np.mean(xs), np.mean(ys)))
+            _vbm_value_labels = {}
+            for cn in county_names:
                 raw_v = _vbm_raw_cv.get(cn, float("nan"))
                 if not np.isfinite(raw_v):
-                    vl = "n/a"
+                    _vbm_value_labels[cn] = "n/a"
                 elif _sel_vbm in _diverging_metrics and _sel_vbm != "VBM: Dem − Rep Raw Count":
-                    vl = f"{'+' if raw_v >= 0 else ''}{raw_v * 100:.1f}pp"
+                    _vbm_value_labels[cn] = f"{'+' if raw_v >= 0 else ''}{raw_v * 100:.1f}pp"
                 elif _sel_vbm == "VBM: Dem − Rep Raw Count":
-                    vl = f"{'+' if raw_v >= 0 else ''}{int(raw_v):,}"
+                    _vbm_value_labels[cn] = f"{'+' if raw_v >= 0 else ''}{int(raw_v):,}"
                 else:
-                    vl = f"{raw_v * 100:.1f}%"
-                _vbm_ax.text(cx, cy, f"{cn}\n{vl}", ha="center", va="center", fontsize=5.5,
-                             fontweight="bold", color="white", zorder=5,
-                             path_effects=[pe.withStroke(linewidth=1.8, foreground="#222")],
-                             multialignment="center")
+                    _vbm_value_labels[cn] = f"{raw_v * 100:.1f}%"
+            _draw_county_labels(_vbm_ax, county_names, _vbm_county_polys, _vbm_value_labels)
         _vbm_ax.set_xlim(-122.0, -115.4); _vbm_ax.set_ylim(35.6, 39.6)
         _vbm_ax.set_aspect("equal"); _vbm_ax.axis("off")
         _vbm_ax.set_title(f"CA Senate District 4 — {_sel_vbm}", fontsize=9, pad=8, color="#333")
@@ -1213,7 +1264,7 @@ with tab_map:
         if not county_polys:
             ax_map.text(0.5,0.5,"County boundaries unavailable.\nCheck internet connection.",transform=ax_map.transAxes,ha="center",va="center",fontsize=10,color="#666")
         else:
-            texts=[]
+            _map_value_labels = {}
             for cn in county_names:
                 if cn not in county_polys: continue
                 ring=county_polys[cn]; val=cv.get(cn,0.5)
@@ -1222,18 +1273,9 @@ with tab_map:
                 is_sel=(cn==sel_county)
                 ax_map.fill(xs,ys,color=color,alpha=0.88,zorder=1,linewidth=2.5 if is_sel else 0.6,edgecolor="#FFD700" if is_sel else "#ffffff")
                 if is_sel: ax_map.plot(xs,ys,color="#FFD700",linewidth=2.5,zorder=4)
-                cx,cy=COUNTY_CENTROIDS.get(cn,(np.mean(xs),np.mean(ys)))
                 raw_val=_raw_cv.get(cn, float("nan"))
-                if not np.isfinite(raw_val):
-                    vl="n/a"
-                else:
-                    vl=f"{raw_val*100:.1f}%"
-                texts.append(ax_map.text(cx,cy,f"{cn}\n{vl}",ha="center",va="center",fontsize=5.5,fontweight="bold",color="white",zorder=5,path_effects=[pe.withStroke(linewidth=1.8,foreground="#222")],multialignment="center"))
-            try:
-                from adjustText import adjust_text
-                adjust_text(texts,ax=ax_map,expand=(1.3,1.5),force_text=(0.5,0.8),force_static=(0.3,0.5),arrowprops=dict(arrowstyle="-",color="#444",lw=0.6))
-            except ImportError:
-                pass
+                _map_value_labels[cn] = "n/a" if not np.isfinite(raw_val) else f"{raw_val*100:.1f}%"
+            _draw_county_labels(ax_map, county_names, county_polys, _map_value_labels)
         ax_map.set_xlim(-122.0,-115.4); ax_map.set_ylim(35.6,39.6); ax_map.set_aspect("equal"); ax_map.axis("off")
         ax_map.set_title(f"CA Senate District 4 — {sel_metric}",fontsize=9,pad=8,color="#333")
         sm=plt.cm.ScalarMappable(cmap=cmap,norm=plt.Normalize(vmin=vmin,vmax=vmax)); sm.set_array([])
