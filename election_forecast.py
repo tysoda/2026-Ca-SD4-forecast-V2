@@ -491,7 +491,7 @@ filtered_share = district_share[mask]; n_filtered = mask.sum()
 st.title("🗳️ SD4 Election Forecast")
 st.caption(
     f"Monte Carlo · {int(n_sims):,} simulations · Lean: {lean_method}"
-    + (f" ({fmt_pct(BG_DISTRICT_LEAN['lean_avg'])})" if lean_method == "Block Group" and BG_DISTRICT_LEAN else "")
+    + ("" if lean_method != "Block Group" or BG_COUNTY_LEANS is None else "")
     + f" · State env: {fmt_pct(display_env)} (SD={fmt_pct(display_sd)}) · District win threshold: 50%"
 )
 
