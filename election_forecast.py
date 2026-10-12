@@ -798,13 +798,17 @@ with tab_turnout:
             dem_rate = dem_ret / dem_reg if dem_reg > 0 else float("nan")
             rep_rate = rep_ret / rep_reg if rep_reg > 0 else float("nan")
             dem_reg_share = dem_reg / tot_reg if tot_reg > 0 else float("nan")
+            rep_reg_share = rep_reg / tot_reg if tot_reg > 0 else float("nan")
             dem_ret_share = dem_ret / tot_ret if tot_ret > 0 else float("nan")
+            rep_ret_share = rep_ret / tot_ret if tot_ret > 0 else float("nan")
+            dem_adv = dem_ret_share - dem_reg_share
+            rep_adv = rep_ret_share - rep_reg_share
             out[cn] = {
                 "dem_rate": dem_rate,
                 "rep_rate": rep_rate,
-                # Dem share of returns minus Dem share of registration:
-                # positive = Dems over-performing their registration share
-                "return_share_adv": dem_ret_share - dem_reg_share,
+                # (Dem return share − Dem reg share) − (Rep return share − Rep reg share)
+                # positive = Dems over-performing relative to Reps, net of registration
+                "return_share_adv": dem_adv - rep_adv,
             }
         return out
 
