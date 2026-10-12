@@ -1174,7 +1174,7 @@ with tab_returns:
     if _geo_breakdown:
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown('<div class="section-label">VBM Returns by County</div>', unsafe_allow_html=True)
-        st.caption("County-level ballot return metrics from Optiq Data. Updated hourly.")
+        st.caption("County-level ballot return metrics from Optiq Data. Updated every 4 hours.")
 
         _vbm_metric_options = {
             "VBM: Dem Return Rate":            lambda cn: _geo_breakdown.get(cn, {}).get("dem_rate", float("nan")),
