@@ -793,12 +793,18 @@ with tab_turnout:
             rep_reg = row.get("repRegistered", 0) or 0
             dem_ret = row.get("demReturned", 0) or 0
             rep_ret = row.get("repReturned", 0) or 0
+            tot_reg = row.get("totalRegistered", 0) or 0
+            tot_ret = row.get("totalReturned", 0) or 0
             dem_rate = dem_ret / dem_reg if dem_reg > 0 else float("nan")
             rep_rate = rep_ret / rep_reg if rep_reg > 0 else float("nan")
+            dem_reg_share = dem_reg / tot_reg if tot_reg > 0 else float("nan")
+            dem_ret_share = dem_ret / tot_ret if tot_ret > 0 else float("nan")
             out[cn] = {
                 "dem_rate": dem_rate,
                 "rep_rate": rep_rate,
-                "advantage": dem_rate - rep_rate,  # positive = Dems ahead
+                # Dem share of returns minus Dem share of registration:
+                # positive = Dems over-performing their registration share
+                "return_share_adv": dem_ret_share - dem_reg_share,
             }
         return out
 
@@ -1107,7 +1113,7 @@ with tab_map:
             _GEO_METRICS = {
                 "VBM: Dem Return Rate":    lambda cn: _geo_breakdown.get(cn, {}).get("dem_rate", float("nan")),
                 "VBM: Rep Return Rate":    lambda cn: _geo_breakdown.get(cn, {}).get("rep_rate", float("nan")),
-                "VBM: Dem − Rep Advantage":lambda cn: _geo_breakdown.get(cn, {}).get("advantage", float("nan")),
+                "VBM: Dem Return Share Advantage": lambda cn: _geo_breakdown.get(cn, {}).get("return_share_adv", float("nan")),
             }
             metric_options.update(_GEO_METRICS)
         sel_metric=st.selectbox("Choropleth metric",list(metric_options.keys()))
@@ -1118,7 +1124,7 @@ with tab_map:
         cv={cn:(v if np.isfinite(v) else (sum(_finite_vals)/len(_finite_vals) if _finite_vals else 0.0)) for cn,v in _raw_cv.items()}
         vmin=min(_finite_vals) if _finite_vals else 0.0; vmax=max(_finite_vals) if _finite_vals else 1.0
         # For D-R advantage, centre colorscale on 0
-        if sel_metric == "VBM: Dem − Rep Advantage" and _finite_vals:
+        if sel_metric == "VBM: Dem Return Share Advantage" and _finite_vals:
             _abs_max = max(abs(vmin), abs(vmax))
             vmin, vmax = -_abs_max, _abs_max
         sel_county=st.session_state.get("selected_county_map",None)
@@ -1143,7 +1149,7 @@ with tab_map:
                 raw_val=_raw_cv.get(cn, float("nan"))
                 if not np.isfinite(raw_val):
                     vl="n/a"
-                elif sel_metric == "VBM: Dem − Rep Advantage":
+                elif sel_metric == "VBM: Dem Return Share Advantage":
                     vl=f"{'+' if raw_val>=0 else ''}{raw_val*100:.1f}pp"
                 else:
                     vl=f"{raw_val*100:.1f}%"
