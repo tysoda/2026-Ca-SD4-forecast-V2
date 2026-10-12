@@ -2,8 +2,8 @@ name: Update Optiq Crosstabs
 
 on:
   schedule:
-    # Run at 19:00 UTC (12:00 PM PDT / 11:00 AM PST) every day during election season
-    - cron: '0 19 * * *'
+    # Run every 4 hours
+    - cron: '0 */4 * * *'
   workflow_dispatch:   # allow manual trigger
 
 jobs:
