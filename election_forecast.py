@@ -61,14 +61,18 @@ COUNTY_CENTROIDS = {
     "Tuolumne":(-119.94,37.86),
 }
 
-# Label offsets (dx, dy in degrees) and arrow anchor for small/awkward counties.
-# Counties not listed get their label placed directly on the centroid.
+# Label offsets (dx, dy in degrees) — counties listed here get a leader line
+# pointing at their centroid, with the text placed outside the map boundary.
+# Map bounds: x=-122.0 to -115.4, y=35.6 to 39.6
+# Left outside margin ≈ -121.85; right outside margin ≈ -115.55; top ≈ 39.50
 COUNTY_LABEL_OFFSETS = {
-    "Alpine":     ( 0.60, -0.30),   # tiny county — shift right+down, arrow points to centroid
-    "Mono":       (-0.55,  0.00),   # tall thin strip — shift left
-    "Amador":     ( 0.00,  0.20),   # nudge up clear of Calaveras
-    "Calaveras":  ( 0.35, -0.30),   # nudge right+down clear of Amador/Tuolumne
-    "Mariposa":   (-0.40, -0.15),   # nudge left clear of Tuolumne
+    # Right/east side — Alpine is tiny and central, push to right outside margin
+    "Alpine":     ( 4.00,  0.30),   # centroid -119.73 → label ~-115.7 (right margin)
+    # Left/west side — stacked vertically along left margin
+    "Nevada":     (-1.15,  0.30),   # centroid -120.83 → label ~-121.98 (left margin, top)
+    "Placer":     (-1.20,  0.00),   # centroid -120.74 → label ~-121.94 (left margin, mid)
+    "Amador":     (-1.30, -0.25),   # centroid -120.65 → label ~-121.95 (left margin, lower)
+    "Calaveras":  (-1.40, -0.55),   # centroid -120.56 → label ~-121.96 (left margin, bottom)
 }
 SD4_COUNTIES = set(COUNTY_CENTROIDS.keys())
 
@@ -101,13 +105,13 @@ def _draw_county_labels(ax, county_names, county_polys, value_labels):
             ax.annotate(
                 label,
                 xy=(cx, cy), xytext=(tx, ty),
-                fontsize=5.2, fontweight="bold", color="white",
+                fontsize=5.2, fontweight="bold", color="#111",
                 ha="center", va="center", zorder=6,
                 multialignment="center",
-                path_effects=stroke,
+                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="#aaa", lw=0.6, alpha=0.88),
                 arrowprops=dict(
-                    arrowstyle="-", color="#ddd", lw=0.7,
-                    shrinkA=0, shrinkB=2,
+                    arrowstyle="-", color="#555", lw=0.7,
+                    shrinkA=0, shrinkB=3,
                 ),
             )
         else:
