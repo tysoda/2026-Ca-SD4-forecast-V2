@@ -496,9 +496,9 @@ st.caption(
     + f" · State env: {fmt_pct(display_env)} (SD={fmt_pct(display_sd)}) · District win threshold: 50%"
 )
 
-tab_dash, tab_turnout, tab_returns, tab_map, tab_model, tab_mechanics, tab_hood, tab_night = st.tabs([
+tab_dash, tab_turnout, tab_returns, tab_map, tab_model, tab_hood, tab_night = st.tabs([
     "📊 Dashboard", "🎚️ Turnout Explorer", "📬 Ballot Returns", "🗺️ District Map",
-    "🔮 Forecast Model", "📐 Model Mechanics", "🔧 Under the Hood", "🌙 Election Night"
+    "🔮 Forecast Model", "🔧 Under the Hood", "🌙 Election Night"
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1564,296 +1564,295 @@ with tab_model:
             params_json = f.read()
         st.download_button("⬇ Download forecast_params.json", params_json,
                           file_name="forecast_params.json", mime="application/json")
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 6 — MODEL MECHANICS
-# ══════════════════════════════════════════════════════════════════════════════
-with tab_mechanics:
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # MODEL MECHANICS (inline, below Forecast Model inputs)
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("---")
     st.markdown("## Model Mechanics")
     fp2 = st.session_state.get("forecast_params")
-    if not fp2:
-        st.info("Run the Forecast Model (tab above) to populate this tab.")
-        st.stop()
+    if fp2:
+        ctx2   = fp2["context"]
+        state2 = fp2["state_environment"]
+        sds2   = fp2["turnout_sds"]
+        tcoef  = fp2.get("turnout_coefficients", {})
 
-    ctx2   = fp2["context"]
-    state2 = fp2["state_environment"]
-    sds2   = fp2["turnout_sds"]
-    tcoef  = fp2.get("turnout_coefficients", {})
-
-    # ── State environment model ───────────────────────────────────────────────
-    st.markdown('<div class="section-label">State Environment Model</div>', unsafe_allow_html=True)
-    st.markdown(
-        f"OLS regression on {state2['n_obs']} historical CA statewide elections. "
-        f"Features: presidential cycle dummy and presidential approval signed by the president's party "
-        f"((approval − 0.5) × +1 Democratic / −1 Republican). Inflation is shown for context but no longer "
-        f"in the model. Walk-forward SD from {state2.get('walk_fwd_start', 2016)} onward."
-    )
-    sc = state2["coefficients"]
-    coef_cols = st.columns(4)
-    for col, (name, val) in zip(coef_cols, sc.items()):
-        with col:
-            st.markdown(f'<div class="stat-card"><div class="label">{name}</div><div class="value" style="font-size:1.1rem">{val:+.4f}</div></div>', unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    # Back-test chart: predicted vs actual
-    try:
-        from forecast_model import add_state_env_features
-        df_se = add_state_env_features(pd.read_csv(DATA_DIR / "state_environment_history.csv"))
-        coefs = sc
-        df_se["predicted"] = coefs["intercept"] + sum(
-            v * df_se[k] for k, v in coefs.items() if k != "intercept")
-        df_se["residual"] = df_se["dem_share"] - df_se["predicted"]
-
-        fig_bt, axes_bt = plt.subplots(1, 2, figsize=(12, 3.5))
-        fig_bt.patch.set_facecolor("#f7f7f5")
-        ax1, ax2 = axes_bt
-
-        ax1.set_facecolor("#f7f7f5")
-        ax1.scatter(df_se["predicted"]*100, df_se["dem_share"]*100, color="#1a6b3c", alpha=0.7, s=40)
-        mn = min(df_se["predicted"].min(), df_se["dem_share"].min())*100 - 1
-        mx = max(df_se["predicted"].max(), df_se["dem_share"].max())*100 + 1
-        ax1.plot([mn,mx],[mn,mx],color="#ccc",linewidth=1,linestyle="--")
-        ax1.set_xlabel("Predicted Dem Share (%)",fontsize=8); ax1.set_ylabel("Actual Dem Share (%)",fontsize=8)
-        ax1.xaxis.set_major_formatter(mtick.PercentFormatter()); ax1.yaxis.set_major_formatter(mtick.PercentFormatter())
-        ax1.set_title("State Environment: Predicted vs Actual",fontsize=8,fontweight="600")
-        ax1.spines[["top","right"]].set_visible(False); ax1.tick_params(labelsize=7)
-
-        ax2.set_facecolor("#f7f7f5")
-        ax2.bar(range(len(df_se)), df_se["residual"]*100, color=["#1a6b3c" if r>=0 else "#b91c1c" for r in df_se["residual"]], alpha=0.7)
-        ax2.axhline(0, color="#ccc", linewidth=0.8)
-        ax2.set_xticks(range(len(df_se))); ax2.set_xticklabels([e[:12] for e in df_se["election"]], rotation=45, ha="right", fontsize=5.5)
-        ax2.set_ylabel("Residual (%)",fontsize=8); ax2.set_title("Residuals by Election",fontsize=8,fontweight="600")
-        ax2.yaxis.set_major_formatter(mtick.PercentFormatter()); ax2.spines[["top","right","left"]].set_visible(False); ax2.tick_params(labelsize=7)
-        plt.tight_layout(); st.pyplot(fig_bt,width="stretch"); plt.close()
-
-        rmse = float(np.sqrt((df_se["residual"]**2).mean()))
-        st.caption(f"Model RMSE: {rmse:.3f} · Residual SD (used in simulation): {state2['state_env_sd']:.4f}")
-    except Exception as e:
-        st.caption(f"Could not load state environment history for chart: {e}")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # ── Turnout model ─────────────────────────────────────────────────────────
-    st.markdown('<div class="section-label">Turnout Model</div>', unsafe_allow_html=True)
-    st.markdown("Panel OLS with county fixed effects. Features: presidential cycle, general/primary dummy, previous same-type election turnout.")
-    if tcoef:
-        key_coefs = {k:v for k,v in tcoef.items() if k in ("intercept","presidential","general","prev_turnout")}
-        tc_cols = st.columns(4)
-        for col,(n,v) in zip(tc_cols, key_coefs.items()):
+        # ── State environment model ───────────────────────────────────────────────
+        st.markdown('<div class="section-label">State Environment Model</div>', unsafe_allow_html=True)
+        st.markdown(
+            f"OLS regression on {state2['n_obs']} historical CA statewide elections. "
+            f"Features: presidential cycle dummy and presidential approval signed by the president's party "
+            f"((approval − 0.5) × +1 Democratic / −1 Republican). Inflation is shown for context but no longer "
+            f"in the model. Walk-forward SD from {state2.get('walk_fwd_start', 2016)} onward."
+        )
+        sc = state2["coefficients"]
+        coef_cols = st.columns(4)
+        for col, (name, val) in zip(coef_cols, sc.items()):
             with col:
-                st.markdown(f'<div class="stat-card"><div class="label">{n}</div><div class="value" style="font-size:1.1rem">{v:+.4f}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-card"><div class="label">{name}</div><div class="value" style="font-size:1.1rem">{val:+.4f}</div></div>', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        # Back-test chart: predicted vs actual
+        try:
+            from forecast_model import add_state_env_features
+            df_se = add_state_env_features(pd.read_csv(DATA_DIR / "state_environment_history.csv"))
+            coefs = sc
+            df_se["predicted"] = coefs["intercept"] + sum(
+                v * df_se[k] for k, v in coefs.items() if k != "intercept")
+            df_se["residual"] = df_se["dem_share"] - df_se["predicted"]
+
+            fig_bt, axes_bt = plt.subplots(1, 2, figsize=(12, 3.5))
+            fig_bt.patch.set_facecolor("#f7f7f5")
+            ax1, ax2 = axes_bt
+
+            ax1.set_facecolor("#f7f7f5")
+            ax1.scatter(df_se["predicted"]*100, df_se["dem_share"]*100, color="#1a6b3c", alpha=0.7, s=40)
+            mn = min(df_se["predicted"].min(), df_se["dem_share"].min())*100 - 1
+            mx = max(df_se["predicted"].max(), df_se["dem_share"].max())*100 + 1
+            ax1.plot([mn,mx],[mn,mx],color="#ccc",linewidth=1,linestyle="--")
+            ax1.set_xlabel("Predicted Dem Share (%)",fontsize=8); ax1.set_ylabel("Actual Dem Share (%)",fontsize=8)
+            ax1.xaxis.set_major_formatter(mtick.PercentFormatter()); ax1.yaxis.set_major_formatter(mtick.PercentFormatter())
+            ax1.set_title("State Environment: Predicted vs Actual",fontsize=8,fontweight="600")
+            ax1.spines[["top","right"]].set_visible(False); ax1.tick_params(labelsize=7)
+
+            ax2.set_facecolor("#f7f7f5")
+            ax2.bar(range(len(df_se)), df_se["residual"]*100, color=["#1a6b3c" if r>=0 else "#b91c1c" for r in df_se["residual"]], alpha=0.7)
+            ax2.axhline(0, color="#ccc", linewidth=0.8)
+            ax2.set_xticks(range(len(df_se))); ax2.set_xticklabels([e[:12] for e in df_se["election"]], rotation=45, ha="right", fontsize=5.5)
+            ax2.set_ylabel("Residual (%)",fontsize=8); ax2.set_title("Residuals by Election",fontsize=8,fontweight="600")
+            ax2.yaxis.set_major_formatter(mtick.PercentFormatter()); ax2.spines[["top","right","left"]].set_visible(False); ax2.tick_params(labelsize=7)
+            plt.tight_layout(); st.pyplot(fig_bt,width="stretch"); plt.close()
+
+            rmse = float(np.sqrt((df_se["residual"]**2).mean()))
+            st.caption(f"Model RMSE: {rmse:.3f} · Residual SD (used in simulation): {state2['state_env_sd']:.4f}")
+        except Exception as e:
+            st.caption(f"Could not load state environment history for chart: {e}")
+
         st.markdown("<br>", unsafe_allow_html=True)
 
-       # Predicted turnout chart (more intuitive than raw fixed effects)
-    try:
-        df_t2 = pd.read_csv(DATA_DIR / "historical_turnout.csv")
-        df_t2 = df_t2[df_t2.votes_cast.notna()].copy()
+        # ── Turnout model ─────────────────────────────────────────────────────────
+        st.markdown('<div class="section-label">Turnout Model</div>', unsafe_allow_html=True)
+        st.markdown("Panel OLS with county fixed effects. Features: presidential cycle, general/primary dummy, previous same-type election turnout.")
+        if tcoef:
+            key_coefs = {k:v for k,v in tcoef.items() if k in ("intercept","presidential","general","prev_turnout")}
+            tc_cols = st.columns(4)
+            for col,(n,v) in zip(tc_cols, key_coefs.items()):
+                with col:
+                    st.markdown(f'<div class="stat-card"><div class="label">{n}</div><div class="value" style="font-size:1.1rem">{v:+.4f}</div></div>', unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
 
-        fig_to, ax_to = plt.subplots(figsize=(11, 4))
-        fig_to.patch.set_facecolor("#f7f7f5"); ax_to.set_facecolor("#f7f7f5")
+           # Predicted turnout chart (more intuitive than raw fixed effects)
+        try:
+            df_t2 = pd.read_csv(DATA_DIR / "historical_turnout.csv")
+            df_t2 = df_t2[df_t2.votes_cast.notna()].copy()
 
-        x = np.arange(len(county_names)); w = 0.35
-        is_gen = fp2["context"]["general"]
-        if is_gen:
-            hist_means = [
-                df_t2[(df_t2.county==cn) & (df_t2.general==1)]["turnout_rate"].mean()
-                for cn in county_names
-            ]
-            hist_label = "Historical mean (generals)"
-        else:
-            hist_means = [
-                df_t2[(df_t2.county==cn) & (df_t2.primary==1)]["turnout_rate"].mean()
-                for cn in county_names
-            ]
-            hist_label = "Historical mean (primaries)"
+            fig_to, ax_to = plt.subplots(figsize=(11, 4))
+            fig_to.patch.set_facecolor("#f7f7f5"); ax_to.set_facecolor("#f7f7f5")
 
-        pred_turns = [fp2["counties"][cn]["turnout"] for cn in county_names]
+            x = np.arange(len(county_names)); w = 0.35
+            is_gen = fp2["context"]["general"]
+            if is_gen:
+                hist_means = [
+                    df_t2[(df_t2.county==cn) & (df_t2.general==1)]["turnout_rate"].mean()
+                    for cn in county_names
+                ]
+                hist_label = "Historical mean (generals)"
+            else:
+                hist_means = [
+                    df_t2[(df_t2.county==cn) & (df_t2.primary==1)]["turnout_rate"].mean()
+                    for cn in county_names
+                ]
+                hist_label = "Historical mean (primaries)"
 
-        ax_to.bar(x - w/2, [v*100 for v in hist_means], w,
-                  label=hist_label, color="#888", alpha=0.6)
-        ax_to.bar(x + w/2, [v*100 for v in pred_turns], w,
-                  label="Model forecast", color="#1a6b3c", alpha=0.8)
-        ax_to.set_xticks(x)
-        ax_to.set_xticklabels(county_names, rotation=40, ha="right", fontsize=7)
-        ax_to.yaxis.set_major_formatter(mtick.PercentFormatter())
-        ax_to.set_ylabel("Turnout (%)", fontsize=8)
-        ax_to.set_title("County Turnout: Historical Mean vs Model Forecast", fontsize=8, fontweight="600")
-        ax_to.legend(fontsize=8, framealpha=0)
-        ax_to.spines[["top","right","left"]].set_visible(False)
-        ax_to.tick_params(labelsize=7)
-        plt.tight_layout(); st.pyplot(fig_to, width="stretch"); plt.close()
-    except Exception as e:
-        st.caption(f"Could not render turnout chart: {e}")
+            pred_turns = [fp2["counties"][cn]["turnout"] for cn in county_names]
 
-    sd_c1, sd_c2 = st.columns(2)
-    with sd_c1:
-        st.markdown(f'<div class="stat-card"><div class="label">District Turnout SD</div><div class="value">{fmt_pct(sds2["district_turnout_sd"])}</div><div class="sub">Residual SD from turnout regression</div></div>', unsafe_allow_html=True)
-    with sd_c2:
-        st.markdown(f'<div class="stat-card"><div class="label">County Turnout SD</div><div class="value">{fmt_pct(sds2["county_turnout_sd"])}</div><div class="sub">Mean per-county residual SD</div></div>', unsafe_allow_html=True)
+            ax_to.bar(x - w/2, [v*100 for v in hist_means], w,
+                      label=hist_label, color="#888", alpha=0.6)
+            ax_to.bar(x + w/2, [v*100 for v in pred_turns], w,
+                      label="Model forecast", color="#1a6b3c", alpha=0.8)
+            ax_to.set_xticks(x)
+            ax_to.set_xticklabels(county_names, rotation=40, ha="right", fontsize=7)
+            ax_to.yaxis.set_major_formatter(mtick.PercentFormatter())
+            ax_to.set_ylabel("Turnout (%)", fontsize=8)
+            ax_to.set_title("County Turnout: Historical Mean vs Model Forecast", fontsize=8, fontweight="600")
+            ax_to.legend(fontsize=8, framealpha=0)
+            ax_to.spines[["top","right","left"]].set_visible(False)
+            ax_to.tick_params(labelsize=7)
+            plt.tight_layout(); st.pyplot(fig_to, width="stretch"); plt.close()
+        except Exception as e:
+            st.caption(f"Could not render turnout chart: {e}")
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown('<div class="section-label">County Forecast Summary</div>', unsafe_allow_html=True)
-    st.caption("All figures from the current forecast model run.")
-    try:
-        is_gen = fp2["context"]["general"]
-        lean_key = "lean_avg" if lean_method == "Average" else "lean_lin"
-        cand_adj = st.session_state.get("candidate_adj_pct", 0) / 100 if st.session_state.get("candidate_adj_enabled", False) else 0
-        frows = ""
-        total_reg = 0; total_votes = 0; total_dem = 0
-        for cn in county_names:
-            cd = fp2["counties"][cn]
-            reg   = cd["registration"]
-            to    = cd["turnout"]
-            lean  = cd[lean_key]
-            base_env = fp2["state_environment"]["predicted_state_env"]
-            env   = base_env + cand_adj
-            share = env + lean
-            votes = reg * to
-            dem   = votes * share
-            total_reg   += reg
-            total_votes += votes
-            total_dem   += dem
-            adj_style = "color:#1a6b3c;font-weight:600" if cand_adj > 0 else ("color:#b91c1c;font-weight:600" if cand_adj < 0 else "color:#aaa")
-            adj_cell  = f"<td style='{adj_style}'>{cand_adj*100:+.1f}%</td>"
+        sd_c1, sd_c2 = st.columns(2)
+        with sd_c1:
+            st.markdown(f'<div class="stat-card"><div class="label">District Turnout SD</div><div class="value">{fmt_pct(sds2["district_turnout_sd"])}</div><div class="sub">Residual SD from turnout regression</div></div>', unsafe_allow_html=True)
+        with sd_c2:
+            st.markdown(f'<div class="stat-card"><div class="label">County Turnout SD</div><div class="value">{fmt_pct(sds2["county_turnout_sd"])}</div><div class="sub">Mean per-county residual SD</div></div>', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div class="section-label">County Forecast Summary</div>', unsafe_allow_html=True)
+        st.caption("All figures from the current forecast model run.")
+        try:
+            is_gen = fp2["context"]["general"]
+            lean_key = "lean_avg" if lean_method == "Average" else "lean_lin"
+            cand_adj = st.session_state.get("candidate_adj_pct", 0) / 100 if st.session_state.get("candidate_adj_enabled", False) else 0
+            frows = ""
+            total_reg = 0; total_votes = 0; total_dem = 0
+            for cn in county_names:
+                cd = fp2["counties"][cn]
+                reg   = cd["registration"]
+                to    = cd["turnout"]
+                lean  = cd[lean_key]
+                base_env = fp2["state_environment"]["predicted_state_env"]
+                env   = base_env + cand_adj
+                share = env + lean
+                votes = reg * to
+                dem   = votes * share
+                total_reg   += reg
+                total_votes += votes
+                total_dem   += dem
+                adj_style = "color:#1a6b3c;font-weight:600" if cand_adj > 0 else ("color:#b91c1c;font-weight:600" if cand_adj < 0 else "color:#aaa")
+                adj_cell  = f"<td style='{adj_style}'>{cand_adj*100:+.1f}%</td>"
+                frows += (
+                    f"<tr><td>{cn}</td>"
+                    f"<td>{reg:,}</td>"
+                    f"<td>{to*100:.1f}%</td>"
+                    f"<td>{votes:,.0f}</td>"
+                    f"<td>{base_env*100:.1f}%</td>"
+                    f"{adj_cell}"
+                    f"<td>{lean*100:+.1f}%</td>"
+                    f"<td>{share*100:.1f}%</td>"
+                    f"<td>{dem:,.0f}</td></tr>"
+                )
+            dist_share = total_dem / total_votes if total_votes > 0 else 0
             frows += (
-                f"<tr><td>{cn}</td>"
-                f"<td>{reg:,}</td>"
-                f"<td>{to*100:.1f}%</td>"
-                f"<td>{votes:,.0f}</td>"
-                f"<td>{base_env*100:.1f}%</td>"
-                f"{adj_cell}"
-                f"<td>{lean*100:+.1f}%</td>"
-                f"<td>{share*100:.1f}%</td>"
-                f"<td>{dem:,.0f}</td></tr>"
+                f"<tr style='font-weight:600;background:#f0f7f3'>"
+                f"<td>District Total</td>"
+                f"<td>{total_reg:,}</td>"
+                f"<td>—</td>"
+                f"<td>{total_votes:,.0f}</td>"
+                f"<td>—</td><td>—</td><td>—</td>"
+                f"<td>{dist_share*100:.1f}%</td>"
+                f"<td>{total_dem:,.0f}</td></tr>"
             )
-        dist_share = total_dem / total_votes if total_votes > 0 else 0
-        frows += (
-            f"<tr style='font-weight:600;background:#f0f7f3'>"
-            f"<td>District Total</td>"
-            f"<td>{total_reg:,}</td>"
-            f"<td>—</td>"
-            f"<td>{total_votes:,.0f}</td>"
-            f"<td>—</td><td>—</td><td>—</td>"
-            f"<td>{dist_share*100:.1f}%</td>"
-            f"<td>{total_dem:,.0f}</td></tr>"
-        )
-        st.markdown(
-            f'<table class="styled-table">'
-            f'<thead><tr><th>County</th><th>Registration</th><th>Turnout</th>'
-            f'<th>Est. Votes</th><th>State Env</th><th>Cand. Adj.</th><th>Lean ({lean_method})</th>'
-            f'<th>Forecast Share</th><th>Est. Dem Votes</th></tr></thead>'
-            f'<tbody>{frows}</tbody></table>',
-            unsafe_allow_html=True
-        )
-        st.caption("Cand. Adj. = Candidate (Jaron) effect, applied on top of State Env. +0.0% means adjustment is off.")
-    except Exception as e:
-        st.caption(f"Could not render forecast table: {e}")
-
-    # ── County leans ──────────────────────────────────────────────────────────
-    st.markdown('<div class="section-label">County Leans — Historical vs Forecast</div>', unsafe_allow_html=True)
-    try:
-        df_v2 = pd.read_csv(DATA_DIR / "historical_voting.csv")
-        fig_leans, ax_l = plt.subplots(figsize=(11,4))
-        fig_leans.patch.set_facecolor("#f7f7f5"); ax_l.set_facecolor("#f7f7f5")
-        x=np.arange(len(county_names)); w=0.25
-        avg_leans  = [COUNTIES[cn]["lean_avg"]*100  for cn in county_names]
-        lin_leans  = [COUNTIES[cn]["lean_lin"]*100  for cn in county_names]
-        hist_sds   = [COUNTIES[cn]["lean_sd"]*100   for cn in county_names]
-        ax_l.bar(x-w/2, avg_leans, w, label="Weighted avg lean", color="#1a6b3c", alpha=0.8)
-        ax_l.bar(x+w/2, lin_leans, w, label="Linear trend lean",  color="#0f3d24", alpha=0.5)
-        ax_l.errorbar(x-w/2, avg_leans, yerr=[s*1.96 for s in hist_sds], fmt="none", ecolor="#555", elinewidth=1, capsize=3)
-        ax_l.axhline(0, color="#ccc", linewidth=0.8)
-        ax_l.set_xticks(x); ax_l.set_xticklabels(county_names, rotation=40, ha="right", fontsize=7)
-        ax_l.yaxis.set_major_formatter(mtick.PercentFormatter())
-        ax_l.set_ylabel("Lean vs State Env (%)", fontsize=8)
-        ax_l.set_title("County Leans — Weighted Average vs Linear Trend (error bars = 95% CI)", fontsize=8, fontweight="600")
-        ax_l.legend(fontsize=8, framealpha=0); ax_l.spines[["top","right","left"]].set_visible(False); ax_l.tick_params(labelsize=7)
-        plt.tight_layout(); st.pyplot(fig_leans, width="stretch"); plt.close()
-    except Exception as e:
-        st.caption(f"Could not render lean chart: {e}")
-# Historical lean table
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown('<div class="section-label">County Leans by Election</div>', unsafe_allow_html=True)
-    st.caption("Each cell shows county Dem share minus statewide Dem share for that election. "
-               "Avg lean and linear lean are the two forecast methods.")
-    try:
-        df_lv = pd.read_csv(DATA_DIR / "historical_voting.csv")
-        ELECTION_ORDER = [
-            "2022_ss4_pri", "2022_gov_pri", "2022_senate_pri",
-            "2022_gov_gen", "2022_senate_gen",
-            "2024_senate_pri", "2024_pres_gen", "2024_senate_gen", "2026_ss4_pri", "2026_gov_pri"
-        ]
-        pivot = df_lv[df_lv.state_dem_share.notna()].pivot_table(
-            index="county", columns="election", values="county_lean", aggfunc="first"
-        )
-        # Reorder columns to election sequence
-        cols_present = [e for e in ELECTION_ORDER if e in pivot.columns]
-        pivot = pivot[cols_present]
-
-        # Add forecast columns
-        pivot["Avg Lean"] = [
-            fp2["counties"][cn]["lean_avg"] if cn in fp2["counties"] else np.nan
-            for cn in pivot.index
-        ]
-        pivot["Lin Lean"] = [
-            fp2["counties"][cn]["lean_lin"] if cn in fp2["counties"] else np.nan
-            for cn in pivot.index
-        ]
-        # Reorder rows to match county_names order
-        pivot = pivot.reindex([cn for cn in county_names if cn in pivot.index])
-
-        # Format as HTML table with colour coding
-        def lean_cell(v):
-            if pd.isna(v): return "<td>—</td>"
-            color = "#1a6b3c" if v >= 0 else "#b91c1c"
-            return f'<td style="color:{color};font-weight:500">{v*100:+.1f}%</td>'
-
-        header = "<th>County</th>" + "".join(
-            f"<th>{c.replace('_',' ')}</th>" for c in pivot.columns
-        )
-        rows_lt = ""
-        for cn, row in pivot.iterrows():
-            is_forecast = lambda c: c in ("Avg Lean", "Lin Lean")
-            cells = "".join(
-                f'<td style="background:#f0f7f3;font-weight:600;color:{"#1a6b3c" if row[c]>=0 else "#b91c1c"}">{row[c]*100:+.1f}%</td>'
-                if is_forecast(c) else lean_cell(row[c])
-                for c in pivot.columns
+            st.markdown(
+                f'<table class="styled-table">'
+                f'<thead><tr><th>County</th><th>Registration</th><th>Turnout</th>'
+                f'<th>Est. Votes</th><th>State Env</th><th>Cand. Adj.</th><th>Lean ({lean_method})</th>'
+                f'<th>Forecast Share</th><th>Est. Dem Votes</th></tr></thead>'
+                f'<tbody>{frows}</tbody></table>',
+                unsafe_allow_html=True
             )
-            rows_lt += f"<tr><td>{cn}</td>{cells}</tr>"
+            st.caption("Cand. Adj. = Candidate (Jaron) effect, applied on top of State Env. +0.0% means adjustment is off.")
+        except Exception as e:
+            st.caption(f"Could not render forecast table: {e}")
 
-        st.markdown(
-            f'<table class="styled-table"><thead><tr>{header}</tr></thead>'
-            f'<tbody>{rows_lt}</tbody></table>',
-            unsafe_allow_html=True
-        )
-        st.caption("Note: 2026 data unavailable for Madera, Merced, Nevada and Placer — linear lean for these counties is estimated from 2022–2024 data only.")
-    except Exception as e:
-        st.caption(f"Could not render lean table: {e}")
-    st.markdown("<br>", unsafe_allow_html=True)
+        # ── County leans ──────────────────────────────────────────────────────────
+        st.markdown('<div class="section-label">County Leans — Historical vs Forecast</div>', unsafe_allow_html=True)
+        try:
+            df_v2 = pd.read_csv(DATA_DIR / "historical_voting.csv")
+            fig_leans, ax_l = plt.subplots(figsize=(11,4))
+            fig_leans.patch.set_facecolor("#f7f7f5"); ax_l.set_facecolor("#f7f7f5")
+            x=np.arange(len(county_names)); w=0.25
+            avg_leans  = [COUNTIES[cn]["lean_avg"]*100  for cn in county_names]
+            lin_leans  = [COUNTIES[cn]["lean_lin"]*100  for cn in county_names]
+            hist_sds   = [COUNTIES[cn]["lean_sd"]*100   for cn in county_names]
+            ax_l.bar(x-w/2, avg_leans, w, label="Weighted avg lean", color="#1a6b3c", alpha=0.8)
+            ax_l.bar(x+w/2, lin_leans, w, label="Linear trend lean",  color="#0f3d24", alpha=0.5)
+            ax_l.errorbar(x-w/2, avg_leans, yerr=[s*1.96 for s in hist_sds], fmt="none", ecolor="#555", elinewidth=1, capsize=3)
+            ax_l.axhline(0, color="#ccc", linewidth=0.8)
+            ax_l.set_xticks(x); ax_l.set_xticklabels(county_names, rotation=40, ha="right", fontsize=7)
+            ax_l.yaxis.set_major_formatter(mtick.PercentFormatter())
+            ax_l.set_ylabel("Lean vs State Env (%)", fontsize=8)
+            ax_l.set_title("County Leans — Weighted Average vs Linear Trend (error bars = 95% CI)", fontsize=8, fontweight="600")
+            ax_l.legend(fontsize=8, framealpha=0); ax_l.spines[["top","right","left"]].set_visible(False); ax_l.tick_params(labelsize=7)
+            plt.tight_layout(); st.pyplot(fig_leans, width="stretch"); plt.close()
+        except Exception as e:
+            st.caption(f"Could not render lean chart: {e}")
+    # Historical lean table
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div class="section-label">County Leans by Election</div>', unsafe_allow_html=True)
+        st.caption("Each cell shows county Dem share minus statewide Dem share for that election. "
+                   "Avg lean and linear lean are the two forecast methods.")
+        try:
+            df_lv = pd.read_csv(DATA_DIR / "historical_voting.csv")
+            ELECTION_ORDER = [
+                "2022_ss4_pri", "2022_gov_pri", "2022_senate_pri",
+                "2022_gov_gen", "2022_senate_gen",
+                "2024_senate_pri", "2024_pres_gen", "2024_senate_gen", "2026_ss4_pri", "2026_gov_pri"
+            ]
+            pivot = df_lv[df_lv.state_dem_share.notna()].pivot_table(
+                index="county", columns="election", values="county_lean", aggfunc="first"
+            )
+            # Reorder columns to election sequence
+            cols_present = [e for e in ELECTION_ORDER if e in pivot.columns]
+            pivot = pivot[cols_present]
 
-    # ── Polling blend visualisation ───────────────────────────────────────────
-    if _poll_details:
-        st.markdown('<div class="section-label">Polling Blend Illustration</div>', unsafe_allow_html=True)
-        from scipy.stats import norm as _norm
-        x_range   = np.linspace(0.40, 0.75, 400)
-        model_pdf = _norm.pdf(x_range, model_env_val, STATE_ENV_SD)
-        blend_pdf = _norm.pdf(x_range, blended_env, blended_sd)
-        poll_avg  = sum(d["dem"] for d in _poll_details) / len(_poll_details)
-        fig_pb, ax_pb = plt.subplots(figsize=(9, 3))
-        fig_pb.patch.set_facecolor("#f7f7f5"); ax_pb.set_facecolor("#f7f7f5")
-        ax_pb.plot(x_range*100, model_pdf, color="#888", linewidth=1.5, linestyle="--",
-                   label=f"Structural model ({model_env_val:.1%}, SD={STATE_ENV_SD:.2%})")
-        ax_pb.plot(x_range*100, blend_pdf, color="#1a6b3c", linewidth=2.0,
-                   label=f"Blended ({blended_env:.1%}, SD={blended_sd:.2%})")
-        ax_pb.axvline(poll_avg*100, color="#d97706", linewidth=1.5, linestyle=":",
-                      label=f"Simple poll avg ({poll_avg:.1%})")
-        ax_pb.set_xlabel("State Dem Share (%)", fontsize=8); ax_pb.set_ylabel("Density", fontsize=8)
-        ax_pb.xaxis.set_major_formatter(mtick.PercentFormatter())
-        ax_pb.legend(fontsize=7, framealpha=0)
-        ax_pb.spines[["top","right","left"]].set_visible(False); ax_pb.tick_params(labelsize=7)
-        ax_pb.set_title("State Environment: Structural Prior vs Polling Blend", fontsize=8, fontweight="600")
-        plt.tight_layout(); st.pyplot(fig_pb, width="stretch"); plt.close()
+            # Add forecast columns
+            pivot["Avg Lean"] = [
+                fp2["counties"][cn]["lean_avg"] if cn in fp2["counties"] else np.nan
+                for cn in pivot.index
+            ]
+            pivot["Lin Lean"] = [
+                fp2["counties"][cn]["lean_lin"] if cn in fp2["counties"] else np.nan
+                for cn in pivot.index
+            ]
+            # Reorder rows to match county_names order
+            pivot = pivot.reindex([cn for cn in county_names if cn in pivot.index])
 
-# ══════════════════════════════════════════════════════════════════════════════
+            # Format as HTML table with colour coding
+            def lean_cell(v):
+                if pd.isna(v): return "<td>—</td>"
+                color = "#1a6b3c" if v >= 0 else "#b91c1c"
+                return f'<td style="color:{color};font-weight:500">{v*100:+.1f}%</td>'
+
+            header = "<th>County</th>" + "".join(
+                f"<th>{c.replace('_',' ')}</th>" for c in pivot.columns
+            )
+            rows_lt = ""
+            for cn, row in pivot.iterrows():
+                is_forecast = lambda c: c in ("Avg Lean", "Lin Lean")
+                cells = "".join(
+                    f'<td style="background:#f0f7f3;font-weight:600;color:{"#1a6b3c" if row[c]>=0 else "#b91c1c"}">{row[c]*100:+.1f}%</td>'
+                    if is_forecast(c) else lean_cell(row[c])
+                    for c in pivot.columns
+                )
+                rows_lt += f"<tr><td>{cn}</td>{cells}</tr>"
+
+            st.markdown(
+                f'<table class="styled-table"><thead><tr>{header}</tr></thead>'
+                f'<tbody>{rows_lt}</tbody></table>',
+                unsafe_allow_html=True
+            )
+            st.caption("Note: 2026 data unavailable for Madera, Merced, Nevada and Placer — linear lean for these counties is estimated from 2022–2024 data only.")
+        except Exception as e:
+            st.caption(f"Could not render lean table: {e}")
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Polling blend visualisation ───────────────────────────────────────────
+        if _poll_details:
+            st.markdown('<div class="section-label">Polling Blend Illustration</div>', unsafe_allow_html=True)
+            from scipy.stats import norm as _norm
+            x_range   = np.linspace(0.40, 0.75, 400)
+            model_pdf = _norm.pdf(x_range, model_env_val, STATE_ENV_SD)
+            blend_pdf = _norm.pdf(x_range, blended_env, blended_sd)
+            poll_avg  = sum(d["dem"] for d in _poll_details) / len(_poll_details)
+            fig_pb, ax_pb = plt.subplots(figsize=(9, 3))
+            fig_pb.patch.set_facecolor("#f7f7f5"); ax_pb.set_facecolor("#f7f7f5")
+            ax_pb.plot(x_range*100, model_pdf, color="#888", linewidth=1.5, linestyle="--",
+                       label=f"Structural model ({model_env_val:.1%}, SD={STATE_ENV_SD:.2%})")
+            ax_pb.plot(x_range*100, blend_pdf, color="#1a6b3c", linewidth=2.0,
+                       label=f"Blended ({blended_env:.1%}, SD={blended_sd:.2%})")
+            ax_pb.axvline(poll_avg*100, color="#d97706", linewidth=1.5, linestyle=":",
+                          label=f"Simple poll avg ({poll_avg:.1%})")
+            ax_pb.set_xlabel("State Dem Share (%)", fontsize=8); ax_pb.set_ylabel("Density", fontsize=8)
+            ax_pb.xaxis.set_major_formatter(mtick.PercentFormatter())
+            ax_pb.legend(fontsize=7, framealpha=0)
+            ax_pb.spines[["top","right","left"]].set_visible(False); ax_pb.tick_params(labelsize=7)
+            ax_pb.set_title("State Environment: Structural Prior vs Polling Blend", fontsize=8, fontweight="600")
+            plt.tight_layout(); st.pyplot(fig_pb, width="stretch"); plt.close()
+
+    # ══════════════════════════════════════════════════════════════════════════════
 # TAB 7 — UNDER THE HOOD
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_hood:
