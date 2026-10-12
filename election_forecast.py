@@ -66,7 +66,7 @@ COUNTY_CENTROIDS = {
     "Nevada":  (-120.83, 39.27),
     "Placer":  (-120.98, 38.99),  # shifted west — county has long eastern tail
     "Stanislaus":(-121.02, 37.52), # +0.1 east
-    "Tuolumne":(-120.18, 38.00),  # +0.1 east, +0.1 north
+    "Tuolumne":(-120.08, 38.00),  # +0.1 east again
 }
 
 # Label offsets (dx, dy in degrees) — counties listed here get a leader line
@@ -1220,7 +1220,7 @@ with tab_returns:
                 t = (val - _vbm_vmin) / (_vbm_vmax - _vbm_vmin) if _vbm_vmax > _vbm_vmin else 0.5
                 color = _vbm_cmap(t)
                 xs = [float(p[0]) for p in ring]; ys = [float(p[1]) for p in ring]
-                _vbm_ax.fill(xs, ys, color=color, alpha=0.88, zorder=1, linewidth=0.6, edgecolor="#ffffff")
+                _vbm_ax.fill(xs, ys, color=color, alpha=0.88, zorder=1, linewidth=0.4, edgecolor="#222222")
             _vbm_value_labels = {}
             for cn in county_names:
                 raw_v = _vbm_raw_cv.get(cn, float("nan"))
