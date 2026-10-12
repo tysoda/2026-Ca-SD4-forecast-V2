@@ -65,8 +65,8 @@ COUNTY_CENTROIDS = {
     "Mono":    (-118.96, 37.94),
     "Nevada":  (-120.83, 39.27),
     "Placer":  (-120.98, 38.99),  # shifted west — county has long eastern tail
-    "Stanislaus":(-121.12, 37.52), # shifted west — mean centroid of actual polygon
-    "Tuolumne":(-120.28, 37.90),  # shifted west into visual bulk of county
+    "Stanislaus":(-121.02, 37.52), # +0.1 east
+    "Tuolumne":(-120.18, 38.00),  # +0.1 east, +0.1 north
 }
 
 # Label offsets (dx, dy in degrees) — counties listed here get a leader line
