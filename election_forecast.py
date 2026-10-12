@@ -1136,7 +1136,12 @@ with tab_map:
             vmin, vmax = -_abs_max, _abs_max
         sel_county=st.session_state.get("selected_county_map",None)
         county_polys=load_county_geojson()
-        cmap=plt.colormaps["bwr_r"]
+        if sel_metric == "VBM: Dem Return Rate":
+            cmap = plt.colormaps["Blues"]
+        elif sel_metric == "VBM: Rep Return Rate":
+            cmap = plt.colormaps["Reds"]
+        else:
+            cmap = plt.colormaps["bwr_r"]
         fig_map,ax_map=plt.subplots(figsize=(9,8)); fig_map.patch.set_facecolor("#f0f0ec"); ax_map.set_facecolor("#c8dff0")
         sx=[p[0] for p in SD4_BOUNDARY]; sy=[p[1] for p in SD4_BOUNDARY]
         ax_map.fill(sx,sy,color="#e8e4dc",alpha=1.0,zorder=0); ax_map.plot(sx,sy,color="#222",linewidth=2.5,zorder=3)
