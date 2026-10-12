@@ -772,6 +772,38 @@ with tab_turnout:
         except Exception:
             return []
 
+    @st.cache_data(ttl=3600)
+    def _fetch_geo_breakdown(district_slug: str) -> dict:
+        """Fetch Optiq county-level return rates; cached for 1 hour.
+        Returns dict keyed by title-cased county name with dem/rep return rates and advantage.
+        """
+        import urllib.request, json as _json, ssl as _ssl, os as _os
+        url = f"https://abev.optiqdata.com/api/geography-breakdown/{district_slug}?level=county_name"
+        ca_bundle = "/root/.ccr/ca-bundle.crt"
+        ctx = _ssl.create_default_context(cafile=ca_bundle if _os.path.exists(ca_bundle) else None)
+        try:
+            with urllib.request.urlopen(url, timeout=10, context=ctx) as r:
+                rows = _json.loads(r.read())
+        except Exception:
+            return {}
+        out = {}
+        for row in rows:
+            cn = row["geography"].title()  # "AMADOR" -> "Amador"
+            dem_reg = row.get("demRegistered", 0) or 0
+            rep_reg = row.get("repRegistered", 0) or 0
+            dem_ret = row.get("demReturned", 0) or 0
+            rep_ret = row.get("repReturned", 0) or 0
+            dem_rate = dem_ret / dem_reg if dem_reg > 0 else float("nan")
+            rep_rate = rep_ret / rep_reg if rep_reg > 0 else float("nan")
+            out[cn] = {
+                "dem_rate": dem_rate,
+                "rep_rate": rep_rate,
+                "advantage": dem_rate - rep_rate,  # positive = Dems ahead
+            }
+        return out
+
+    _geo_breakdown = _fetch_geo_breakdown("STATE%20SENATE%204")
+
     _optiq_rows = _fetch_optiq("STATE%20SENATE%204")
 
     if not _optiq_rows:
@@ -1070,9 +1102,25 @@ with tab_map:
             "Std Deviation":          lambda cn: float(np.std(county_shares[cn])),
             "Historical Average":     lambda cn: COUNTIES[cn]["hist_avg"],
         }
+        _GEO_METRICS = {}
+        if _geo_breakdown:
+            _GEO_METRICS = {
+                "VBM: Dem Return Rate":    lambda cn: _geo_breakdown.get(cn, {}).get("dem_rate", float("nan")),
+                "VBM: Rep Return Rate":    lambda cn: _geo_breakdown.get(cn, {}).get("rep_rate", float("nan")),
+                "VBM: Dem − Rep Advantage":lambda cn: _geo_breakdown.get(cn, {}).get("advantage", float("nan")),
+            }
+            metric_options.update(_GEO_METRICS)
         sel_metric=st.selectbox("Choropleth metric",list(metric_options.keys()))
         fn=metric_options[sel_metric]
-        cv={cn:fn(cn) for cn in county_names}; vmin=min(cv.values()); vmax=max(cv.values())
+        _raw_cv={cn:fn(cn) for cn in county_names}
+        # Drop NaN counties for vmin/vmax (counties with no returns yet)
+        _finite_vals=[v for v in _raw_cv.values() if np.isfinite(v)]
+        cv={cn:(v if np.isfinite(v) else (sum(_finite_vals)/len(_finite_vals) if _finite_vals else 0.0)) for cn,v in _raw_cv.items()}
+        vmin=min(_finite_vals) if _finite_vals else 0.0; vmax=max(_finite_vals) if _finite_vals else 1.0
+        # For D-R advantage, centre colorscale on 0
+        if sel_metric == "VBM: Dem − Rep Advantage" and _finite_vals:
+            _abs_max = max(abs(vmin), abs(vmax))
+            vmin, vmax = -_abs_max, _abs_max
         sel_county=st.session_state.get("selected_county_map",None)
         county_polys=load_county_geojson()
         cmap=plt.colormaps["bwr_r"]
@@ -1092,7 +1140,13 @@ with tab_map:
                 ax_map.fill(xs,ys,color=color,alpha=0.88,zorder=1,linewidth=2.5 if is_sel else 0.6,edgecolor="#FFD700" if is_sel else "#ffffff")
                 if is_sel: ax_map.plot(xs,ys,color="#FFD700",linewidth=2.5,zorder=4)
                 cx,cy=COUNTY_CENTROIDS.get(cn,(np.mean(xs),np.mean(ys)))
-                vl=f"{val*100:.1f}%"
+                raw_val=_raw_cv.get(cn, float("nan"))
+                if not np.isfinite(raw_val):
+                    vl="n/a"
+                elif sel_metric == "VBM: Dem − Rep Advantage":
+                    vl=f"{'+' if raw_val>=0 else ''}{raw_val*100:.1f}pp"
+                else:
+                    vl=f"{raw_val*100:.1f}%"
                 texts.append(ax_map.text(cx,cy,f"{cn}\n{vl}",ha="center",va="center",fontsize=5.5,fontweight="bold",color="white",zorder=5,path_effects=[pe.withStroke(linewidth=1.8,foreground="#222")],multialignment="center"))
             try:
                 from adjustText import adjust_text
@@ -1103,7 +1157,7 @@ with tab_map:
         ax_map.set_title(f"CA Senate District 4 — {sel_metric}",fontsize=9,pad=8,color="#333")
         sm=plt.cm.ScalarMappable(cmap=cmap,norm=plt.Normalize(vmin=vmin,vmax=vmax)); sm.set_array([])
         cbar=fig_map.colorbar(sm,ax=ax_map,fraction=0.025,pad=0.02); cbar.ax.tick_params(labelsize=7)
-        if any(k in sel_metric for k in ("Probability","Share","Average")): cbar.ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1))
+        if any(k in sel_metric for k in ("Probability","Share","Average","Rate","Advantage")): cbar.ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1))
         plt.tight_layout(); st.pyplot(fig_map,width="stretch"); plt.close()
 
     with info_col:
