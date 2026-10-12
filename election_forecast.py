@@ -805,9 +805,11 @@ with tab_turnout:
                 "dem_rate": dem_rate,
                 "rep_rate": rep_rate,
                 # Dem share of (D+R) returns minus Dem share of (D+R) registration
-                # Matches Optiq's Return Margin methodology (NPP excluded)
-                # positive = Dems over-performing their D+R registration share
                 "return_share_adv": dem_ret_share - dem_reg_share,
+                # Optiq Return Margin: (dem_ret − rep_ret) / (dem_ret + rep_ret)
+                "return_margin": (dem_ret - rep_ret) / dr_ret if dr_ret > 0 else float("nan"),
+                # Optiq Turnout Margin: dem return rate minus rep return rate
+                "turnout_margin": dem_rate - rep_rate if (dem_reg > 0 and rep_reg > 0) else float("nan"),
             }
         return out
 
@@ -1114,9 +1116,11 @@ with tab_map:
         _GEO_METRICS = {}
         if _geo_breakdown:
             _GEO_METRICS = {
-                "VBM: Dem Return Rate":    lambda cn: _geo_breakdown.get(cn, {}).get("dem_rate", float("nan")),
-                "VBM: Rep Return Rate":    lambda cn: _geo_breakdown.get(cn, {}).get("rep_rate", float("nan")),
+                "VBM: Dem Return Rate":            lambda cn: _geo_breakdown.get(cn, {}).get("dem_rate", float("nan")),
+                "VBM: Rep Return Rate":            lambda cn: _geo_breakdown.get(cn, {}).get("rep_rate", float("nan")),
                 "VBM: Dem Return Share Advantage": lambda cn: _geo_breakdown.get(cn, {}).get("return_share_adv", float("nan")),
+                "VBM: Return Margin (Optiq)":      lambda cn: _geo_breakdown.get(cn, {}).get("return_margin", float("nan")),
+                "VBM: Turnout Margin (Optiq)":     lambda cn: _geo_breakdown.get(cn, {}).get("turnout_margin", float("nan")),
             }
             metric_options.update(_GEO_METRICS)
         sel_metric=st.selectbox("Choropleth metric",list(metric_options.keys()))
@@ -1127,7 +1131,7 @@ with tab_map:
         cv={cn:(v if np.isfinite(v) else (sum(_finite_vals)/len(_finite_vals) if _finite_vals else 0.0)) for cn,v in _raw_cv.items()}
         vmin=min(_finite_vals) if _finite_vals else 0.0; vmax=max(_finite_vals) if _finite_vals else 1.0
         # For D-R advantage, centre colorscale on 0
-        if sel_metric == "VBM: Dem Return Share Advantage" and _finite_vals:
+        if sel_metric in ("VBM: Dem Return Share Advantage", "VBM: Return Margin (Optiq)", "VBM: Turnout Margin (Optiq)") and _finite_vals:
             _abs_max = max(abs(vmin), abs(vmax))
             vmin, vmax = -_abs_max, _abs_max
         sel_county=st.session_state.get("selected_county_map",None)
@@ -1152,7 +1156,7 @@ with tab_map:
                 raw_val=_raw_cv.get(cn, float("nan"))
                 if not np.isfinite(raw_val):
                     vl="n/a"
-                elif sel_metric == "VBM: Dem Return Share Advantage":
+                elif sel_metric in ("VBM: Dem Return Share Advantage", "VBM: Return Margin (Optiq)", "VBM: Turnout Margin (Optiq)"):
                     vl=f"{'+' if raw_val>=0 else ''}{raw_val*100:.1f}pp"
                 else:
                     vl=f"{raw_val*100:.1f}%"
