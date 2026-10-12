@@ -54,11 +54,19 @@ def fmt_pct(v, d=1): return f"{v*100:.{d}f}%"
 
 # ── Geographic data (SD4 boundary + helpers) ──────────────────────────────────
 COUNTY_CENTROIDS = {
-    "Alpine":(-119.73,38.60),"Amador":(-120.65,38.43),"Calaveras":(-120.56,38.14),
-    "El Dorado":(-120.52,38.78),"Inyo":(-117.69,36.66),"Madera":(-119.71,37.22),
-    "Mariposa":(-119.91,37.57),"Merced":(-120.65,37.23),"Mono":(-118.96,37.94),
-    "Nevada":(-120.83,39.27),"Placer":(-120.74,38.90),"Stanislaus":(-120.70,37.47),
-    "Tuolumne":(-119.94,37.86),
+    "Alpine":  (-119.73, 38.60),
+    "Amador":  (-120.65, 38.43),
+    "Calaveras":(-120.56, 38.14),
+    "El Dorado":(-120.52, 38.78),
+    "Inyo":    (-117.69, 36.66),
+    "Madera":  (-119.71, 37.22),
+    "Mariposa":(-119.91, 37.57),
+    "Merced":  (-120.65, 37.23),
+    "Mono":    (-118.96, 37.94),
+    "Nevada":  (-120.83, 39.27),
+    "Placer":  (-120.98, 38.99),  # shifted west — county has long eastern tail
+    "Stanislaus":(-121.12, 37.52), # shifted west — mean centroid of actual polygon
+    "Tuolumne":(-120.28, 37.90),  # shifted west into visual bulk of county
 }
 
 # Label offsets (dx, dy in degrees) — counties listed here get a leader line
@@ -70,7 +78,7 @@ COUNTY_LABEL_OFFSETS = {
     "Alpine":     ( 4.00,  0.30),   # centroid -119.73 → label ~-115.7 (right margin)
     # Left/west side — stacked vertically along left margin
     "Nevada":     (-1.15,  0.30),   # centroid -120.83 → label ~-121.98 (left margin, top)
-    "Placer":     (-1.20,  0.00),   # centroid -120.74 → label ~-121.94 (left margin, mid)
+    "Placer":     (-0.90,  0.00),   # centroid -120.98 → label ~-121.88 (left margin, mid)
     "Amador":     (-1.30, -0.25),   # centroid -120.65 → label ~-121.95 (left margin, lower)
     "Calaveras":  (-1.40, -0.55),   # centroid -120.56 → label ~-121.96 (left margin, bottom)
 }
