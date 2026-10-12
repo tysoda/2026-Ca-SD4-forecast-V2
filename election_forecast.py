@@ -496,8 +496,8 @@ st.caption(
     + f" · State env: {fmt_pct(display_env)} (SD={fmt_pct(display_sd)}) · District win threshold: 50%"
 )
 
-tab_dash, tab_turnout, tab_map, tab_model, tab_mechanics, tab_hood, tab_night = st.tabs([
-    "📊 Dashboard", "🎚️ Turnout Explorer", "🗺️ District Map",
+tab_dash, tab_turnout, tab_returns, tab_map, tab_model, tab_mechanics, tab_hood, tab_night = st.tabs([
+    "📊 Dashboard", "🎚️ Turnout Explorer", "📬 Ballot Returns", "🗺️ District Map",
     "🔮 Forecast Model", "📐 Model Mechanics", "🔧 Under the Hood", "🌙 Election Night"
 ])
 
@@ -647,6 +647,12 @@ with tab_turnout:
             arrow="▲" if val>=0 or lbl!="Share Change" else "▼"
             st.markdown(f'<div class="stat-card"><div class="label">{lbl}</div><div class="value">{("▲" if ds>=0 else "▼") + " " if lbl=="Share Change" else ""}{fmt_pct(abs(val) if lbl=="Share Change" else val)}</div></div>', unsafe_allow_html=True)
     st.info("💡 Hit **▶ Run Simulation** in the sidebar to run the full Monte Carlo with these turnout adjustments.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 3 — BALLOT RETURNS
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_returns:
+    st.markdown("## 📬 Ballot Returns")
 
     # ── Ballot Return Tracker ─────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
@@ -810,6 +816,8 @@ with tab_turnout:
                 "return_margin": (dem_ret - rep_ret) / dr_ret if dr_ret > 0 else float("nan"),
                 # Optiq Turnout Margin: dem return rate minus rep return rate
                 "turnout_margin": dem_rate - rep_rate if (dem_reg > 0 and rep_reg > 0) else float("nan"),
+                # Raw count: dem returns minus rep returns
+                "raw_margin": dem_ret - rep_ret,
             }
         return out
 
@@ -1097,8 +1105,84 @@ with tab_turnout:
             "Update sd4_party_registration.csv when general-election figures are available."
         )
 
+    # ── VBM County Map ────────────────────────────────────────────────────────
+    if _geo_breakdown:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div class="section-label">VBM Returns by County</div>', unsafe_allow_html=True)
+        st.caption("County-level ballot return metrics from Optiq Data. Updated hourly.")
+
+        _vbm_metric_options = {
+            "VBM: Dem Return Rate":            lambda cn: _geo_breakdown.get(cn, {}).get("dem_rate", float("nan")),
+            "VBM: Rep Return Rate":            lambda cn: _geo_breakdown.get(cn, {}).get("rep_rate", float("nan")),
+            "VBM: Dem Return Share Advantage": lambda cn: _geo_breakdown.get(cn, {}).get("return_share_adv", float("nan")),
+            "VBM: Return Margin (Optiq)":      lambda cn: _geo_breakdown.get(cn, {}).get("return_margin", float("nan")),
+            "VBM: Turnout Margin (Optiq)":     lambda cn: _geo_breakdown.get(cn, {}).get("turnout_margin", float("nan")),
+            "VBM: Dem − Rep Raw Count":        lambda cn: _geo_breakdown.get(cn, {}).get("raw_margin", float("nan")),
+        }
+        _sel_vbm = st.selectbox("VBM metric", list(_vbm_metric_options.keys()), key="vbm_map_metric")
+        _vbm_fn = _vbm_metric_options[_sel_vbm]
+        _vbm_raw_cv = {cn: _vbm_fn(cn) for cn in county_names}
+        _vbm_finite = [v for v in _vbm_raw_cv.values() if np.isfinite(v)]
+        _vbm_cv = {cn: (v if np.isfinite(v) else (sum(_vbm_finite)/len(_vbm_finite) if _vbm_finite else 0.0))
+                   for cn, v in _vbm_raw_cv.items()}
+        _vbm_vmin = min(_vbm_finite) if _vbm_finite else 0.0
+        _vbm_vmax = max(_vbm_finite) if _vbm_finite else 1.0
+        _diverging_metrics = ("VBM: Dem Return Share Advantage", "VBM: Return Margin (Optiq)",
+                              "VBM: Turnout Margin (Optiq)", "VBM: Dem − Rep Raw Count")
+        if _sel_vbm in _diverging_metrics and _vbm_finite:
+            _vbm_abs = max(abs(_vbm_vmin), abs(_vbm_vmax))
+            _vbm_vmin, _vbm_vmax = -_vbm_abs, _vbm_abs
+        if _sel_vbm == "VBM: Dem Return Rate":
+            _vbm_cmap = plt.colormaps["Blues"]
+        elif _sel_vbm == "VBM: Rep Return Rate":
+            _vbm_cmap = plt.colormaps["Reds"]
+        else:
+            _vbm_cmap = plt.colormaps["bwr_r"]
+
+        _vbm_county_polys = load_county_geojson()
+        _vbm_fig, _vbm_ax = plt.subplots(figsize=(9, 8))
+        _vbm_fig.patch.set_facecolor("#f0f0ec"); _vbm_ax.set_facecolor("#c8dff0")
+        _sx = [p[0] for p in SD4_BOUNDARY]; _sy = [p[1] for p in SD4_BOUNDARY]
+        _vbm_ax.fill(_sx, _sy, color="#e8e4dc", alpha=1.0, zorder=0)
+        _vbm_ax.plot(_sx, _sy, color="#222", linewidth=2.5, zorder=3)
+        if not _vbm_county_polys:
+            _vbm_ax.text(0.5, 0.5, "County boundaries unavailable.", transform=_vbm_ax.transAxes,
+                         ha="center", va="center", fontsize=10, color="#666")
+        else:
+            for cn in county_names:
+                if cn not in _vbm_county_polys: continue
+                ring = _vbm_county_polys[cn]; val = _vbm_cv.get(cn, 0.5)
+                t = (val - _vbm_vmin) / (_vbm_vmax - _vbm_vmin) if _vbm_vmax > _vbm_vmin else 0.5
+                color = _vbm_cmap(t)
+                xs = [float(p[0]) for p in ring]; ys = [float(p[1]) for p in ring]
+                _vbm_ax.fill(xs, ys, color=color, alpha=0.88, zorder=1, linewidth=0.6, edgecolor="#ffffff")
+                cx, cy = COUNTY_CENTROIDS.get(cn, (np.mean(xs), np.mean(ys)))
+                raw_v = _vbm_raw_cv.get(cn, float("nan"))
+                if not np.isfinite(raw_v):
+                    vl = "n/a"
+                elif _sel_vbm in _diverging_metrics and _sel_vbm != "VBM: Dem − Rep Raw Count":
+                    vl = f"{'+' if raw_v >= 0 else ''}{raw_v * 100:.1f}pp"
+                elif _sel_vbm == "VBM: Dem − Rep Raw Count":
+                    vl = f"{'+' if raw_v >= 0 else ''}{int(raw_v):,}"
+                else:
+                    vl = f"{raw_v * 100:.1f}%"
+                _vbm_ax.text(cx, cy, f"{cn}\n{vl}", ha="center", va="center", fontsize=5.5,
+                             fontweight="bold", color="white", zorder=5,
+                             path_effects=[pe.withStroke(linewidth=1.8, foreground="#222")],
+                             multialignment="center")
+        _vbm_ax.set_xlim(-122.0, -115.4); _vbm_ax.set_ylim(35.6, 39.6)
+        _vbm_ax.set_aspect("equal"); _vbm_ax.axis("off")
+        _vbm_ax.set_title(f"CA Senate District 4 — {_sel_vbm}", fontsize=9, pad=8, color="#333")
+        _vbm_sm = plt.cm.ScalarMappable(cmap=_vbm_cmap, norm=plt.Normalize(vmin=_vbm_vmin, vmax=_vbm_vmax))
+        _vbm_sm.set_array([])
+        _vbm_cbar = _vbm_fig.colorbar(_vbm_sm, ax=_vbm_ax, fraction=0.025, pad=0.02)
+        _vbm_cbar.ax.tick_params(labelsize=7)
+        if _sel_vbm not in _diverging_metrics:
+            _vbm_cbar.ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1))
+        plt.tight_layout(); st.pyplot(_vbm_fig, width="stretch"); plt.close()
+
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — MAP
+# TAB 4 — MAP
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_map:
     st.markdown("## District Map — SD4")
@@ -1113,16 +1197,6 @@ with tab_map:
             "Std Deviation":          lambda cn: float(np.std(county_shares[cn])),
             "Historical Average":     lambda cn: COUNTIES[cn]["hist_avg"],
         }
-        _GEO_METRICS = {}
-        if _geo_breakdown:
-            _GEO_METRICS = {
-                "VBM: Dem Return Rate":            lambda cn: _geo_breakdown.get(cn, {}).get("dem_rate", float("nan")),
-                "VBM: Rep Return Rate":            lambda cn: _geo_breakdown.get(cn, {}).get("rep_rate", float("nan")),
-                "VBM: Dem Return Share Advantage": lambda cn: _geo_breakdown.get(cn, {}).get("return_share_adv", float("nan")),
-                "VBM: Return Margin (Optiq)":      lambda cn: _geo_breakdown.get(cn, {}).get("return_margin", float("nan")),
-                "VBM: Turnout Margin (Optiq)":     lambda cn: _geo_breakdown.get(cn, {}).get("turnout_margin", float("nan")),
-            }
-            metric_options.update(_GEO_METRICS)
         sel_metric=st.selectbox("Choropleth metric",list(metric_options.keys()))
         fn=metric_options[sel_metric]
         _raw_cv={cn:fn(cn) for cn in county_names}
@@ -1130,18 +1204,9 @@ with tab_map:
         _finite_vals=[v for v in _raw_cv.values() if np.isfinite(v)]
         cv={cn:(v if np.isfinite(v) else (sum(_finite_vals)/len(_finite_vals) if _finite_vals else 0.0)) for cn,v in _raw_cv.items()}
         vmin=min(_finite_vals) if _finite_vals else 0.0; vmax=max(_finite_vals) if _finite_vals else 1.0
-        # For D-R advantage, centre colorscale on 0
-        if sel_metric in ("VBM: Dem Return Share Advantage", "VBM: Return Margin (Optiq)", "VBM: Turnout Margin (Optiq)") and _finite_vals:
-            _abs_max = max(abs(vmin), abs(vmax))
-            vmin, vmax = -_abs_max, _abs_max
         sel_county=st.session_state.get("selected_county_map",None)
         county_polys=load_county_geojson()
-        if sel_metric == "VBM: Dem Return Rate":
-            cmap = plt.colormaps["Blues"]
-        elif sel_metric == "VBM: Rep Return Rate":
-            cmap = plt.colormaps["Reds"]
-        else:
-            cmap = plt.colormaps["bwr_r"]
+        cmap = plt.colormaps["bwr_r"]
         fig_map,ax_map=plt.subplots(figsize=(9,8)); fig_map.patch.set_facecolor("#f0f0ec"); ax_map.set_facecolor("#c8dff0")
         sx=[p[0] for p in SD4_BOUNDARY]; sy=[p[1] for p in SD4_BOUNDARY]
         ax_map.fill(sx,sy,color="#e8e4dc",alpha=1.0,zorder=0); ax_map.plot(sx,sy,color="#222",linewidth=2.5,zorder=3)
@@ -1161,8 +1226,6 @@ with tab_map:
                 raw_val=_raw_cv.get(cn, float("nan"))
                 if not np.isfinite(raw_val):
                     vl="n/a"
-                elif sel_metric in ("VBM: Dem Return Share Advantage", "VBM: Return Margin (Optiq)", "VBM: Turnout Margin (Optiq)"):
-                    vl=f"{'+' if raw_val>=0 else ''}{raw_val*100:.1f}pp"
                 else:
                     vl=f"{raw_val*100:.1f}%"
                 texts.append(ax_map.text(cx,cy,f"{cn}\n{vl}",ha="center",va="center",fontsize=5.5,fontweight="bold",color="white",zorder=5,path_effects=[pe.withStroke(linewidth=1.8,foreground="#222")],multialignment="center"))
@@ -1221,7 +1284,7 @@ with tab_map:
             st.markdown(f'<div class="stat-card"><div class="label">District Win Probability</div><div class="value">{fmt_pct(float(np.mean(district_share>=WIN_THRESHOLD)))}</div><div class="sub">across all {int(n_sims):,} simulations</div></div>', unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — FORECAST MODEL
+# TAB 5 — FORECAST MODEL
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_model:
     st.markdown("## Forecast Model")
@@ -1502,7 +1565,7 @@ with tab_model:
         st.download_button("⬇ Download forecast_params.json", params_json,
                           file_name="forecast_params.json", mime="application/json")
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 5 — MODEL MECHANICS
+# TAB 6 — MODEL MECHANICS
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_mechanics:
     st.markdown("## Model Mechanics")
@@ -1791,7 +1854,7 @@ with tab_mechanics:
         plt.tight_layout(); st.pyplot(fig_pb, width="stretch"); plt.close()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 6 — UNDER THE HOOD
+# TAB 7 — UNDER THE HOOD
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_hood:
     st.markdown("## Under the Hood")
@@ -2046,7 +2109,7 @@ with tab_hood:
         st.caption(f"Could not render turnout diagnostics: {e}")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 7 — ELECTION NIGHT
+# TAB 8 — ELECTION NIGHT
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_night:
     import time as _time
