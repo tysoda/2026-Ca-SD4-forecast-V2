@@ -51,6 +51,10 @@ st.markdown("""
 def prob_class(p):
     return "prob-high" if p>=0.60 else ("prob-mid" if p>=0.40 else "prob-low")
 def fmt_pct(v, d=1): return f"{v*100:.{d}f}%"
+def fmt_margin(v, d=1):
+    """Convert a Dem proportion (e.g. 0.598) to a D/R margin string (e.g. 'D +19.6')."""
+    m = (v * 2 - 1) * 100
+    return f"D +{m:.{d}f}" if m >= 0 else f"R +{-m:.{d}f}"
 
 # ── Geographic data (SD4 boundary + helpers) ──────────────────────────────────
 COUNTY_CENTROIDS = {
@@ -365,15 +369,17 @@ with st.sidebar:
     if use_blended_env and _poll_details:
         forecast_env = blended_env
         STATE_ENV_SD = blended_sd
-        st.caption(f"Model: {model_env_val:.1%} → Blended: {blended_env:.1%} (SD={fmt_pct(blended_sd)})")
+        st.caption(f"Model: {fmt_margin(model_env_val)} → Blended: {fmt_margin(blended_env)} (SD={fmt_pct(blended_sd)})")
     else:
         override_env = st.toggle("Override model forecast", value=False)
         if override_env:
-            forecast_env = st.number_input("Manual forecast (%)", value=round(model_env_val*100, 2), step=0.1) / 100
-            st.caption(f"Manual override · Model was: {model_env_val:.1%}")
+            _model_margin = round((model_env_val * 2 - 1) * 100, 1)
+            _override_margin = st.number_input("Manual margin (D − R)", value=_model_margin, step=0.1, format="%.1f")
+            forecast_env = (_override_margin / 100 + 1) / 2
+            st.caption(f"Manual override · Model was: {fmt_margin(model_env_val)}")
         else:
             forecast_env = model_env_val
-            st.caption(f"Model forecast: {fmt_pct(model_env_val)} (SD={fmt_pct(STATE_ENV_SD)})")
+            st.caption(f"Model forecast: {fmt_margin(model_env_val)} (SD={fmt_pct(STATE_ENV_SD)})")
     
     display_env = forecast_env
     display_sd  = STATE_ENV_SD
@@ -381,7 +387,7 @@ with st.sidebar:
     if st.session_state.get("candidate_adj_enabled", False):
         forecast_env = forecast_env + st.session_state["candidate_adj_pct"] / 100
         STATE_ENV_SD = (STATE_ENV_SD**2 + (st.session_state["candidate_adj_sd_pct"]/100)**2) ** 0.5
-        st.caption(f"Candidate adj: +{st.session_state['candidate_adj_pct']:.1f}% · Adj SD: {fmt_pct(STATE_ENV_SD)}")
+        st.caption(f"Candidate adj: +{st.session_state['candidate_adj_pct']:.1f}pp · Effective: {fmt_margin(forecast_env)} · Adj SD: {fmt_pct(STATE_ENV_SD)}")
     
     _lean_opts = ["Linear", "Average"]
     if BG_COUNTY_LEANS is not None:
@@ -1355,7 +1361,7 @@ with tab_model:
             f"Model last run: **{ctx.get('year','')} {'General' if ctx.get('general') else 'Primary'}** · "
             f"Inflation: {ctx.get('inflation','?')}% · Approval: {ctx.get('approval',0):.0%} "
             f"({ctx.get('president_party','R')} president) · "
-            f"Predicted env: {fp['state_environment']['predicted_state_env']:.1%}"
+            f"Predicted env: {fmt_margin(fp['state_environment']['predicted_state_env'])}"
         )
     else:
         st.warning("No forecast_params.json found. Using hardcoded defaults. Run the model below to generate parameters.")
@@ -1531,9 +1537,9 @@ with tab_model:
         poll_mean = sum(d["dem"] for d in details) / len(details)
         st.markdown(f"""
         <div class="poll-blend">
-          <b>Blended state environment: {blended_env:.2%}</b> (SD={blended_sd:.2%})<br>
+          <b>Blended state environment: {fmt_margin(blended_env)}</b> (SD={blended_sd:.2%})<br>
           <span style="font-size:0.82rem;color:#555">
-            Structural model: {model_env_val:.2%} · Simple poll average: {poll_mean:.2%}
+            Structural model: {fmt_margin(model_env_val)} · Simple poll average: {fmt_margin(poll_mean)}
              · {len(details)} poll{"s" if len(details)!=1 else ""} loaded
           </span>
         </div>
@@ -1894,11 +1900,11 @@ with tab_model:
             fig_pb, ax_pb = plt.subplots(figsize=(9, 3))
             fig_pb.patch.set_facecolor("#f7f7f5"); ax_pb.set_facecolor("#f7f7f5")
             ax_pb.plot(x_range*100, model_pdf, color="#888", linewidth=1.5, linestyle="--",
-                       label=f"Structural model ({model_env_val:.1%}, SD={STATE_ENV_SD:.2%})")
+                       label=f"Structural model ({fmt_margin(model_env_val)}, SD={STATE_ENV_SD:.2%})")
             ax_pb.plot(x_range*100, blend_pdf, color="#1a6b3c", linewidth=2.0,
-                       label=f"Blended ({blended_env:.1%}, SD={blended_sd:.2%})")
+                       label=f"Blended ({fmt_margin(blended_env)}, SD={blended_sd:.2%})")
             ax_pb.axvline(poll_avg*100, color="#d97706", linewidth=1.5, linestyle=":",
-                          label=f"Simple poll avg ({poll_avg:.1%})")
+                          label=f"Simple poll avg ({fmt_margin(poll_avg)})")
             ax_pb.set_xlabel("State Dem Share (%)", fontsize=8); ax_pb.set_ylabel("Density", fontsize=8)
             ax_pb.xaxis.set_major_formatter(mtick.PercentFormatter())
             ax_pb.legend(fontsize=7, framealpha=0)
