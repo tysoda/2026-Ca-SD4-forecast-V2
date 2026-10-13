@@ -106,11 +106,29 @@ def blend_with_polls(
     if len(polls) == 0:
         return model_env, model_sd, []
 
+    # Convert raw poll shares to an even-split two-party equivalent:
+    # undecideds are assumed to break 50/50, so dem_2p = 0.5 + (dem - rep) / 2.
+    # This aligns poll-derived estimates with the model's dem_share, which is
+    # based on final election results where undecideds have resolved.
+    # Falls back to raw dem share when rep is missing.
+    def _to_dem_2p(row):
+        rep = row.get("rep", None)
+        try:
+            rep_f = float(rep)
+            if pd.notna(rep_f) and rep_f > 0:
+                return 0.5 + (float(row["dem"]) - rep_f) / 2
+        except (TypeError, ValueError):
+            pass
+        return float(row["dem"])
+
+    polls = polls.copy()
+    polls["dem_2p"] = polls.apply(_to_dem_2p, axis=1)
+
     weights = compute_poll_weights(polls, coeffs)
 
     model_prec = 1.0 / (model_sd ** 2)
     poll_prec  = weights.sum()
-    poll_mean  = float((polls["dem"] * weights).sum() / poll_prec)
+    poll_mean  = float((polls["dem_2p"] * weights).sum() / poll_prec)
 
     total_prec  = model_prec + poll_prec
     blended_env = (model_prec * model_env + poll_prec * poll_mean) / total_prec
@@ -135,6 +153,7 @@ def blend_with_polls(
         details.append({
             "source":      str(row.get("source", "")),
             "dem":         float(row["dem"]),
+            "dem_2p":      float(row["dem_2p"]),
             "days_out":    float(row.get("days_out", 120)),
             "rv":          int(row.get("rv", 0)),
             "lv":          int(row.get("lv", 0)),

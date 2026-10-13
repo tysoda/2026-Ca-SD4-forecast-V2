@@ -1534,12 +1534,14 @@ with tab_model:
 
     details = _poll_details
     if details:
-        poll_mean = sum(d["dem"] for d in details) / len(details)
+        poll_mean_2p  = sum(d["dem_2p"] for d in details) / len(details)
+        poll_mean_raw = sum(d["dem"] for d in details) / len(details)
         st.markdown(f"""
         <div class="poll-blend">
           <b>Blended state environment: {fmt_margin(blended_env)}</b> (SD={blended_sd:.2%})<br>
           <span style="font-size:0.82rem;color:#555">
-            Structural model: {fmt_margin(model_env_val)} · Simple poll average: {fmt_margin(poll_mean)}
+            Structural model: {fmt_margin(model_env_val)} · Poll avg (even-split): {fmt_margin(poll_mean_2p)}
+            · Raw poll avg: {poll_mean_raw:.1%}
              · {len(details)} poll{"s" if len(details)!=1 else ""} loaded
           </span>
         </div>
@@ -1896,7 +1898,8 @@ with tab_model:
             x_range   = np.linspace(0.40, 0.75, 400)
             model_pdf = _norm.pdf(x_range, model_env_val, STATE_ENV_SD)
             blend_pdf = _norm.pdf(x_range, blended_env, blended_sd)
-            poll_avg  = sum(d["dem"] for d in _poll_details) / len(_poll_details)
+            poll_avg     = sum(d["dem_2p"] for d in _poll_details) / len(_poll_details)
+            poll_avg_raw = sum(d["dem"] for d in _poll_details) / len(_poll_details)
             fig_pb, ax_pb = plt.subplots(figsize=(9, 3))
             fig_pb.patch.set_facecolor("#f7f7f5"); ax_pb.set_facecolor("#f7f7f5")
             ax_pb.plot(x_range*100, model_pdf, color="#888", linewidth=1.5, linestyle="--",
@@ -1904,7 +1907,9 @@ with tab_model:
             ax_pb.plot(x_range*100, blend_pdf, color="#1a6b3c", linewidth=2.0,
                        label=f"Blended ({fmt_margin(blended_env)}, SD={blended_sd:.2%})")
             ax_pb.axvline(poll_avg*100, color="#d97706", linewidth=1.5, linestyle=":",
-                          label=f"Simple poll avg ({fmt_margin(poll_avg)})")
+                          label=f"Poll avg even-split ({fmt_margin(poll_avg)})")
+            ax_pb.axvline(poll_avg_raw*100, color="#d97706", linewidth=1.0, linestyle="--", alpha=0.5,
+                          label=f"Raw poll avg ({poll_avg_raw:.1%})")
             ax_pb.set_xlabel("State Dem Share (%)", fontsize=8); ax_pb.set_ylabel("Density", fontsize=8)
             ax_pb.xaxis.set_major_formatter(mtick.PercentFormatter())
             ax_pb.legend(fontsize=7, framealpha=0)
