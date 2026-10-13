@@ -1536,13 +1536,16 @@ with tab_model:
     if details:
         poll_mean_2p  = sum(d["dem_2p"] for d in details) / len(details)
         poll_mean_raw = sum(d["dem"] for d in details) / len(details)
+        poll_margin_str = fmt_margin(poll_mean_2p)
         st.markdown(f"""
         <div class="poll-blend">
           <b>Blended state environment: {fmt_margin(blended_env)}</b> (SD={blended_sd:.2%})<br>
+          <span style="font-size:0.9rem;font-weight:600;color:#333">
+            Poll avg: {poll_mean_raw:.1%} raw · <span style="color:#1a56a0">{poll_margin_str} margin</span>
+          </span><br>
           <span style="font-size:0.82rem;color:#555">
-            Structural model: {fmt_margin(model_env_val)} · Poll avg (even-split): {fmt_margin(poll_mean_2p)}
-            · Raw poll avg: {poll_mean_raw:.1%}
-             · {len(details)} poll{"s" if len(details)!=1 else ""} loaded
+            Structural model: {fmt_margin(model_env_val)}
+            · {len(details)} poll{"s" if len(details)!=1 else ""} loaded
           </span>
         </div>
         """, unsafe_allow_html=True)
@@ -1552,10 +1555,12 @@ with tab_model:
             poll_type = "LV" if d["lv"] else ("RV" if d["rv"] else "—")
             partisan_badge = ' <span style="color:#d97706;font-size:0.7rem">[partisan]</span>' if d["partisan"] else ""
             moe_str = fmt_pct(d["moe"]) if d.get("moe") else "—"
+            margin_str = fmt_margin(d["dem_2p"])
             prows += (
                 f"<tr>"
                 f"<td>{d['source'][:40]}{partisan_badge}</td>"
                 f"<td>{fmt_pct(d['dem'])}</td>"
+                f"<td>{margin_str}</td>"
                 f"<td>{moe_str}</td>"
                 f"<td>{poll_type}</td>"
                 f"<td>{d['days_out']:.0f}</td>"
@@ -1566,7 +1571,7 @@ with tab_model:
             )
         st.markdown(
             f'<table class="styled-table"><thead><tr>'
-            f'<th>Poll</th><th>Dem Share</th><th>MoE</th><th>Type</th>'
+            f'<th>Poll</th><th>Dem Share</th><th>Margin (even-split)</th><th>MoE</th><th>Type</th>'
             f'<th>Days Out</th><th>Pred MAE</th><th>Sampling SD</th><th>Rel Weight</th>'
             f'</tr></thead><tbody>{prows}</tbody></table>',
             unsafe_allow_html=True
