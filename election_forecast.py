@@ -7,6 +7,7 @@ import matplotlib.patheffects as pe
 import json, sys, os
 import plotly.graph_objects as go
 from pathlib import Path
+from vbm_turnout import estimate_turnout, COUNTY_PARAMS
 
 st.set_page_config(page_title="Election Forecast — SD4", page_icon="🗳️", layout="wide")
 
@@ -698,6 +699,67 @@ with tab_turnout:
             else:
                 st.warning("VBM data not yet available — run the daily fetch first.")
 
+    # ── VBM-implied turnout callout ───────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-label">VBM-Implied Turnout Estimates</div>', unsafe_allow_html=True)
+    st.caption("Inferred from pre-election VBM accepted ballots using historical return-rate calibration (2022 & 2024). Estimates stabilize once ≥5% of expected final VBM is in.")
+
+    try:
+        _vbm_to_est = estimate_turnout(ballot_returns_path=DATA_DIR / "ballot_returns.csv", verbose=False)
+        _vbm_rows = []
+        for _cn in county_names:
+            _e = _vbm_to_est.get(_cn, {})
+            _s = _e.get("status", "no_data")
+            _base_to = COUNTIES[_cn]["turnout"]
+            _reg = COUNTIES[_cn]["registration"]
+            if _s == "ok":
+                _impl = _e["implied_total"]
+                _impl_to = _impl / _reg if _reg > 0 else 0
+                _delta = _impl_to - _base_to
+                _prog = _e.get("vbm_pct_observed", 0)
+                _vbm_rows.append({
+                    "County":         _cn,
+                    "Forecast":       f"{_base_to:.1%}",
+                    "Implied":        f"{_impl_to:.1%}",
+                    "Δ vs Forecast":  f"{'▲' if _delta >= 0 else '▼'} {abs(_delta):.1%}",
+                    "VBM Progress":   f"{_prog:.0%}",
+                    "Implied Total":  f"{_impl:,}",
+                })
+            else:
+                _vbm_rows.append({
+                    "County":         _cn,
+                    "Forecast":       f"{_base_to:.1%}",
+                    "Implied":        "⏳" if _s == "too_early" else "—",
+                    "Δ vs Forecast":  "—",
+                    "VBM Progress":   f"{_e.get('vbm_pct_observed', 0):.0%}" if _s == "too_early" else "—",
+                    "Implied Total":  "—",
+                })
+        if _vbm_rows:
+            _vbm_df = pd.DataFrame(_vbm_rows)
+            st.dataframe(_vbm_df, hide_index=True, use_container_width=True)
+            # District-level summary across "ok" counties
+            _ok = [_vbm_to_est[c] for c in county_names if _vbm_to_est.get(c, {}).get("status") == "ok"]
+            if _ok:
+                _total_implied = sum(e["implied_total"] for e in _ok)
+                _total_reg     = sum(COUNTIES[c]["registration"] for c in county_names if _vbm_to_est.get(c, {}).get("status") == "ok")
+                _dist_impl_to  = _total_implied / _total_reg if _total_reg > 0 else 0
+                _dist_base_to  = sum(COUNTIES[c]["turnout"] * COUNTIES[c]["registration"] for c in county_names if _vbm_to_est.get(c, {}).get("status") == "ok") / _total_reg if _total_reg > 0 else 0
+                _dist_delta    = _dist_impl_to - _dist_base_to
+                _col_a, _col_b, _col_c = st.columns(3)
+                with _col_a:
+                    st.markdown(f'<div class="stat-card"><div class="label">Implied District Turnout</div><div class="value">{_dist_impl_to:.1%}</div><div class="sub">counties with data only</div></div>', unsafe_allow_html=True)
+                with _col_b:
+                    _dcol = "#2e7d32" if _dist_delta >= 0 else "#c62828"
+                    st.markdown(f'<div class="stat-card"><div class="label">vs Forecast</div><div class="value" style="color:{_dcol}">{"▲" if _dist_delta >= 0 else "▼"} {abs(_dist_delta):.1%}</div><div class="sub">forecast: {_dist_base_to:.1%}</div></div>', unsafe_allow_html=True)
+                with _col_c:
+                    st.markdown(f'<div class="stat-card"><div class="label">Counties w/ Estimates</div><div class="value">{len(_ok)}</div><div class="sub">of {len(county_names)} total</div></div>', unsafe_allow_html=True)
+        else:
+            st.info("No VBM return data yet.")
+    except FileNotFoundError:
+        st.info("No ballot return data yet — estimates will appear once the daily fetch has run.")
+    except Exception as _ex:
+        st.caption(f"VBM turnout estimate unavailable: {_ex}")
+
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-label">Projected Impact</div>', unsafe_allow_html=True)
     st.caption("Deterministic estimate of share change. Re-run simulation for updated win probability.")
@@ -761,6 +823,13 @@ with tab_returns:
         _elapsed_22  = (_equiv_2022_date - _MAILOUT_2022).days
         _interp_frac = max(0.0, min(1.0, _elapsed_22 / _window_22))
 
+        # VBM-implied turnout estimates (vbm_turnout.py)
+        _vbm_est = {}
+        try:
+            _vbm_est = estimate_turnout(ballot_returns_path=_bsr_path, verbose=False)
+        except Exception:
+            pass
+
         _tracker_rows = []
         for _cn in county_names:
             if _cn not in _latest.index or _cn not in _base.index:
@@ -789,6 +858,22 @@ with tab_returns:
             else:
                 _pace = "🔴 Low"
 
+            # Implied turnout from vbm_turnout module
+            _est = _vbm_est.get(_cn, {})
+            _est_status = _est.get("status", "no_data")
+            if _est_status == "ok":
+                _reg = COUNTIES[_cn]["registration"]
+                _impl_total = _est.get("implied_total", 0)
+                _impl_to = _impl_total / _reg if _reg > 0 else 0
+                _base_to = COUNTIES[_cn]["turnout"]
+                _delta = _impl_to - _base_to
+                _delta_str = f"{'▲' if _delta >= 0 else '▼'} {abs(_delta):.1%}"
+                _implied_to_str = f"{_impl_to:.1%} ({_delta_str})"
+            elif _est_status == "too_early":
+                _implied_to_str = "⏳ too early"
+            else:
+                _implied_to_str = "—"
+
             _tracker_rows.append({
                 "County":             _cn,
                 "2026 Issued":        f"{_issued_26:,}",
@@ -797,6 +882,7 @@ with tab_returns:
                 "2022 Est. Rate":     f"{_rate_22_interp:.1%}",
                 "vs 2022 Pace":       f"{_pct_of_interp:.0%}" if _rate_26 > 0 else "—",
                 "Pace":               _pace,
+                "Implied Turnout":    _implied_to_str,
             })
 
         if _tracker_rows:
