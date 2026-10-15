@@ -906,7 +906,7 @@ with tab_returns:
             with _rc3:
                 _vs_base = (_dist_rate_26 / _dist_rate_22_interp) if _dist_rate_22_interp > 0 else 0
                 _col = "#2e7d32" if _vs_base >= 1.10 else ("#f57c00" if _vs_base >= 0.85 else "#c62828") if _dist_rate_26 > 0 else "#888"
-                st.markdown(f'<div class="stat-card"><div class="label">vs 2022 Pace</div><div class="value" style="color:{_col}">{_vs_base:.0%}</div><div class="sub">2022 at E−{_days_remaining_26}d: {_dist_rate_22_interp:.1%}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-card"><div class="label">vs 2022 Pace</div><div class="value" style="color:{_col}">{_vs_base:.0%}</div><div class="sub">SOS data {_latest_date:%b %-d} (E−{_days_remaining_26}) · 2022 then: {_dist_rate_22_interp:.1%}</div></div>', unsafe_allow_html=True)
             with _rc4:
                 # Snapshots collected so far
                 _n_snaps = _bsr_df["snapshot_date"].nunique()
