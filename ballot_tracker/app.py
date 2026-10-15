@@ -56,6 +56,15 @@ SOURCE_GAP_NOTE = (
     "source with itself over time rather than one against the other."
 )
 
+def DROP_COLS(unit: str) -> dict:
+    return {
+        "last_drop": st.column_config.NumberColumn(
+            "Last drop", format="localized",
+            help=f"Ballots added in the county's most recent {unit} that showed an increase."),
+        "last_drop_date": st.column_config.DateColumn("Drop date", format="MMM D"),
+    }
+
+
 PLOT_LAYOUT = dict(
     plot_bgcolor="#f7f7f5", paper_bgcolor="rgba(0,0,0,0)",
     margin=dict(l=10, r=10, t=30, b=10), hovermode="x unified",
@@ -374,22 +383,20 @@ with tabs[1]:
                 "figures are exact rather than scaled, and every row carries the D/R/O split. "
                 "Rates use Optiq's registered count for the SD4 part of each county. Optiq can run "
                 "about a day behind SOS.")
-        tab = oct_.copy()
+        tab = oct_.merge(A.last_drop(A.optiq_county_series(cp_hist), "tot_ret"), on="county", how="left")
         tab["pace"] = tab["pace_ratio"].map(A.pace_label)
         show = pct_cols(tab, ["rate", "rate_2022_equiv", "share_of_district_returns", "share_of_district_reg",
                               "dr_margin_ret", "margin_shift"])
         show["pace_ratio"] = show["pace_ratio"] * 100
         st.dataframe(
-            show[["county", "tot_reg", "tot_ret", "rate", "per_day", "rate_2022_equiv", "pace_ratio", "pace",
-                  "dr_margin_ret", "margin_shift", "share_of_district_returns", "share_of_district_reg",
-                  "outstanding"]],
+            show[["county", "tot_reg", "tot_ret", "rate", "last_drop", "last_drop_date", "rate_2022_equiv",
+                  "pace_ratio", "pace", "dr_margin_ret", "margin_shift", "share_of_district_returns",
+                  "share_of_district_reg", "outstanding"]],
             hide_index=True, width="stretch", height=38 + 35 * len(show),
             column_config={
                 "county": "County", "tot_reg": INT("Registered"), "tot_ret": INT("Returned"),
                 "rate": pct_col("Rate"),
-                "per_day": st.column_config.NumberColumn(
-                    "Per day", format="%.0f",
-                    help="New returns between the two latest distinct Optiq snapshots ÷ days between them."),
+                **DROP_COLS("Optiq snapshot"),
                 "rate_2022_equiv": pct_col(f"2022 est. ({pace_short})"),
                 "pace_ratio": st.column_config.NumberColumn(f"vs 2022 ({pace_short})", format="%.0f%%"),
                 "pace": f"Pace ({pace_short})",
@@ -399,12 +406,12 @@ with tabs[1]:
             },
         )
         if ometa["n_snapshots"] < 2:
-            st.caption("Per day needs two Optiq snapshots on different days. It fills in once the GitHub Action "
-                       "has saved optiq_county_party.csv on a second day (after the PR is merged).")
+            st.caption("Last drop needs Optiq snapshots on two different days. It fills in once the GitHub "
+                       "Action has saved optiq_county_party.csv on a second day (after the PR is merged).")
         else:
-            st.caption(f"Per day: new returns between the {ometa['prev_snapshot']:%b %-d} and "
-                       f"{ometa['snapshot']:%b %-d} snapshots ÷ days between them. 2022 comparison uses "
-                       "2022 SOS rates (ballots issued), so treat small gaps as noise.")
+            st.caption("Last drop: ballots added in the county's most recent update, and the snapshot it "
+                       "appeared in. Counties that haven't moved since keep their earlier drop. 2022 comparison "
+                       "uses 2022 SOS rates (ballots issued), so treat small gaps as noise.")
     else:
         cp_tab = pd.DataFrame()
         oct_ = None
@@ -412,20 +419,19 @@ with tabs[1]:
                 "The Optiq API couldn't be reached and no optiq_county_party.csv snapshots exist yet, so this "
                 "falls back to SOS. Split counties (Madera, Merced, Nevada, Placer) are SOS county totals "
                 "scaled by SD4's registration share.")
-        ctab = county_t.copy()
+        _ss = A.sos_series(sos)
+        ctab = county_t.merge(A.last_drop(_ss, "vbm_returned"), on="county", how="left")
         ctab["pace"] = ctab["pace_ratio"].map(A.pace_label)
         show = pct_cols(ctab, ["rate", "rate_2022_equiv", "share_of_district_returns", "share_of_district_issued"])
         show["pace_ratio"] = show["pace_ratio"] * 100
         st.dataframe(
-            show[["county", "issued", "returned", "rate", "per_day", "rate_2022_equiv", "pace_ratio", "pace",
-                  "share_of_district_returns", "share_of_district_issued", "outstanding"]],
+            show[["county", "issued", "returned", "rate", "last_drop", "last_drop_date", "rate_2022_equiv",
+                  "pace_ratio", "pace", "share_of_district_returns", "share_of_district_issued", "outstanding"]],
             hide_index=True, width="stretch", height=38 + 35 * len(show),
             column_config={
                 "county": "County", "issued": INT("Issued"), "returned": INT("Returned"),
                 "rate": pct_col("Rate"),
-                "per_day": st.column_config.NumberColumn(
-                    "Per day", format="%.0f",
-                    help="New returns between the two latest distinct SOS reports ÷ days between them."),
+                **DROP_COLS("SOS report"),
                 "rate_2022_equiv": pct_col(f"2022 est. ({pace_short})"),
                 "pace_ratio": st.column_config.NumberColumn(f"vs 2022 ({pace_short})", format="%.0f%%"),
                 "pace": f"Pace ({pace_short})", "share_of_district_returns": pct_col("Share of returns"),
@@ -449,7 +455,7 @@ with tabs[1]:
             "D − R return-rate gap": (cpi["turnout_gap"].to_dict(), True, "{:+.1%}", "RdBu"),
             "Raw D − R returned": (cpi["raw_dr"].astype(float).to_dict(), True, "{:+,.0f}", "RdBu"),
         }
-        vel = oct_[["county", "per_day", "tot_ret"]].rename(columns={"tot_ret": "returned"})
+        vel = tab[["county", "last_drop", "last_drop_date", "tot_ret"]].rename(columns={"tot_ret": "returned"})
     else:
         metric_opts = {
             "Return rate": (dict(zip(county_t["county"], county_t["rate"])), False, "{:.1%}", "Greens"),
@@ -458,7 +464,7 @@ with tabs[1]:
                 dict(zip(county_t["county"], county_t["share_of_district_returns"] - county_t["share_of_district_issued"])),
                 True, "{:+.1%}", "PiYG"),
         }
-        vel = county_t[["county", "per_day", "returned"]]
+        vel = ctab[["county", "last_drop", "last_drop_date", "returned"]]
     mcol, tcol = st.columns([3, 2])
     with mcol:
         _lbl = lambda k: f"vs 2022 {pace_name}" if k == "vs 2022 pace" else k
@@ -467,15 +473,14 @@ with tabs[1]:
         vals = {cn: float(vals.get(cn, np.nan)) for cn in D.SD4_COUNTIES}
         county_map(vals, f"{_lbl(sel)} ({'Optiq' if use_optiq else 'SOS'})", div, fmt, cs)
     with tcol:
-        st.markdown("**Biggest daily contributors**")
-        top = vel.sort_values("per_day", ascending=False).head(6)
-        if top["per_day"].notna().any():
+        st.markdown("**Biggest last drops**")
+        top = vel.sort_values("last_drop", ascending=False).head(6)
+        if top["last_drop"].notna().any():
             st.dataframe(top, hide_index=True, width="stretch",
-                         column_config={"county": "County",
-                                        "per_day": st.column_config.NumberColumn("Per day", format="%.0f"),
-                                        "returned": INT("Returned")})
+                         column_config={"county": "County", **DROP_COLS("snapshot"),
+                                        "returned": INT("Total returned")})
         else:
-            st.caption("Appears once there are two Optiq snapshots on different days.")
+            st.caption("Appears once there are snapshots on two different days.")
         st.caption("Stanislaus holds nearly half of SD4's ballots, so its return speed moves the "
                    "district number more than every small county combined.")
 

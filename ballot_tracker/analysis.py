@@ -388,3 +388,20 @@ def optiq_county_table(cp_hist: pd.DataFrame, base: pd.DataFrame,
         "rate": tot_ret / tot_reg if tot_reg else np.nan,
     }
     return t.reset_index(drop=True), meta
+
+
+def last_drop(series: pd.DataFrame, value_col: str) -> pd.DataFrame:
+    """Size and date of each county's most recent increase in returns.
+
+    series: one row per county per snapshot (county, snapshot_date, value_col).
+    A county whose numbers didn't move in the latest snapshot keeps its
+    previous drop, so slow-reporting counties still show when they last updated.
+    """
+    s = series[series["county"] != "SD4 total"].sort_values(["county", "snapshot_date"]).copy()
+    s["new"] = s.groupby("county")[value_col].diff()
+    drops = s[s["new"] > 0]
+    last = drops.groupby("county").tail(1).set_index("county")
+    out = pd.DataFrame(index=sorted(s["county"].unique()))
+    out["last_drop"] = last["new"]
+    out["last_drop_date"] = last["snapshot_date"]
+    return out.rename_axis("county").reset_index()
