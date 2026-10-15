@@ -2,8 +2,10 @@ name: Update Ballot Returns
 
 on:
   schedule:
-    # Run every 4 hours
-    - cron: '0 */4 * * *'
+    # Every 2 hours at :17. GitHub delays or drops scheduled runs at busy times —
+    # especially on the hour — so an off-peak minute and a shorter interval mean
+    # a new SOS report is picked up within a few hours even when runs are skipped.
+    - cron: '17 */2 * * *'
   workflow_dispatch:  # Allow manual trigger from the Actions tab
 
 jobs:
@@ -24,14 +26,11 @@ jobs:
       - name: Install dependencies
         run: pip install openpyxl requests
 
-      - name: Download SOS ballot return XLSX
-        run: |
-          curl -fsSL \
-            "https://elections.cdn.sos.ca.gov/statewide-elections/2026-general/bsr-statistics.xlsx" \
-            -o bsr-statistics.xlsx
-
-      - name: Run fetch script
-        run: python3 fetch_ballot_returns.py --file bsr-statistics.xlsx
+      - name: Fetch SOS ballot return reports
+        # Checks the undated bsr-statistics.xlsx and the dated
+        # bsr-statistics-MM-DD-YYYY.xlsx files for the last 10 days, and appends
+        # any report dates not already in ballot_returns.csv (backfills gaps).
+        run: python3 fetch_ballot_returns.py --auto --days 10
 
       - name: Commit and push if changed
         run: |
@@ -42,12 +41,10 @@ jobs:
             echo "No changes to commit — ballot_returns.csv already up to date."
           else
             SNAPSHOT=$(python3 -c "
-          import openpyxl, datetime
-          wb = openpyxl.load_workbook('bsr-statistics.xlsx')
-          ws = wb.active
-          d = ws.cell(1,1).value
-          print(d.date().isoformat() if isinstance(d, datetime.datetime) else d)
+          import csv
+          print(max(r['snapshot_date'] for r in csv.DictReader(open('ballot_returns.csv'))))
           ")
             git commit -m "chore: update ballot returns for ${SNAPSHOT} [skip ci]"
+            git pull --rebase --autostash origin main
             git push
           fi
