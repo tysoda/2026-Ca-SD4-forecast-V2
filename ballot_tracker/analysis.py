@@ -373,17 +373,35 @@ def optiq_county_series(cp_hist: pd.DataFrame) -> pd.DataFrame:
 
 def optiq_county_table(cp_hist: pd.DataFrame, base: pd.DataFrame,
                        daily22: pd.DataFrame | None, k: float = 1.0,
-                       curve: pd.Series | None = None) -> tuple[pd.DataFrame, dict]:
+                       curve: pd.Series | None = None,
+                       sos: pd.DataFrame | None = None) -> tuple[pd.DataFrame, dict]:
     """Latest Optiq county figures with party detail, velocity and 2022 pace.
 
     Denominator is Optiq's per-county registered count. Velocity needs two
     distinct Optiq snapshots (saved by the GitHub Action, plus today's live pull).
+
+    sos: SOS ballot_returns rows. Where Optiq shows 0 returned for a county but
+    the latest SOS report has some, the SOS count is used for that county's
+    total (and its data date becomes the SOS report date). Party detail for
+    those ballots isn't available, so party tables are unaffected.
     """
     s = optiq_county_series(cp_hist)
     s = s[s["county"] != "SD4 total"]
     dates = sorted(s["snapshot_date"].unique())
     cur_date = dates[-1]
     t = s[s["snapshot_date"] == cur_date].copy()
+    # Fill counties Optiq shows as 0 returned from the latest SOS report
+    t["sos_filled"] = False
+    sos_dates = {}
+    if sos is not None and not sos.empty:
+        sl = sos[sos["snapshot_date"] == sos["snapshot_date"].max()].set_index("county")
+        for i, row in t.iterrows():
+            c = row["county"]
+            if row["tot_ret"] == 0 and c in sl.index and sl.loc[c, "vbm_returned"] > 0:
+                t.at[i, "tot_ret"] = int(sl.loc[c, "vbm_returned"])
+                t.at[i, "rate"] = t.at[i, "tot_ret"] / row["tot_reg"] if row["tot_reg"] else np.nan
+                t.at[i, "sos_filled"] = True
+                sos_dates[c] = pd.Timestamp(sl.loc[c, "snapshot_date"])
     # Optiq runs about a day behind: date the data by its latest recorded return
     as_of = pd.Timestamp(cur_date)
     if "latest_return_date" in cp_hist:
@@ -401,7 +419,7 @@ def optiq_county_table(cp_hist: pd.DataFrame, base: pd.DataFrame,
     iss22 = base["vbm_issued_sd4"]
     rate22, dl = {}, {}
     for c in t["county"]:
-        d_c = lr_c.get(c)
+        d_c = sos_dates.get(c, lr_c.get(c))
         d_c = min(pd.Timestamp(d_c), pd.Timestamp(cur_date)) if pd.notna(d_c) else as_of
         dl_c, fr_c = equiv_2022_fraction(d_c, k, curve)
         b = baseline_2022_returned(base, daily22, dl_c, fr_c)
@@ -427,6 +445,8 @@ def optiq_county_table(cp_hist: pd.DataFrame, base: pd.DataFrame,
         t["latest_return_date"] = t["county"].map(lr)
     else:
         t["latest_return_date"] = pd.NaT
+    for c, d in sos_dates.items():
+        t.loc[t["county"] == c, "latest_return_date"] = d
     ok = t["rate_2022_equiv"].notna()
     w22 = t["county"].map(iss22).fillna(0)
     rate22 = float((t.loc[ok, "rate_2022_equiv"] * w22[ok]).sum() / w22[ok].sum()) if w22[ok].sum() else np.nan

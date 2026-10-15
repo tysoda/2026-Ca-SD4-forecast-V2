@@ -305,7 +305,7 @@ county_t, meta = A.county_table(sos, base, daily22, curve_k, curve)
 # Optiq county feed is the primary source for district figures; SOS is the fallback
 use_optiq = not cp_hist.empty
 if use_optiq:
-    oct_, ometa = A.optiq_county_table(cp_hist, base, daily22, curve_k, curve)
+    oct_, ometa = A.optiq_county_table(cp_hist, base, daily22, curve_k, curve, sos=sos)
 else:
     oct_, ometa = None, None
 # Label every pace comparison with the assumption behind it
@@ -369,7 +369,7 @@ with tabs[0]:
     if daily22 is None:
         if use_optiq:
             parts = " · ".join(
-                f"k={k_:g}: {A.optiq_county_table(cp_hist, base, None, k_, None)[1]['pace_ratio']:.0%}"
+                f"k={k_:g}: {A.optiq_county_table(cp_hist, base, None, k_, None, sos=sos)[1]['pace_ratio']:.0%}"
                 for k_ in (1.0, 1.5, 2.0, 2.5))
         else:
             sens = A.pace_sensitivity(sos, base)
@@ -518,6 +518,8 @@ with tabs[1]:
         show = pct_cols(A.with_total_row(tab, base, "tot_reg", "tot_ret",
                                          ["share_of_district_returns", "share_of_district_reg"]),
                         ["rate", "rate_2022_equiv", "share_of_district_returns", "share_of_district_reg"])
+        _filled = show["county"].isin(tab.loc[tab["sos_filled"], "county"])
+        show.loc[_filled, "county"] = show.loc[_filled, "county"] + " (SOS)"
         show["pace_ratio"] = show["pace_ratio"] * 100
         st.dataframe(
             show[["county", "tot_reg", "tot_ret", "rate", "last_drop", "last_drop_date", "rate_2022_equiv",
@@ -536,6 +538,9 @@ with tabs[1]:
         )
         _cap = ("Drop date is Optiq's most recent ballot return date for the county. "
                 "Registered is Optiq's VBM universe (sums to the same total as the crosstab 'issued'). ")
+        if tab["sos_filled"].any():
+            _cap += ("Counties marked (SOS) show 0 returned in Optiq, so their returned count and date come from "
+                     "the latest SOS report; their party split isn't available. ")
         if ometa["n_snapshots"] < 2:
             _cap += ("Last drop (ballots added in the latest update) needs Optiq snapshots on two different "
                      "days; it fills in once the GitHub Action has saved a second day (after the PR is merged).")
