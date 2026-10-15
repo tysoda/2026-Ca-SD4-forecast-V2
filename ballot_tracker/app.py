@@ -270,7 +270,9 @@ live_cells, live_cp = (pd.DataFrame(), pd.DataFrame())
 if use_live:
     live_cells, live_cp = load_live()
 
-today = pd.Timestamp.today().normalize()
+# California date (the server runs on UTC, which would roll over at 5pm Pacific)
+today = pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None).normalize()
+days_to_eday = int((D.EDAY_2026 - today).days)
 if not live_cells.empty:
     ct_latest = D.live_to_snapshot(live_cells, today)
     ct_source = "live"
@@ -311,10 +313,10 @@ else:
     pace_name, pace_short = f"curve k={curve_k:g}", f"k={curve_k:g}"
 ct_date = (ct_latest["snapshot_date"].max() if not ct_latest.empty else None)
 badges = (
-    f'<span class="src-badge">SOS · {meta["snapshot"]:%b %-d}</span>'
+    f'<span class="src-badge">E−{days_to_eday} · {days_to_eday} days to Nov 3</span>'
+    f'<span class="src-badge">SOS data · {meta["snapshot"]:%b %-d} (E−{meta["days_left"]})</span>'
     + (f'<span class="src-badge {"live" if ct_source == "live" else ""}">'
        f'Optiq · {"live" if ct_source == "live" else f"{ct_date:%b %-d}"}</span>' if ct_date is not None else "")
-    + f'<span class="src-badge">{meta["days_left"]} days to Nov 3</span>'
 )
 st.markdown(badges, unsafe_allow_html=True)
 
@@ -338,7 +340,8 @@ with tabs[0]:
         r = meta["pace_ratio"]
         col = "#2e7d32" if r >= 1.10 else ("#d97706" if r >= 0.85 else "#b91c1c")
         card(f"vs 2022 · {pace_name}", f"{r:.0%}" if np.isfinite(r) else "—",
-             f"2022 at E−{meta['days_left']}: {pct(meta['rate_2022_equiv'])} ({meta['baseline_kind']})",
+             f"SOS data is from E−{meta['days_left']} ({meta['snapshot']:%b %-d}); 2022 at E−{meta['days_left']}: "
+             f"{pct(meta['rate_2022_equiv'])}",
              color=col)
     if daily22 is None:
         sens = A.pace_sensitivity(sos, base)
