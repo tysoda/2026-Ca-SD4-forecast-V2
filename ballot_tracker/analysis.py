@@ -412,3 +412,38 @@ def last_drop(series: pd.DataFrame, value_col: str) -> pd.DataFrame:
     out["last_drop"] = last["new"]
     out["last_drop_date"] = last["snapshot_date"]
     return out.rename_axis("county").reset_index()
+
+
+# ── District total rows ──────────────────────────────────────────────────────
+def with_total_row(t: pd.DataFrame, base: pd.DataFrame, n_col: str, r_col: str,
+                   share_cols: list[str]) -> pd.DataFrame:
+    """Append an "SD4 total" row to a county totals table.
+
+    Rates are recomputed from summed counts (not averaged). The 2022
+    comparison is weighted by each county's 2022 ballots issued. Last drop is
+    left blank because counties drop on different days; drop date is the
+    most recent one.
+    """
+    row = {"county": "SD4 total", n_col: t[n_col].sum(), r_col: t[r_col].sum()}
+    row["rate"] = row[r_col] / row[n_col] if row[n_col] else np.nan
+    if "outstanding" in t:
+        row["outstanding"] = t["outstanding"].sum()
+    for c in share_cols:
+        row[c] = 1.0
+    if "last_drop_date" in t:
+        row["last_drop_date"] = t["last_drop_date"].max()
+    if "rate_2022_equiv" in t:
+        iss22 = base["vbm_issued_sd4"].reindex(t["county"]).values
+        ok = t["rate_2022_equiv"].notna().values
+        row["rate_2022_equiv"] = ((t["rate_2022_equiv"].values[ok] * iss22[ok]).sum() / iss22[ok].sum()
+                                  if iss22[ok].sum() else np.nan)
+        row["pace_ratio"] = row["rate"] / row["rate_2022_equiv"] if row["rate_2022_equiv"] else np.nan
+        row["pace"] = pace_label(row["pace_ratio"])
+    return pd.concat([t, pd.DataFrame([row])], ignore_index=True)
+
+
+def county_party_with_total(cp: pd.DataFrame) -> pd.DataFrame:
+    """county_party_table plus an "SD4 total" row built from summed counts."""
+    t = county_party_table(cp)
+    dist = cp.groupby("party", as_index=False)[["registered", "returned"]].sum().assign(county="SD4 total")
+    return pd.concat([t, county_party_table(dist)], ignore_index=True)

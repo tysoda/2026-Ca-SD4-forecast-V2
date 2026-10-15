@@ -389,8 +389,9 @@ with tabs[1]:
         # Optiq reports each county's latest return date directly — prefer it
         tab["last_drop_date"] = tab["latest_return_date"].fillna(tab["last_drop_date"])
         tab["pace"] = tab["pace_ratio"].map(A.pace_label)
-        show = pct_cols(tab, ["rate", "rate_2022_equiv", "share_of_district_returns", "share_of_district_reg",
-                              "dr_margin_ret", "margin_shift"])
+        show = pct_cols(A.with_total_row(tab, base, "tot_reg", "tot_ret",
+                                         ["share_of_district_returns", "share_of_district_reg"]),
+                        ["rate", "rate_2022_equiv", "share_of_district_returns", "share_of_district_reg"])
         show["pace_ratio"] = show["pace_ratio"] * 100
         st.dataframe(
             show[["county", "tot_reg", "tot_ret", "rate", "last_drop", "last_drop_date", "rate_2022_equiv",
@@ -423,7 +424,7 @@ with tabs[1]:
                 "D−R returns = (D − R returned) ÷ all returned; D−R reg = the same margin in registration; "
                 "shift vs reg = the difference (positive = Democrats banking a bigger share than their "
                 "registration).")
-        v = cp_tab.copy()
+        v = A.county_party_with_total(cp_latest)
         for p_ in D.PARTIES:
             v[f"{p_}_share_ret"] = v[f"{p_}_share_ret"] * 100
             v[f"{p_}_share_reg"] = v[f"{p_}_share_reg"] * 100
@@ -455,7 +456,9 @@ with tabs[1]:
         _ss = A.sos_series(sos)
         ctab = county_t.merge(A.last_drop(_ss, "vbm_returned"), on="county", how="left")
         ctab["pace"] = ctab["pace_ratio"].map(A.pace_label)
-        show = pct_cols(ctab, ["rate", "rate_2022_equiv", "share_of_district_returns", "share_of_district_issued"])
+        show = pct_cols(A.with_total_row(ctab, base, "issued", "returned",
+                                         ["share_of_district_returns", "share_of_district_issued"]),
+                        ["rate", "rate_2022_equiv", "share_of_district_returns", "share_of_district_issued"])
         show["pace_ratio"] = show["pace_ratio"] * 100
         st.dataframe(
             show[["county", "issued", "returned", "rate", "last_drop", "last_drop_date", "rate_2022_equiv",
