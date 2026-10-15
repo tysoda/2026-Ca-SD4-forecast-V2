@@ -214,6 +214,16 @@ with st.sidebar:
     use_live = st.toggle("Use live Optiq data", value=True,
                          help="Pull the Optiq API directly (cached 1 h). Falls back to the saved "
                               "snapshots if the API can't be reached.")
+    st.markdown("**2022 pace curve**")
+    curve_k = st.slider(
+        "Shape (k)", 1.0, 3.0, 1.0, 0.1,
+        disabled=daily22 is not None,
+        help="Share of the 2022 early vote assumed in by day t = (t / window) ^ k. "
+             "1 = linear (default). Higher = more back-loaded: fewer ballots early, more late. "
+             "There is no 2022 day-by-day data to fit k, so treat it as a sensitivity check.",
+    )
+    if daily22 is not None:
+        st.caption("Using vbm_2022_daily.csv — curve shape not needed.")
     if st.button("↻ Refresh data"):
         st.cache_data.clear()
         st.rerun()
@@ -248,7 +258,7 @@ if sos.empty:
     st.warning("No SOS ballot return data found (ballot_returns.csv).")
     st.stop()
 
-county_t, meta = A.county_table(sos, base, daily22)
+county_t, meta = A.county_table(sos, base, daily22, curve_k)
 ct_date = (ct_latest["snapshot_date"].max() if not ct_latest.empty else None)
 badges = (
     f'<span class="src-badge">SOS · {meta["snapshot"]:%b %-d}</span>'
@@ -279,10 +289,13 @@ with tabs[0]:
         card("vs 2022 pace", f"{r:.0%}" if np.isfinite(r) else "—",
              f"2022 at E−{meta['days_left']}: {pct(meta['rate_2022_equiv'])} ({meta['baseline_kind']})",
              color=col)
-    if meta["baseline_kind"] == "linear interpolation":
-        st.caption("⚠️ The 2022 pace baseline assumes returns grew in a straight line from mail-out to E-day. "
-                   "Real returns are back-loaded, so early in the window this reads too low. "
-                   "Drop a `vbm_2022_daily.csv` in the repo to use the real curve (see Method & data).")
+    if daily22 is None:
+        sens = A.pace_sensitivity(sos, base)
+        parts = " · ".join(f"k={r.k:g}: {r.pace_ratio:.0%}" for r in sens.itertuples())
+        st.caption(f"⚠️ The 2022 path to its pre-election end-point is assumed, not observed "
+                   f"(shape set in the sidebar). District pace under different shapes — {parts}. "
+                   "Early in the window the shape dominates the answer; lean on the party and county "
+                   "share comparisons, which don't depend on it.")
 
     if not ct_latest.empty:
         section("By party — Optiq voter-file match",
@@ -750,7 +763,7 @@ with tabs[5]:
 - **Stale snapshots are dropped.** If a feed re-publishes identical numbers on a new date, that date is removed so velocity isn't understated.
 - **2022 pace baseline: {meta['baseline_kind']}.** The end-point is the last 2022 pre-election report
   ({pct(meta['rate_2022_baseline'])} district return rate), which is the right target for tracking the early vote.
-  The path to it is assumed linear from mail-out, so early in the window the comparison reads low. To replace it, add
+  The path to it is assumed: (days elapsed ÷ window)^k, with k set in the sidebar (1 = linear). Early in the window the result is very sensitive to k. To replace it, add
   `vbm_2022_daily.csv` with columns
   `county, days_before_eday, vbm_returned` (SD4 portion).
 - **Split counties** use a fixed registration-share fraction for the SOS figures; Optiq counts are already district-specific.

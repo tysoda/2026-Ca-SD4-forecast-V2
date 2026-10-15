@@ -68,13 +68,15 @@ def label_codes(s: pd.DataFrame, dims: list[str]) -> pd.DataFrame:
 
 
 # ── SOS county pace vs 2022 ──────────────────────────────────────────────────
-def equiv_2022_fraction(snapshot: pd.Timestamp) -> tuple[int, float]:
-    """Days to E-day and the linear-interpolation fraction of the 2022 window."""
+def equiv_2022_fraction(snapshot: pd.Timestamp, k: float = 1.0) -> tuple[int, float]:
+    """Days to E-day and the share of the 2022 early vote assumed in by the
+    equivalent day: (days elapsed / window) ** k. k = 1 is linear; k > 1 is
+    back-loaded (most ballots arrive late in the window)."""
     days_left = (EDAY_2026 - snapshot).days
     equiv = EDAY_2022 - pd.Timedelta(days=days_left)
     window = (EDAY_2022 - MAILOUT_2022).days
-    frac = float(np.clip((equiv - MAILOUT_2022).days / window, 0, 1))
-    return days_left, frac
+    t = float(np.clip((equiv - MAILOUT_2022).days / window, 0, 1))
+    return days_left, t ** k
 
 
 def baseline_2022_returned(base: pd.DataFrame, daily22: pd.DataFrame | None,
@@ -90,12 +92,12 @@ def baseline_2022_returned(base: pd.DataFrame, daily22: pd.DataFrame | None,
 
 
 def county_table(sos: pd.DataFrame, base: pd.DataFrame,
-                 daily22: pd.DataFrame | None) -> tuple[pd.DataFrame, dict]:
+                 daily22: pd.DataFrame | None, k: float = 1.0) -> tuple[pd.DataFrame, dict]:
     """Latest SOS figures per county with velocity and 2022 pace."""
     snaps = sorted(sos["snapshot_date"].unique())
     cur_date = snaps[-1]
     cur = sos[sos["snapshot_date"] == cur_date].set_index("county")
-    days_left, frac = equiv_2022_fraction(cur_date)
+    days_left, frac = equiv_2022_fraction(cur_date, k)
     b22 = baseline_2022_returned(base, daily22, days_left, frac)
 
     # Velocity over the last real (non-stale) interval
@@ -136,7 +138,9 @@ def county_table(sos: pd.DataFrame, base: pd.DataFrame,
     ret22_tot = float(b22.sum())
     meta = {
         "snapshot": cur_date, "days_left": days_left, "interp_frac": frac,
-        "baseline_kind": "2022 daily curve" if daily22 is not None else "linear interpolation",
+        "baseline_kind": ("2022 daily curve" if daily22 is not None
+                          else "linear path" if k == 1 else f"curve k = {k:g}"),
+        "k": k,
         "issued": int(t["issued"].sum()), "returned": int(tot_ret),
         "rate": tot_ret / t["issued"].sum() if t["issued"].sum() else np.nan,
         "rate_2022_equiv": ret22_tot / iss22_tot if iss22_tot else np.nan,
@@ -147,6 +151,17 @@ def county_table(sos: pd.DataFrame, base: pd.DataFrame,
     meta["pace_ratio"] = (meta["rate"] / meta["rate_2022_equiv"]
                           if meta["rate_2022_equiv"] else np.nan)
     return t, meta
+
+
+def pace_sensitivity(sos: pd.DataFrame, base: pd.DataFrame,
+                     ks=(1.0, 1.5, 2.0, 2.5)) -> pd.DataFrame:
+    """District pace vs 2022 under several curve shapes."""
+    rows = []
+    for k in ks:
+        _, m = county_table(sos, base, None, k)
+        rows.append({"k": k, "share_in": m["interp_frac"],
+                     "rate_2022_equiv": m["rate_2022_equiv"], "pace_ratio": m["pace_ratio"]})
+    return pd.DataFrame(rows)
 
 
 def pace_label(ratio: float) -> str:
