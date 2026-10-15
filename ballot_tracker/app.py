@@ -256,9 +256,12 @@ if ct_source == "live" and (ct_saved.empty or today > ct_saved["snapshot_date"].
     ct_hist = pd.concat([ct_saved, ct_latest], ignore_index=True)
 
 if not live_cp.empty:
-    cp_latest, cp_source = live_cp, "live"
+    cp_latest, cp_source = live_cp.assign(snapshot_date=today), "live"
 else:
     cp_latest, cp_source = A.latest(cp_saved), "saved"
+cp_hist = cp_saved
+if cp_source == "live" and (cp_saved.empty or today > cp_saved["snapshot_date"].max()):
+    cp_hist = pd.concat([cp_saved, cp_latest], ignore_index=True)
 
 reg_counts = reg.get("counts", {})
 reg_total = sum(reg_counts.values())
@@ -361,79 +364,132 @@ with tabs[0]:
 # COUNTIES
 # ══════════════════════════════════════════════════════════════════════════════
 with tabs[1]:
-    section("County returns — SOS",
-            "Split counties (Madera, Merced, Nevada, Placer) are scaled to the SD4 portion "
-            "using partial_county_fractions.csv, which assumes the in-district share of ballots "
-            "matches the registration share.")
-    ctab = county_t.copy()
-    ctab["pace"] = ctab["pace_ratio"].map(A.pace_label)
-    show = pct_cols(ctab, ["rate", "rate_2022_equiv", "share_of_district_returns", "share_of_district_issued"])
-    show["pace_ratio"] = show["pace_ratio"] * 100
-    st.dataframe(
-        show[["county", "issued", "returned", "rate", "per_day", "rate_2022_equiv", "pace_ratio", "pace",
-              "share_of_district_returns", "share_of_district_issued", "outstanding"]],
-        hide_index=True, width="stretch",
-        column_config={
-            "county": "County", "issued": INT("Issued"), "returned": INT("Returned"),
-            "rate": pct_col("Rate"), "per_day": st.column_config.NumberColumn("Per day", format="%.0f"),
-            "rate_2022_equiv": pct_col(f"2022 est. ({pace_short})"),
-            "pace_ratio": st.column_config.NumberColumn(f"vs 2022 ({pace_short})", format="%.0f%%"),
-            "pace": f"Pace ({pace_short})", "share_of_district_returns": pct_col("Share of returns"),
-            "share_of_district_issued": pct_col("Share of issued"), "outstanding": INT("Outstanding"),
-        },
-        height=38 + 35 * len(show),
-    )
+    use_optiq = not cp_hist.empty
+    if use_optiq:
+        oct_, ometa = A.optiq_county_table(cp_hist, base, daily22, curve_k)
+        cp_tab = A.county_party_table(cp_latest)
+        src_txt = ("live API" if cp_source == "live" else f"saved snapshot {ometa['snapshot']:%b %-d}")
+        section("County returns — Optiq",
+                f"Source: Optiq ({src_txt}). Optiq assigns each voter to SD4 directly, so split-county "
+                "figures are exact rather than scaled, and every row carries the D/R/O split. "
+                "Rates use Optiq's registered count for the SD4 part of each county. Optiq can run "
+                "about a day behind SOS.")
+        tab = oct_.copy()
+        tab["pace"] = tab["pace_ratio"].map(A.pace_label)
+        show = pct_cols(tab, ["rate", "rate_2022_equiv", "share_of_district_returns", "share_of_district_reg",
+                              "dr_margin_ret", "margin_shift"])
+        show["pace_ratio"] = show["pace_ratio"] * 100
+        st.dataframe(
+            show[["county", "tot_reg", "tot_ret", "rate", "per_day", "rate_2022_equiv", "pace_ratio", "pace",
+                  "dr_margin_ret", "margin_shift", "share_of_district_returns", "share_of_district_reg",
+                  "outstanding"]],
+            hide_index=True, width="stretch", height=38 + 35 * len(show),
+            column_config={
+                "county": "County", "tot_reg": INT("Registered"), "tot_ret": INT("Returned"),
+                "rate": pct_col("Rate"),
+                "per_day": st.column_config.NumberColumn(
+                    "Per day", format="%.0f",
+                    help="New returns between the two latest distinct Optiq snapshots ÷ days between them."),
+                "rate_2022_equiv": pct_col(f"2022 est. ({pace_short})"),
+                "pace_ratio": st.column_config.NumberColumn(f"vs 2022 ({pace_short})", format="%.0f%%"),
+                "pace": f"Pace ({pace_short})",
+                "dr_margin_ret": pct_col("D−R (returns)", True), "margin_shift": pct_col("Shift vs reg", True),
+                "share_of_district_returns": pct_col("Share of returns"),
+                "share_of_district_reg": pct_col("Share of reg."), "outstanding": INT("Not yet returned"),
+            },
+        )
+        if ometa["n_snapshots"] < 2:
+            st.caption("Per day needs two Optiq snapshots on different days. It fills in once the GitHub Action "
+                       "has saved optiq_county_party.csv on a second day (after the PR is merged).")
+        else:
+            st.caption(f"Per day: new returns between the {ometa['prev_snapshot']:%b %-d} and "
+                       f"{ometa['snapshot']:%b %-d} snapshots ÷ days between them. 2022 comparison uses "
+                       "2022 SOS rates (ballots issued), so treat small gaps as noise.")
+    else:
+        cp_tab = pd.DataFrame()
+        oct_ = None
+        section("County returns — SOS (Optiq unavailable)",
+                "The Optiq API couldn't be reached and no optiq_county_party.csv snapshots exist yet, so this "
+                "falls back to SOS. Split counties (Madera, Merced, Nevada, Placer) are SOS county totals "
+                "scaled by SD4's registration share.")
+        ctab = county_t.copy()
+        ctab["pace"] = ctab["pace_ratio"].map(A.pace_label)
+        show = pct_cols(ctab, ["rate", "rate_2022_equiv", "share_of_district_returns", "share_of_district_issued"])
+        show["pace_ratio"] = show["pace_ratio"] * 100
+        st.dataframe(
+            show[["county", "issued", "returned", "rate", "per_day", "rate_2022_equiv", "pace_ratio", "pace",
+                  "share_of_district_returns", "share_of_district_issued", "outstanding"]],
+            hide_index=True, width="stretch", height=38 + 35 * len(show),
+            column_config={
+                "county": "County", "issued": INT("Issued"), "returned": INT("Returned"),
+                "rate": pct_col("Rate"),
+                "per_day": st.column_config.NumberColumn(
+                    "Per day", format="%.0f",
+                    help="New returns between the two latest distinct SOS reports ÷ days between them."),
+                "rate_2022_equiv": pct_col(f"2022 est. ({pace_short})"),
+                "pace_ratio": st.column_config.NumberColumn(f"vs 2022 ({pace_short})", format="%.0f%%"),
+                "pace": f"Pace ({pace_short})", "share_of_district_returns": pct_col("Share of returns"),
+                "share_of_district_issued": pct_col("Share of issued"), "outstanding": INT("Outstanding"),
+            },
+        )
 
-    mcol, tcol = st.columns([3, 2])
-    cp_tab = A.county_party_table(cp_latest)
-    metric_opts = {
-        "Return rate (SOS)": (dict(zip(county_t["county"], county_t["rate"])), False, "{:.1%}", "Greens"),
-        "vs 2022 pace (SOS)": (dict(zip(county_t["county"], county_t["pace_ratio"] - 1)), True, "{:+.0%}", "RdYlGn"),
-        "Share of district returns − share of issued": (
-            dict(zip(county_t["county"], county_t["share_of_district_returns"] - county_t["share_of_district_issued"])),
-            True, "{:+.1%}", "PiYG"),
-    }
-    if not cp_tab.empty:
+    # Map metrics: Optiq when available, else SOS
+    if use_optiq:
+        oi = oct_.set_index("county")
         cpi = cp_tab.set_index("county")
-        metric_opts.update({
+        metric_opts = {
+            "Return rate": (oi["rate"].to_dict(), False, "{:.1%}", "Greens"),
+            "vs 2022 pace": ((oi["pace_ratio"] - 1).to_dict(), True, "{:+.0%}", "RdYlGn"),
+            "Share of district returns − share of reg.": (
+                (oi["share_of_district_returns"] - oi["share_of_district_reg"]).to_dict(), True, "{:+.1%}", "PiYG"),
             "Dem return rate": (cpi["D_rate"].to_dict(), False, "{:.1%}", "Blues"),
             "Rep return rate": (cpi["R_rate"].to_dict(), False, "{:.1%}", "Reds"),
             "D−R margin among returns": (cpi["dr_margin_ret"].to_dict(), True, "{:+.1%}", "RdBu"),
             "Margin shift vs registration": (cpi["margin_shift"].to_dict(), True, "{:+.1%}", "RdBu"),
             "D − R return-rate gap": (cpi["turnout_gap"].to_dict(), True, "{:+.1%}", "RdBu"),
             "Raw D − R returned": (cpi["raw_dr"].astype(float).to_dict(), True, "{:+,.0f}", "RdBu"),
-        })
+        }
+        vel = oct_[["county", "per_day", "tot_ret"]].rename(columns={"tot_ret": "returned"})
+    else:
+        metric_opts = {
+            "Return rate": (dict(zip(county_t["county"], county_t["rate"])), False, "{:.1%}", "Greens"),
+            "vs 2022 pace": (dict(zip(county_t["county"], county_t["pace_ratio"] - 1)), True, "{:+.0%}", "RdYlGn"),
+            "Share of district returns − share of reg.": (
+                dict(zip(county_t["county"], county_t["share_of_district_returns"] - county_t["share_of_district_issued"])),
+                True, "{:+.1%}", "PiYG"),
+        }
+        vel = county_t[["county", "per_day", "returned"]]
+    mcol, tcol = st.columns([3, 2])
     with mcol:
-        _lbl = lambda k: f"vs 2022 {pace_name} (SOS)" if k == "vs 2022 pace (SOS)" else k
+        _lbl = lambda k: f"vs 2022 {pace_name}" if k == "vs 2022 pace" else k
         sel = st.selectbox("Map metric", list(metric_opts), format_func=_lbl, key="map_metric")
         vals, div, fmt, cs = metric_opts[sel]
         vals = {cn: float(vals.get(cn, np.nan)) for cn in D.SD4_COUNTIES}
-        county_map(vals, _lbl(sel), div, fmt, cs)
+        county_map(vals, f"{_lbl(sel)} ({'Optiq' if use_optiq else 'SOS'})", div, fmt, cs)
     with tcol:
         st.markdown("**Biggest daily contributors**")
-        top = county_t.sort_values("per_day", ascending=False)[["county", "per_day", "returned"]].head(6)
-        st.dataframe(top, hide_index=True, width="stretch",
-                     column_config={"county": "County",
-                                    "per_day": st.column_config.NumberColumn("Per day", format="%.0f"),
-                                    "returned": INT("Returned")})
-        st.caption("Stanislaus is ~47% of SD4's issued ballots, so its return speed moves the "
+        top = vel.sort_values("per_day", ascending=False).head(6)
+        if top["per_day"].notna().any():
+            st.dataframe(top, hide_index=True, width="stretch",
+                         column_config={"county": "County",
+                                        "per_day": st.column_config.NumberColumn("Per day", format="%.0f"),
+                                        "returned": INT("Returned")})
+        else:
+            st.caption("Appears once there are two Optiq snapshots on different days.")
+        st.caption("Stanislaus holds nearly half of SD4's ballots, so its return speed moves the "
                    "district number more than every small county combined.")
 
-    section("County × party — Optiq",
-            f"Source: {'live API' if cp_source == 'live' else 'saved snapshot'}. "
-            "Margin shift = D−R margin among returns minus D−R margin in registration "
-            "(positive = Democrats banking a bigger share than their registration).")
-    if cp_tab.empty:
-        st.info("County × party data unavailable — the Optiq API couldn't be reached and no "
-                "optiq_county_party.csv snapshots exist yet. The updated GitHub Action will start saving them.")
-    else:
+    if use_optiq:
+        section("County × party detail — Optiq",
+                "Margin shift = D−R margin among returns minus D−R margin in registration "
+                "(positive = Democrats banking a bigger share than their registration).")
         v = pct_cols(cp_tab, ["D_rate", "R_rate", "O_rate", "D_share_ret", "R_share_ret", "O_share_ret",
                               "dr_margin_ret", "dr_margin_reg", "margin_shift", "turnout_gap"])
         st.dataframe(
             v[["county", "D_ret", "R_ret", "O_ret", "D_rate", "R_rate", "O_rate",
                "D_share_ret", "R_share_ret", "O_share_ret", "dr_margin_ret", "dr_margin_reg", "margin_shift",
                "turnout_gap"]],
-            hide_index=True, width="stretch",
+            hide_index=True, width="stretch", height=38 + 35 * len(v),
             column_config={
                 "county": "County", "D_ret": INT("D ret"), "R_ret": INT("R ret"), "O_ret": INT("O/NPP ret"),
                 "D_rate": pct_col("D rate"), "R_rate": pct_col("R rate"), "O_rate": pct_col("O/NPP rate"),
@@ -444,33 +500,30 @@ with tabs[1]:
             },
         )
 
-    section("County return rate over time — SOS")
-    ss = A.sos_series(sos)
+    # Trends: Optiq once there's history, else SOS
+    oser = A.optiq_county_series(cp_hist) if use_optiq else pd.DataFrame()
+    optiq_trend = not oser.empty and oser["snapshot_date"].nunique() >= 2
+    section(f"County return rate over time — {'Optiq' if optiq_trend else 'SOS'}",
+            None if optiq_trend else "Uses SOS until Optiq county snapshots exist on at least two days.")
     pick = st.multiselect("Counties", D.SD4_COUNTIES + ["SD4 total"],
                           default=["SD4 total", "Stanislaus", "El Dorado", "Madera", "Amador"])
+    ss = oser if optiq_trend else A.sos_series(sos)
     fig = go.Figure()
-    for i, cn in enumerate(pick):
-        s = ss[ss["county"] == cn]
-        fig.add_scatter(x=s["snapshot_date"], y=s["rate"], name=cn, mode="lines+markers",
-                        line=dict(width=3 if cn == "SD4 total" else 1.8,
-                                  color=COUNTY_COLORS[cn]),
+    for cn in pick:
+        s_ = ss[ss["county"] == cn]
+        fig.add_scatter(x=s_["snapshot_date"], y=s_["rate"], name=cn, mode="lines+markers",
+                        line=dict(width=3 if cn == "SD4 total" else 1.8, color=COUNTY_COLORS[cn]),
                         hovertemplate="%{y:.1%}")
     fig.update_layout(**PLOT_LAYOUT, height=340)
     fig.update_yaxes(tickformat=".0%")
     st.plotly_chart(fig, width="stretch")
 
-    if not cp_saved.empty and cp_saved["snapshot_date"].nunique() >= 2:
+    if optiq_trend:
         section("County D−R margin among returns over time — Optiq")
-        frames = []
-        for d_, g in cp_saved.groupby("snapshot_date"):
-            t = A.county_party_table(g)
-            t["snapshot_date"] = d_
-            frames.append(t)
-        cps = pd.concat(frames)
         fig = go.Figure()
-        for i, cn in enumerate(D.SD4_COUNTIES):
-            s = cps[cps["county"] == cn]
-            fig.add_scatter(x=s["snapshot_date"], y=s["dr_margin_ret"], name=cn, mode="lines",
+        for cn in D.SD4_COUNTIES:
+            s_ = oser[oser["county"] == cn]
+            fig.add_scatter(x=s_["snapshot_date"], y=s_["dr_margin_ret"], name=cn, mode="lines",
                             line=dict(color=COUNTY_COLORS[cn]), hovertemplate="%{y:+.1%}")
         fig.update_layout(**PLOT_LAYOUT, height=340)
         fig.update_yaxes(tickformat="+.0%")

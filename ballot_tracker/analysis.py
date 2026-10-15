@@ -336,3 +336,55 @@ def forecast_vbm_rates(params: dict, issued_2026: pd.Series, return_rates: dict,
         "total": t["total"].sum(),
         "by_county": t[["pre", "final", "pre_vbm", "final_vbm"]],
     }
+
+
+# ── Optiq county table ───────────────────────────────────────────────────────
+def optiq_county_series(cp_hist: pd.DataFrame) -> pd.DataFrame:
+    """County × snapshot totals and party detail from Optiq county snapshots,
+    with per-day velocity between distinct snapshots."""
+    if cp_hist.empty:
+        return pd.DataFrame()
+    frames = []
+    for d, g in cp_hist.groupby("snapshot_date"):
+        t = county_party_table(g)
+        t["snapshot_date"] = d
+        frames.append(t)
+    s = pd.concat(frames, ignore_index=True).sort_values(["county", "snapshot_date"])
+    s["rate"] = s["tot_ret"] / s["tot_reg"].replace(0, np.nan)
+    s["gap_days"] = s.groupby("county")["snapshot_date"].diff().dt.days
+    s["per_day"] = s.groupby("county")["tot_ret"].diff() / s["gap_days"]
+    dist = (s.groupby("snapshot_date", as_index=False)[["tot_reg", "tot_ret"]].sum()
+              .assign(county="SD4 total"))
+    dist["rate"] = dist["tot_ret"] / dist["tot_reg"].replace(0, np.nan)
+    return pd.concat([s, dist], ignore_index=True)
+
+
+def optiq_county_table(cp_hist: pd.DataFrame, base: pd.DataFrame,
+                       daily22: pd.DataFrame | None, k: float = 1.0) -> tuple[pd.DataFrame, dict]:
+    """Latest Optiq county figures with party detail, velocity and 2022 pace.
+
+    Denominator is Optiq's per-county registered count. Velocity needs two
+    distinct Optiq snapshots (saved by the GitHub Action, plus today's live pull).
+    """
+    s = optiq_county_series(cp_hist)
+    s = s[s["county"] != "SD4 total"]
+    dates = sorted(s["snapshot_date"].unique())
+    cur_date = dates[-1]
+    t = s[s["snapshot_date"] == cur_date].copy()
+    days_left, frac = equiv_2022_fraction(pd.Timestamp(cur_date), k)
+    b22 = baseline_2022_returned(base, daily22, days_left, frac)
+    iss22 = base["vbm_issued_sd4"]
+    t["rate_2022_equiv"] = t["county"].map(lambda c: b22.get(c, np.nan) / iss22.get(c, np.nan)
+                                           if iss22.get(c, 0) else np.nan)
+    t["pace_ratio"] = t["rate"] / t["rate_2022_equiv"].replace(0, np.nan)
+    t["outstanding"] = (t["tot_reg"] - t["tot_ret"]).clip(lower=0)
+    tot_ret, tot_reg = t["tot_ret"].sum(), t["tot_reg"].sum()
+    t["share_of_district_returns"] = t["tot_ret"] / tot_ret if tot_ret else np.nan
+    t["share_of_district_reg"] = t["tot_reg"] / tot_reg
+    meta = {
+        "snapshot": pd.Timestamp(cur_date), "n_snapshots": len(dates),
+        "prev_snapshot": pd.Timestamp(dates[-2]) if len(dates) >= 2 else None,
+        "registered": int(tot_reg), "returned": int(tot_ret),
+        "rate": tot_ret / tot_reg if tot_reg else np.nan,
+    }
+    return t.reset_index(drop=True), meta
