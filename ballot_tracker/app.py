@@ -419,29 +419,30 @@ with tabs[1]:
         st.caption(_cap)
 
         section("County returns: partisan split — Optiq",
-                "Returned and registered by party, with each party's share of the county total. "
-                "D−R returns = (D − R returned) ÷ all returned; shift vs reg = that margin minus the same "
-                "margin in registration (positive = Democrats banking a bigger share than their registration).")
+                "Ballots returned by party, with each party's share of the county's returns. "
+                "D−R returns = (D − R returned) ÷ all returned; D−R reg = the same margin in registration; "
+                "shift vs reg = the difference (positive = Democrats banking a bigger share than their "
+                "registration).")
         v = cp_tab.copy()
         for p_ in D.PARTIES:
             v[f"{p_}_share_ret"] = v[f"{p_}_share_ret"] * 100
             v[f"{p_}_share_reg"] = v[f"{p_}_share_reg"] * 100
         v["dr_margin_ret"] = v["dr_margin_ret"] * 100
+        v["dr_margin_reg"] = v["dr_margin_reg"] * 100
         v["margin_shift"] = v["margin_shift"] * 100
         cols2 = (["county"]
                  + [c for p_ in D.PARTIES for c in (f"{p_}_ret", f"{p_}_share_ret")]
-                 + [c for p_ in D.PARTIES for c in (f"{p_}_reg", f"{p_}_share_reg")]
-                 + ["raw_dr", "dr_margin_ret", "margin_shift"])
+                 + ["raw_dr", "dr_margin_ret", "dr_margin_reg", "margin_shift"])
         cfg2 = {"county": "County",
                 "raw_dr": st.column_config.NumberColumn("D−R returned", format="%+d",
                                                         help="Democratic minus Republican ballots returned."),
-                "dr_margin_ret": pct_col("D−R returns", True), "margin_shift": pct_col("Shift vs reg", True)}
+                "dr_margin_ret": pct_col("D−R returns", True),
+                "dr_margin_reg": pct_col("D−R reg", True),
+                "margin_shift": pct_col("Shift vs reg", True)}
         short = {"D": "D", "R": "R", "O": "O/NPP"}
         for p_ in D.PARTIES:
             cfg2[f"{p_}_ret"] = INT(f"{short[p_]} ret")
             cfg2[f"{p_}_share_ret"] = pct_col(f"{short[p_]} ret %")
-            cfg2[f"{p_}_reg"] = INT(f"{short[p_]} reg")
-            cfg2[f"{p_}_share_reg"] = pct_col(f"{short[p_]} reg %")
         st.dataframe(v[cols2], hide_index=True, width="stretch", height=38 + 35 * len(v),
                      column_config=cfg2)
     else:
