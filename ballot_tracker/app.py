@@ -302,6 +302,12 @@ if sos.empty:
     st.stop()
 
 county_t, meta = A.county_table(sos, base, daily22, curve_k, curve)
+# Optiq county feed is the primary source for district figures; SOS is the fallback
+use_optiq = not cp_hist.empty
+if use_optiq:
+    oct_, ometa = A.optiq_county_table(cp_hist, base, daily22, curve_k, curve)
+else:
+    oct_, ometa = None, None
 # Label every pace comparison with the assumption behind it
 if daily22 is not None:
     pace_name, pace_short = "2022 county curve", "county curve"
@@ -314,9 +320,9 @@ else:
 ct_date = (ct_latest["snapshot_date"].max() if not ct_latest.empty else None)
 badges = (
     f'<span class="src-badge">E−{days_to_eday} · {days_to_eday} days to Nov 3</span>'
-    f'<span class="src-badge">SOS data · {meta["snapshot"]:%b %-d} (E−{meta["days_left"]})</span>'
-    + (f'<span class="src-badge {"live" if ct_source == "live" else ""}">'
-       f'Optiq · {"live" if ct_source == "live" else f"{ct_date:%b %-d}"}</span>' if ct_date is not None else "")
+    + (f'<span class="src-badge {"live" if cp_source == "live" else ""}">'
+       f'Optiq data · {ometa["as_of"]:%b %-d} (E−{ometa["days_left"]})</span>' if use_optiq else "")
+    + f'<span class="src-badge">SOS data · {meta["snapshot"]:%b %-d} (E−{meta["days_left"]})</span>'
 )
 st.markdown(badges, unsafe_allow_html=True)
 
@@ -327,25 +333,47 @@ tabs = st.tabs(["Overview", "Counties", "Crosstabs", "Trends", "Outstanding", "2
 # OVERVIEW
 # ══════════════════════════════════════════════════════════════════════════════
 with tabs[0]:
-    section("District — SOS ballot status report")
-    c = st.columns(4)
-    with c[0]:
-        card("Ballots returned", f"{meta['returned']:,}", f"of {meta['issued']:,} issued")
-    with c[1]:
-        card("Return rate", pct(meta["rate"]), f"2022 last pre-election report: {pct(meta['rate_2022_baseline'])}")
-    with c[2]:
-        card("Returns / day", f"{meta['per_day']:,.0f}" if np.isfinite(meta["per_day"]) else "—",
-             "over the latest reporting interval")
+    if use_optiq:
+        dm = ometa
+        section("District",
+                f"Ballots returned is the official SOS count ({meta['snapshot']:%b %-d}). Rates and comparisons "
+                f"use Optiq, through {dm['as_of']:%b %-d} (E−{dm['days_left']}).")
+        c = st.columns(4)
+        with c[0]:
+            card("Ballots returned · SOS", f"{meta['returned']:,}",
+                 f"of {meta['issued']:,} issued ({meta['snapshot']:%b %-d}) · Optiq: {dm['returned']:,}")
+        with c[1]:
+            card("Return rate · Optiq", pct(dm["rate"]),
+                 f"2022 last pre-election report: {pct(meta['rate_2022_baseline'])}")
+        with c[2]:
+            lrd = oct_["latest_return_date"].max() if "latest_return_date" in oct_ else pd.NaT
+            card("Latest return logged", f"{lrd:%b %-d}" if pd.notna(lrd) else "—",
+                 f"{oct_['latest_return_date'].eq(lrd).sum()} of 13 counties reported that day" if pd.notna(lrd) else "")
+    else:
+        dm = meta
+        section("District — SOS ballot status report (Optiq unavailable)")
+        c = st.columns(4)
+        with c[0]:
+            card("Ballots returned", f"{meta['returned']:,}", f"of {meta['issued']:,} issued")
+        with c[1]:
+            card("Return rate", pct(meta["rate"]), f"2022 last pre-election report: {pct(meta['rate_2022_baseline'])}")
+        with c[2]:
+            card("Returns / day", f"{meta['per_day']:,.0f}" if np.isfinite(meta["per_day"]) else "—",
+                 "over the latest reporting interval")
     with c[3]:
-        r = meta["pace_ratio"]
+        r = dm["pace_ratio"]
         col = "#2e7d32" if r >= 1.10 else ("#d97706" if r >= 0.85 else "#b91c1c")
-        card(f"vs 2022 · {pace_name}", f"{r:.0%}" if np.isfinite(r) else "—",
-             f"SOS data is from E−{meta['days_left']} ({meta['snapshot']:%b %-d}); 2022 at E−{meta['days_left']}: "
-             f"{pct(meta['rate_2022_equiv'])}",
+        card(f"vs 2022 · {pace_name}" + (" · Optiq" if use_optiq else " · SOS"), f"{r:.0%}" if np.isfinite(r) else "—",
+             f"2022 at E−{dm['days_left']}: {pct(dm['rate_2022_equiv'])} · 2026 now: {pct(dm['rate'])}",
              color=col)
     if daily22 is None:
-        sens = A.pace_sensitivity(sos, base)
-        parts = " · ".join(f"k={r.k:g}: {r.pace_ratio:.0%}" for r in sens.itertuples())
+        if use_optiq:
+            parts = " · ".join(
+                f"k={k_:g}: {A.optiq_county_table(cp_hist, base, None, k_, None)[1]['pace_ratio']:.0%}"
+                for k_ in (1.0, 1.5, 2.0, 2.5))
+        else:
+            sens = A.pace_sensitivity(sos, base)
+            parts = " · ".join(f"k={r.k:g}: {r.pace_ratio:.0%}" for r in sens.itertuples())
         if curve is not None:
             st.caption(f"The 2022 path uses SD4's real 2022 daily returns (PDI, read from their chart), aligned by "
                        f"days before Election Day — both elections fall on a Tuesday, so weekdays line up. One "
@@ -355,17 +383,26 @@ with tabs[0]:
                        f"District pace under different shapes — {parts}. Switch the sidebar to "
                        "\"2022 daily returns\" to use the real 2022 curve.")
 
-    if not ct_latest.empty:
-        section("By party — Optiq voter-file match",
+    if use_optiq or not ct_latest.empty:
+        section("By party — Optiq",
                 "Share of returns vs registration share is the like-for-like comparison: "
                 "a party ahead of its registration share is banking a larger slice of the early vote.")
-        ps = A.group_summary(ct_latest, ["party"]).set_index("party")
+        if use_optiq:
+            # County feed: same moment as the district figures above; registration from the same feed
+            _pc = cp_latest.groupby("party", as_index=False)[["registered", "returned"]].sum()
+            ps = A.group_summary(_pc.rename(columns={"registered": "issued"}), ["party"]).set_index("party")
+            party_reg_share = {p_: ps.loc[p_, "share_issued"] for p_ in ps.index}
+            party_src = ometa
+        else:
+            ps = A.group_summary(ct_latest, ["party"]).set_index("party")
+            party_reg_share = {p_: reg_counts.get(p_, 0) / reg_total if reg_total else np.nan for p_ in ps.index}
+            party_src = None
         cols = st.columns(3)
         for i, p in enumerate(D.PARTIES):
             if p not in ps.index:
                 continue
             r = ps.loc[p]
-            reg_share = reg_counts.get(p, 0) / reg_total if reg_total else np.nan
+            reg_share = party_reg_share.get(p, np.nan)
             with cols[i]:
                 card(D.PARTY_LABELS[p], f"{int(r['returned']):,}",
                      f"{pct(r['rate'])} returned · {pct(r['share_returned'])} of returns "
@@ -373,14 +410,15 @@ with tabs[0]:
                      color=D.PARTY_COLORS[p])
         d_ret, r_ret = ps.loc["D", "returned"], ps.loc["R", "returned"]
         tot = ps["returned"].sum()
-        reg_margin = (reg_counts.get("D", 0) - reg_counts.get("R", 0)) / reg_total if reg_total else np.nan
+        reg_margin = party_reg_share.get("D", np.nan) - party_reg_share.get("R", np.nan)
         st.caption(f"D−R margin among returned ballots: **{pp((d_ret - r_ret) / tot)}** "
                    f"(registration: {pp(reg_margin)}) · raw D−R: **{int(d_ret - r_ret):+,}**")
         st.caption(
             f"ℹ️ **SOS and Optiq totals don't match exactly** — SOS: {meta['returned']:,} returned of "
-            f"{meta['issued']:,} issued ({meta['snapshot']:%b %-d}); Optiq: {int(ct_latest['returned'].sum()):,} "
-            f"of {int(ct_latest['issued'].sum()):,} "
-            f"({'live' if ct_source == 'live' else f'{ct_date:%b %-d}'}). " + SOURCE_GAP_NOTE)
+            f"{meta['issued']:,} issued ({meta['snapshot']:%b %-d}); Optiq: {int(ps['returned'].sum()):,} "
+            f"of {int(ps['issued'].sum()):,} "
+            + (f"(through {party_src['as_of']:%b %-d}). " if party_src else
+               f"({'live' if ct_source == 'live' else f'{ct_date:%b %-d}'}). ") + SOURCE_GAP_NOTE)
 
     # ── 2026 vs 2022 at the same days out, both against their own registration
     if not ct_latest.empty and pdi22 is not None and reg22 is not None:
@@ -400,10 +438,8 @@ with tabs[0]:
         # Returns from the same Optiq feed as registration when possible, so both are the same moment
         if not cp_latest.empty:
             ret26 = cp_latest.groupby("party")[["returned"]].sum()
-            ret_src, ret_date = "Optiq county feed", pd.Timestamp(cp_latest["snapshot_date"].max())
-            # Optiq runs about a day behind: date the data by its latest recorded return
-            if "latest_return_date" in cp_latest and cp_latest["latest_return_date"].notna().any():
-                ret_date = min(ret_date, pd.Timestamp(cp_latest["latest_return_date"].max()))
+            # Dated by the registration-weighted middle of the counties' latest returns
+            ret_src, ret_date = "Optiq county feed", A.optiq_as_of(cp_latest)
         else:
             ret26 = A.group_summary(ct_latest, ["party"]).set_index("party")
             ret_src, ret_date = "Optiq crosstabs", pd.Timestamp(ct_date)
@@ -466,9 +502,7 @@ with tabs[0]:
 # COUNTIES
 # ══════════════════════════════════════════════════════════════════════════════
 with tabs[1]:
-    use_optiq = not cp_hist.empty
     if use_optiq:
-        oct_, ometa = A.optiq_county_table(cp_hist, base, daily22, curve_k, curve)
         cp_tab = A.county_party_table(cp_latest)
         src_txt = ("live API" if cp_source == "live" else f"saved snapshot {ometa['snapshot']:%b %-d}")
         section("County returns: totals — Optiq",
@@ -539,7 +573,6 @@ with tabs[1]:
                      column_config=cfg2)
     else:
         cp_tab = pd.DataFrame()
-        oct_ = None
         section("County returns — SOS (Optiq unavailable)",
                 "The Optiq API couldn't be reached and no optiq_county_party.csv snapshots exist yet, so this "
                 "falls back to SOS. Split counties (Madera, Merced, Nevada, Placer) are SOS county totals "
@@ -1038,12 +1071,18 @@ with tabs[4]:
                    "age projection inherits today's party mix rather than modelling age-specific "
                    "propensity. A cell already above its assumed final rate is held at its current count.")
 
-        section("Outstanding by county — SOS")
-        oc = county_t[["county", "issued", "returned", "outstanding", "rate"]].copy()
+        section(f"Outstanding by county — {'Optiq' if use_optiq else 'SOS'}")
+        if use_optiq:
+            oc = oct_[["county", "tot_reg", "tot_ret", "outstanding", "rate"]].rename(
+                columns={"tot_reg": "issued", "tot_ret": "returned"}).copy()
+        else:
+            oc = county_t[["county", "issued", "returned", "outstanding", "rate"]].copy()
         oc["share_outstanding"] = oc["outstanding"] / oc["outstanding"].sum()
         oc = pct_cols(oc, ["rate", "share_outstanding"]).sort_values("outstanding", ascending=False)
         st.dataframe(oc, hide_index=True, width="stretch",
-                     column_config={"county": "County", "issued": INT("Issued"), "returned": INT("Returned"),
+                     column_config={"county": "County",
+                                    "issued": INT("Registered" if use_optiq else "Issued"),
+                                    "returned": INT("Returned"),
                                     "outstanding": INT("Outstanding"), "rate": pct_col("Rate"),
                                     "share_outstanding": pct_col("% of outstanding")})
 

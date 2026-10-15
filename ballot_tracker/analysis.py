@@ -384,11 +384,37 @@ def optiq_county_table(cp_hist: pd.DataFrame, base: pd.DataFrame,
     dates = sorted(s["snapshot_date"].unique())
     cur_date = dates[-1]
     t = s[s["snapshot_date"] == cur_date].copy()
-    days_left, frac = equiv_2022_fraction(pd.Timestamp(cur_date), k, curve)
-    b22 = baseline_2022_returned(base, daily22, days_left, frac)
+    # Optiq runs about a day behind: date the data by its latest recorded return
+    as_of = pd.Timestamp(cur_date)
+    if "latest_return_date" in cp_hist:
+        lr_max = cp_hist.loc[cp_hist["snapshot_date"] == cur_date, "latest_return_date"].max()
+        if pd.notna(lr_max):
+            as_of = min(as_of, pd.Timestamp(lr_max))
+    # Each county is compared with 2022 at its own data date (Optiq's latest
+    # recorded return for that county) — counties report on different days, and
+    # a big 2022 batch day shouldn't be counted for a county that hasn't reached it.
+    if "latest_return_date" in cp_hist:
+        lr_c = (cp_hist[cp_hist["snapshot_date"] == cur_date]
+                .groupby("county")["latest_return_date"].max())
+    else:
+        lr_c = pd.Series(dtype="datetime64[ns]")
     iss22 = base["vbm_issued_sd4"]
-    t["rate_2022_equiv"] = t["county"].map(lambda c: b22.get(c, np.nan) / iss22.get(c, np.nan)
-                                           if iss22.get(c, 0) else np.nan)
+    rate22, dl = {}, {}
+    for c in t["county"]:
+        d_c = lr_c.get(c)
+        d_c = min(pd.Timestamp(d_c), pd.Timestamp(cur_date)) if pd.notna(d_c) else as_of
+        dl_c, fr_c = equiv_2022_fraction(d_c, k, curve)
+        b = baseline_2022_returned(base, daily22, dl_c, fr_c)
+        rate22[c] = b.get(c, np.nan) / iss22.get(c, np.nan) if iss22.get(c, 0) else np.nan
+        dl[c] = dl_c
+    t["rate_2022_equiv"] = t["county"].map(rate22)
+    t["days_left"] = t["county"].map(dl)
+    # District "as of": registration-weighted median of county data dates
+    _o = t.sort_values("days_left", ascending=False)
+    _cw = _o["tot_reg"].cumsum() / _o["tot_reg"].sum()
+    days_left = int(_o.loc[_cw >= 0.5, "days_left"].iloc[0])
+    as_of = EDAY_2026 - pd.Timedelta(days=days_left)
+    frac = equiv_2022_fraction(as_of, k, curve)[1]
     t["pace_ratio"] = t["rate"] / t["rate_2022_equiv"].replace(0, np.nan)
     t["outstanding"] = (t["tot_reg"] - t["tot_ret"]).clip(lower=0)
     tot_ret, tot_reg = t["tot_ret"].sum(), t["tot_reg"].sum()
@@ -401,12 +427,18 @@ def optiq_county_table(cp_hist: pd.DataFrame, base: pd.DataFrame,
         t["latest_return_date"] = t["county"].map(lr)
     else:
         t["latest_return_date"] = pd.NaT
+    ok = t["rate_2022_equiv"].notna()
+    w22 = t["county"].map(iss22).fillna(0)
+    rate22 = float((t.loc[ok, "rate_2022_equiv"] * w22[ok]).sum() / w22[ok].sum()) if w22[ok].sum() else np.nan
     meta = {
-        "snapshot": pd.Timestamp(cur_date), "n_snapshots": len(dates),
+        "snapshot": pd.Timestamp(cur_date), "as_of": as_of, "days_left": days_left, "interp_frac": frac,
+        "n_snapshots": len(dates),
         "prev_snapshot": pd.Timestamp(dates[-2]) if len(dates) >= 2 else None,
         "registered": int(tot_reg), "returned": int(tot_ret),
         "rate": tot_ret / tot_reg if tot_reg else np.nan,
+        "rate_2022_equiv": rate22,
     }
+    meta["pace_ratio"] = meta["rate"] / rate22 if rate22 else np.nan
     return t.reset_index(drop=True), meta
 
 
@@ -567,11 +599,7 @@ def party_by_days_out_cp(cp_hist: pd.DataFrame) -> pd.DataFrame:
         if p not in g:
             g[p] = 0
     g = g[PARTIES].reset_index()
-    if "latest_return_date" in cp_hist:
-        lr = cp_hist.groupby("snapshot_date")["latest_return_date"].max()
-        g["as_of"] = [min(d, lr.get(d)) if pd.notna(lr.get(d)) else d for d in g["snapshot_date"]]
-    else:
-        g["as_of"] = g["snapshot_date"]
+    g["as_of"] = [optiq_as_of(cp_hist[cp_hist["snapshot_date"] == d]) for d in g["snapshot_date"]]
     g["days_before_eday"] = (EDAY_2026 - pd.to_datetime(g["as_of"])).dt.days
     g["total"] = g[PARTIES].sum(axis=1)
     t = g["total"].replace(0, np.nan)
@@ -591,3 +619,19 @@ def series_2026(ct_hist: pd.DataFrame, cp_hist: pd.DataFrame) -> pd.DataFrame:
     both["_pri"] = (both["source"] != "Optiq county feed").astype(int)
     both = both.sort_values(["days_before_eday", "_pri"]).drop_duplicates("days_before_eday")
     return both.drop(columns="_pri").sort_values("days_before_eday", ascending=False).reset_index(drop=True)
+
+
+
+def optiq_as_of(cp_snap: pd.DataFrame) -> pd.Timestamp:
+    """Data date for one Optiq county-feed snapshot: the registration-weighted
+    median of each county's latest recorded return (capped at the snapshot date).
+    Counties report on different days, so the single latest date overstates
+    how current the district total is."""
+    snap = pd.Timestamp(cp_snap["snapshot_date"].max())
+    if "latest_return_date" not in cp_snap or cp_snap["latest_return_date"].isna().all():
+        return snap
+    c = cp_snap.groupby("county").agg(reg=("registered", "sum"), lr=("latest_return_date", "max"))
+    c["lr"] = c["lr"].fillna(snap).clip(upper=snap)
+    c = c.sort_values("lr")
+    cw = c["reg"].cumsum() / c["reg"].sum()
+    return pd.Timestamp(c.loc[cw >= 0.5, "lr"].iloc[0])
