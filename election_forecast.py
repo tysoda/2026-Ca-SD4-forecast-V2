@@ -7,7 +7,7 @@ import matplotlib.patheffects as pe
 import json, sys, os
 import plotly.graph_objects as go
 from pathlib import Path
-from vbm_turnout import estimate_turnout, COUNTY_PARAMS
+from vbm_turnout import estimate_turnout, COUNTY_PARAMS, early_vote_fraction_2022
 
 st.set_page_config(page_title="Election Forecast — SD4", page_icon="🗳️", layout="wide")
 
@@ -479,13 +479,11 @@ def _compute_vbm_pace_adj(bsr_path: str, base_path: str) -> dict | None:
         → how do this cycle's ballot issuances compare to 2022? If more ballots
           were sent, expect more returns proportionally.
       return_ratio = returned_26 / issued_26   (current 2026 return rate)
-                   / (returned_22 / issued_22) (2022 final return rate)
-        → is the 2026 return RATE ahead or behind 2022 final pace?
-
-    We compare 2026 return rate to 2022 *final* return rate.  This means early
-    in the VBM window the ratio will be << 1, which is expected — adjustments
-    will naturally be small.  We apply a ±5 pp cap to prevent extreme early-
-    cycle swings.
+                   / (returned_22 / issued_22 × f)
+        where f = share of 2022's early vote that was in by the same days out
+        (2022 SD4 daily return curve). So the comparison is like-for-like at
+        any point in the window rather than against 2022's end-point.
+    We apply a ±5 pp cap to prevent extreme early-cycle swings.
 
     adj = (return_ratio - 1.0) × base_turnout × _VBM_WEIGHT
     _VBM_WEIGHT = 0.40 (VBM is ~65-75% of total votes, but incomplete at any
@@ -505,7 +503,9 @@ def _compute_vbm_pace_adj(bsr_path: str, base_path: str) -> dict | None:
     if bsr_df.empty or base_df.empty:
         return {}
     base    = base_df.set_index("county")
-    latest  = bsr_df[bsr_df["snapshot_date"] == bsr_df["snapshot_date"].max()].set_index("county")
+    _snap   = bsr_df["snapshot_date"].max()
+    latest  = bsr_df[bsr_df["snapshot_date"] == _snap].set_index("county")
+    _frac_22 = early_vote_fraction_2022((pd.Timestamp("2026-11-03") - _snap).days)
     adj = {}
     all_rates: list[float] = []
     for cn, cd in COUNTIES.items():
@@ -518,9 +518,12 @@ def _compute_vbm_pace_adj(bsr_path: str, base_path: str) -> dict | None:
         if issued_26 == 0 or issued_22 == 0 or returned_22 == 0:
             continue
         rate_26 = returned_26 / issued_26
-        rate_22 = returned_22 / issued_22
+        # 2022 rate at the same days out: pre-election rate × share of 2022's early vote in by then
+        rate_22 = (returned_22 / issued_22) * _frac_22
         all_rates.append(rate_26)
-        pace_ratio   = rate_26 / rate_22          # >1 = ahead of 2022 final pace
+        if rate_22 <= 0:
+            continue
+        pace_ratio   = rate_26 / rate_22          # >1 = ahead of 2022 at the same point
         base_turnout = cd.get("turnout", 0.60)
         raw_adj      = (pace_ratio - 1.0) * base_turnout * _VBM_WEIGHT
         adj[cn] = round(float(np.clip(raw_adj, -_MAX_ADJ_PP, _MAX_ADJ_PP)), 4)
@@ -813,15 +816,12 @@ with tab_returns:
         # CA 2026 general: election day Nov 3. We interpolate where 2022
         # returns would have been at the same number of days before election day,
         # assuming linear growth from 0 at mail-out to final total at E-day.
-        _EDAY_2022   = pd.Timestamp("2022-11-08")
-        _MAILOUT_2022 = pd.Timestamp("2022-10-10")   # ~29-day window
         _EDAY_2026   = pd.Timestamp("2026-11-03")
         _days_remaining_26 = (_EDAY_2026 - _latest_date).days
-        _equiv_2022_date   = _EDAY_2022 - pd.Timedelta(days=_days_remaining_26)
         # Fraction of the 2022 window elapsed at the equivalent point
-        _window_22   = (_EDAY_2022 - _MAILOUT_2022).days
-        _elapsed_22  = (_equiv_2022_date - _MAILOUT_2022).days
-        _interp_frac = max(0.0, min(1.0, _elapsed_22 / _window_22))
+        # Share of 2022's early vote that was in at the same days out (2022 SD4
+        # daily return curve, pdi_2022_daily_sd4.csv; linear if the file is missing)
+        _interp_frac = early_vote_fraction_2022(_days_remaining_26)
 
         # VBM-implied turnout estimates (vbm_turnout.py)
         _vbm_est = {}
@@ -879,9 +879,9 @@ with tab_returns:
                 "2026 Issued":        f"{_issued_26:,}",
                 "2026 Returned":      f"{_returned_26:,}",
                 "2026 Rate":          f"{_rate_26:.1%}",
-                "2022 Linear Est.":   f"{_rate_22_interp:.1%}",
-                "vs 2022 Linear":     f"{_pct_of_interp:.0%}" if _rate_26 > 0 else "—",
-                "vs Linear":          _pace,
+                "2022 Same Day":      f"{_rate_22_interp:.1%}",
+                "vs 2022":            f"{_pct_of_interp:.0%}" if _rate_26 > 0 else "—",
+                "Pace vs 2022":       _pace,
                 "Implied Turnout":    _implied_to_str,
             })
 
@@ -906,16 +906,17 @@ with tab_returns:
             with _rc3:
                 _vs_base = (_dist_rate_26 / _dist_rate_22_interp) if _dist_rate_22_interp > 0 else 0
                 _col = "#2e7d32" if _vs_base >= 1.10 else ("#f57c00" if _vs_base >= 0.85 else "#c62828") if _dist_rate_26 > 0 else "#888"
-                st.markdown(f'<div class="stat-card"><div class="label">vs 2022 Linear Path</div><div class="value" style="color:{_col}">{_vs_base:.0%}</div><div class="sub">2022 linear est. at E−{_days_remaining_26}d: {_dist_rate_22_interp:.1%}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-card"><div class="label">vs 2022 Pace</div><div class="value" style="color:{_col}">{_vs_base:.0%}</div><div class="sub">2022 at E−{_days_remaining_26}d: {_dist_rate_22_interp:.1%}</div></div>', unsafe_allow_html=True)
             with _rc4:
                 # Snapshots collected so far
                 _n_snaps = _bsr_df["snapshot_date"].nunique()
                 st.markdown(f'<div class="stat-card"><div class="label">Snapshots Collected</div><div class="value">{_n_snaps}</div><div class="sub">since {_bsr_df["snapshot_date"].min().strftime("%-d %b")}</div></div>', unsafe_allow_html=True)
 
         st.caption(
-            f"🔵 Compared with a straight-line path to 2022's last pre-election report (no 2022 day-by-day data exists, "
-            f"and real returns are back-loaded, so early readings run low). Above ≥ 110% · Near 85–110% · Below < 85% · "
-            f"2022 linear est. = 2022 pre-election rate × {_interp_frac:.0%} ({_days_remaining_26}d to E-day, linear interpolation from Oct 10 mail-out)"
+            f"🔵 Compared with 2022 at the same number of days before Election Day. 2022 same-day rate = 2022 "
+            f"pre-election rate × {_interp_frac:.0%}, the share of 2022's early vote in by E−{_days_remaining_26} "
+            f"(SD4 2022 daily returns, read from PDI's tracker; one district curve applied to every county). "
+            f"Above ≥ 110% · Near 85–110% · Below < 85%"
         )
 
     # ── Optiq Crosstab Data ───────────────────────────────────────────────────

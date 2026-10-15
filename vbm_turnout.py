@@ -23,8 +23,9 @@ Where:
 Uncertainty
 -----------
 A mid-window snapshot is first extrapolated to the last pre-election report
-assuming returns arrive linearly in time; real returns are back-loaded, so
-early estimates run low. No estimate is produced until at least 25% of a
+using SD4's 2022 daily return curve (pdi_2022_daily_sd4.csv; linear in time if
+the file is missing). That assumes 2026 returns arrive on the same schedule as
+2022's. No estimate is produced until at least 25% of a
 2022-sized early vote (by issued ballots) is in.
 """
 
@@ -64,18 +65,56 @@ COUNTY_PARAMS = {
 MIN_OBSERVED_FRACTION = 0.25
 
 # Early-vote window used to extrapolate a mid-window snapshot to the last
-# pre-election report. Mail-out ≈ first SOS snapshot; window ends the day
-# before Election Day. Linear in time — the same assumption as the 2022 pace
-# baseline on the Ballot Returns tab.
+# pre-election report — now via the 2022 SD4 return curve (below).
 MAILOUT_2026 = pd.Timestamp("2026-10-05")
 EDAY_2026    = pd.Timestamp("2026-11-03")
 
 
+PDI_2022_CSV = DATA_DIR / "pdi_2022_daily_sd4.csv"
+_CURVE_CACHE: dict = {}
+
+
+def _curve_2022() -> pd.Series | None:
+    """Share of SD4's 2022 early vote in by each day before Election Day.
+
+    From pdi_2022_daily_sd4.csv (2022 daily returns by party, read from PDI's
+    tracker chart). Index = days before E-day; value = cumulative share (0–1).
+    """
+    if "curve" in _CURVE_CACHE:
+        return _CURVE_CACHE["curve"]
+    curve = None
+    if PDI_2022_CSV.exists():
+        d = pd.read_csv(PDI_2022_CSV).sort_values("days_before_eday", ascending=False)
+        cum = d["total"].cumsum()
+        if cum.iloc[-1] > 0:
+            curve = pd.Series((cum / cum.iloc[-1]).values, index=d["days_before_eday"].values).sort_index()
+    _CURVE_CACHE["curve"] = curve
+    return curve
+
+
+def early_vote_fraction_2022(days_before_eday: int) -> float:
+    """Share of the 2022 early vote (to the last pre-election report) that was in
+    by the same number of days before Election Day.
+
+    Uses the real 2022 SD4 curve when pdi_2022_daily_sd4.csv is present; falls
+    back to a straight line over the 2022 window (Oct 10 → Nov 8) otherwise.
+    Both elections fall on a Tuesday, so days-out also lines up weekdays.
+    """
+    curve = _curve_2022()
+    if curve is not None:
+        if days_before_eday > curve.index.max():
+            return 0.0
+        if days_before_eday < curve.index.min():
+            return 1.0
+        return float(curve.loc[curve.index >= days_before_eday].iloc[0])
+    window = (pd.Timestamp("2022-11-08") - pd.Timestamp("2022-10-10")).days
+    return float(np.clip((window - days_before_eday) / window, 0.0, 1.0))
+
+
 def window_fraction(snapshot_date, mailout=MAILOUT_2026, eday=EDAY_2026) -> float:
-    """Share of the early-vote window elapsed at snapshot_date (0–1)."""
-    window = (eday - pd.Timedelta(days=1) - mailout).days
-    elapsed = (pd.Timestamp(snapshot_date) - mailout).days
-    return float(np.clip(elapsed / window, 0.0, 1.0)) if window > 0 else 1.0
+    """Share of the early vote expected in by snapshot_date (0–1), using the
+    2022 SD4 return curve (see early_vote_fraction_2022)."""
+    return early_vote_fraction_2022((pd.Timestamp(eday) - pd.Timestamp(snapshot_date)).days)
 
 
 def get_latest_returns(ballot_returns_path: Path | None = None) -> pd.DataFrame:
@@ -101,7 +140,8 @@ def estimate_turnout(
 
     Steps (per county):
       1. pre_election_vbm  = vbm_accepted / window_fraction(snapshot)
-         (extrapolate this snapshot to the last pre-election report)
+         (extrapolate this snapshot to the last pre-election report using the
+          share of 2022's early vote that was in at the same days out)
       2. final_vbm         = pre_election_vbm / return_rate
       3. implied_total     = final_vbm / vbm_pct_of_total
 
