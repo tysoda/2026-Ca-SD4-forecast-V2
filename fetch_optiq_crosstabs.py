@@ -75,6 +75,53 @@ def load_existing(path: str) -> pd.DataFrame:
                                   "ethnicity", "issued", "returned", "return_rate"])
 
 
+GEO_URL = f"https://abev.optiqdata.com/api/geography-breakdown/{DISTRICT_SLUG}?level=county_name"
+COUNTY_CSV = os.path.join(os.path.dirname(__file__), "optiq_county_party.csv")
+SD4_COUNTIES = {
+    "Alpine", "Amador", "Calaveras", "El Dorado", "Inyo", "Madera", "Mariposa",
+    "Merced", "Mono", "Nevada", "Placer", "Stanislaus", "Tuolumne",
+}
+
+
+def save_county_party_snapshot() -> None:
+    """Append today's county × party (D/R/O) registered/returned to optiq_county_party.csv.
+
+    Used by the ballot tracker app. Failure here never blocks the crosstab update.
+    """
+    ca_bundle = "/root/.ccr/ca-bundle.crt"
+    ctx = ssl.create_default_context(cafile=ca_bundle if os.path.exists(ca_bundle) else None)
+    try:
+        with urllib.request.urlopen(GEO_URL, timeout=15, context=ctx) as resp:
+            rows = json.loads(resp.read())
+    except Exception as exc:
+        print(f"WARNING: county breakdown fetch failed, skipping: {exc}", file=sys.stderr)
+        return
+
+    recs = []
+    for r in rows:
+        cn = str(r.get("geography", "")).title()
+        if cn not in SD4_COUNTIES:
+            continue
+        d_reg, r_reg = int(r.get("demRegistered") or 0), int(r.get("repRegistered") or 0)
+        d_ret, r_ret = int(r.get("demReturned") or 0), int(r.get("repReturned") or 0)
+        t_reg, t_ret = int(r.get("totalRegistered") or 0), int(r.get("totalReturned") or 0)
+        for party, reg, ret in (("D", d_reg, d_ret), ("R", r_reg, r_ret),
+                                ("O", max(t_reg - d_reg - r_reg, 0), max(t_ret - d_ret - r_ret, 0))):
+            recs.append({"snapshot_date": SNAPSHOT_DATE, "county": cn, "party": party,
+                         "registered": reg, "returned": ret})
+    if not recs:
+        print("WARNING: county breakdown returned no SD4 rows, skipping", file=sys.stderr)
+        return
+
+    today_df = pd.DataFrame(recs)
+    if os.path.exists(COUNTY_CSV):
+        existing = pd.read_csv(COUNTY_CSV, dtype=str)
+        existing = existing[existing["snapshot_date"] != SNAPSHOT_DATE]
+        today_df = pd.concat([existing, today_df], ignore_index=True)
+    today_df.to_csv(COUNTY_CSV, index=False)
+    print(f"  Written {len(recs)} county × party rows to {COUNTY_CSV}")
+
+
 def main():
     print(f"Fetching Optiq crosstabs for {DISTRICT_SLUG} (snapshot_date={SNAPSHOT_DATE})…")
     raw = fetch_rows(API_URL)
@@ -98,6 +145,8 @@ def main():
 
     combined.to_csv(OUTPUT_CSV, index=False)
     print(f"  Written {len(combined)} rows to {OUTPUT_CSV}")
+
+    save_county_party_snapshot()
 
     # Quick summary
     party_labels = {"D": "Democrat", "R": "Republican", "O": "Other/NPP"}
