@@ -219,3 +219,12 @@ def fetch_optiq_county_party_live() -> pd.DataFrame:
     except Exception:
         return pd.DataFrame()
     return _parse_geo_rows(rows)
+
+
+def load_forecast_params() -> dict | None:
+    """forecast_params.json from the forecast app (structural model output)."""
+    path = REPO_DIR / "forecast_params.json"
+    if not path.exists():
+        return None
+    with open(path) as f:
+        return json.load(f)

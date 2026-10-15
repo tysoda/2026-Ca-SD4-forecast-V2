@@ -275,3 +275,64 @@ def project_final(ct_latest: pd.DataFrame, final_rates: dict, dim: str = "party"
         g[f"share_{c}"] = g[c] / tot if tot else np.nan
     g["label"] = g[dim].map(lambda v: DIM_LABELS[dim].get(v, v))
     return g
+
+
+def baseline_2022_rates(base: pd.DataFrame, issued_2026: pd.Series,
+                        return_rates: dict) -> dict:
+    """District-level 2022 VBM return rates to use as scenario defaults.
+
+    pre   = 2022 VBM returned at the last pre-election report / issued.
+    final = estimated 2022 final VBM accepted / issued, where final accepted
+            = pre-election accepted / return_rate (vbm_turnout.COUNTY_PARAMS:
+            pre-election accepted ÷ final accepted, avg of 2022 & 2024).
+
+    County rates are weighted by 2026 ballots issued, so a change in county
+    mix since 2022 doesn't move the default.
+    """
+    b = base.copy()
+    b["pre"] = b["vbm_returned_sd4"] / b["vbm_issued_sd4"].replace(0, np.nan)
+    rr = pd.Series(return_rates, dtype=float)
+    b["final"] = (b["vbm_accepted_sd4"] / rr.reindex(b.index)) / b["vbm_issued_sd4"].replace(0, np.nan)
+    w = issued_2026.reindex(b.index).fillna(0)
+    if w.sum() == 0:
+        w = b["vbm_issued_sd4"]
+    out = {}
+    for k in ("pre", "final"):
+        ok = b[k].notna()
+        out[k] = float((b.loc[ok, k] * w[ok]).sum() / w[ok].sum())
+    out["by_county"] = b[["pre", "final"]]
+    return out
+
+
+def forecast_vbm_rates(params: dict, issued_2026: pd.Series, return_rates: dict,
+                       vbm_pcts: dict) -> dict | None:
+    """Early-vote targets implied by the SD4 forecast.
+
+    Per county: forecast total ballots = registration × forecast turnout;
+    final VBM = total × vbm_pct_of_total; pre-election VBM = final VBM ×
+    return_rate (both from vbm_turnout.COUNTY_PARAMS). Rates divide by 2026
+    ballots issued (SOS).
+    """
+    if not params or "counties" not in params:
+        return None
+    rows = []
+    for c, d in params["counties"].items():
+        if c not in return_rates or c not in issued_2026.index:
+            continue
+        total = float(d["registration"]) * float(d["turnout"])
+        final = total * vbm_pcts[c]
+        pre = final * return_rates[c]
+        rows.append({"county": c, "total": total, "final_vbm": final, "pre_vbm": pre,
+                     "issued": float(issued_2026[c])})
+    if not rows:
+        return None
+    t = pd.DataFrame(rows).set_index("county")
+    t["pre"] = t["pre_vbm"] / t["issued"].replace(0, np.nan)
+    t["final"] = t["final_vbm"] / t["issued"].replace(0, np.nan)
+    return {
+        "pre": t["pre_vbm"].sum() / t["issued"].sum(),
+        "final": t["final_vbm"].sum() / t["issued"].sum(),
+        "pre_vbm": t["pre_vbm"].sum(), "final_vbm": t["final_vbm"].sum(),
+        "total": t["total"].sum(),
+        "by_county": t[["pre", "final", "pre_vbm", "final_vbm"]],
+    }

@@ -21,6 +21,9 @@ import streamlit as st
 import analysis as A
 import data as D
 
+sys.path.insert(0, str(D.REPO_DIR))
+from vbm_turnout import COUNTY_PARAMS  # noqa: E402
+
 st.set_page_config(page_title="SD4 Ballot Returns", page_icon="📬", layout="wide")
 
 st.markdown("""
@@ -661,31 +664,62 @@ with tabs[4]:
         st.info("No Optiq crosstab data available.")
     else:
         section("Who hasn't returned yet",
-                "Unreturned ballots by group, and how that pool compares to who has already voted.")
-        oc = st.columns(3)
-        for i, dim in enumerate(["party", "age", "ethnicity"]):
+                "Unreturned ballots by group, and how that pool compares to who has already voted. "
+                "Gap = share of outstanding − share of returns: positive groups make up more of what's "
+                "left than of what's in.")
+        for dim in ["party", "age", "ethnicity"]:
             s = A.label_codes(A.group_summary(ct_latest, [dim]), [dim])
             s = s.set_index(dim).reindex([v for v in D.DIM_LABELS[dim].values() if v in set(s[dim])]).reset_index()
             s["gap"] = s["share_outstanding"] - s["share_returned"]
-            s = pct_cols(s, ["share_returned", "share_outstanding", "gap"])
-            with oc[i]:
-                st.markdown(f"**{D.DIM_NAMES[dim]}**")
-                st.dataframe(s[[dim, "outstanding", "share_returned", "share_outstanding", "gap"]],
-                             hide_index=True, width="stretch",
-                             column_config={dim: D.DIM_NAMES[dim], "outstanding": INT("Out."),
-                                            "share_returned": pct_col("% of ret."),
-                                            "share_outstanding": pct_col("% of out."),
-                                            "gap": pct_col("Gap", True)})
+            s = pct_cols(s, ["rate", "share_returned", "share_outstanding", "gap"])
+            st.markdown(f"**{D.DIM_NAMES[dim]}**")
+            st.dataframe(s[[dim, "issued", "returned", "rate", "outstanding",
+                            "share_returned", "share_outstanding", "gap"]],
+                         hide_index=True, width="stretch",
+                         column_config={dim: D.DIM_NAMES[dim], "issued": INT("Issued"),
+                                        "returned": INT("Returned"), "rate": pct_col("Return rate"),
+                                        "outstanding": INT("Outstanding"),
+                                        "share_returned": pct_col("Share of returns"),
+                                        "share_outstanding": pct_col("Share of outstanding"),
+                                        "gap": pct_col("Gap", True)})
 
-        section("Final VBM electorate scenario",
-                "Assume a final return rate for each party and project the composition of the "
-                "finished mail electorate. These are assumptions you set, not model output.")
+        # Scenario defaults: SD4 forecast (default) or 2022 actuals
+        issued_by_cty = county_t.set_index("county")["issued"]
+        rates22 = A.baseline_2022_rates(base, issued_by_cty, {c: v[0] for c, v in COUNTY_PARAMS.items()})
+        ratesfc = A.forecast_vbm_rates(D.load_forecast_params(), issued_by_cty,
+                                       {c: v[0] for c, v in COUNTY_PARAMS.items()},
+                                       {c: v[1] for c, v in COUNTY_PARAMS.items()})
+        ENDPOINTS = {"Last pre-election report": ("pre", "early vote"),
+                     "Final VBM count": ("final", "final mail vote")}
+        SOURCES = {"SD4 forecast": ratesfc, "2022 actual": rates22} if ratesfc else {"2022 actual": rates22}
+
+        section("End-of-window scenario",
+                "Pick an end-point and a return rate, and see what the electorate looks like when it's "
+                "reached. The default rate comes from the SD4 forecast or from 2022; the party split is "
+                "your assumption.")
         sc = st.columns([1, 2])
         with sc[0]:
-            uniform = st.slider("Final return rate (all parties)", 0.30, 0.85, 0.55, 0.01)
-            differ = st.toggle("Set party rates separately", value=False)
+            target = st.radio("End-point", list(ENDPOINTS), horizontal=True,
+                              help="Last pre-election report: the early vote, matching the 2022 pace "
+                                   "baseline. Final VBM count: adds ballots that arrive or are processed "
+                                   "after the last report.")
+            source = st.radio("Default from", list(SOURCES), horizontal=True,
+                              help="SD4 forecast: the forecast's county turnout × each county's VBM share "
+                                   "of votes and pre-election share of VBM (vbm_turnout.py). "
+                                   "2022 actual: 2022 SD4 VBM returns.")
+            ekey, t_noun = ENDPOINTS[target]
+            t_rate = SOURCES[source][ekey]
+            uniform = st.slider("Return rate (all parties)", 0.10, 0.90, round(float(t_rate), 2), 0.01,
+                                key=f"rate_{target}_{source}",
+                                help=f"Default {t_rate:.1%} from {source}.")
+            alt = " · ".join(f"{k}: {v[ekey]:.1%}" for k, v in SOURCES.items())
+            st.caption(f"{target}: {alt}")
+            differ = st.toggle("Set party rates separately", value=False,
+                               help="With one rate for every party the end-point mix equals the mix of "
+                                    "ballots issued; only different party rates move the margin.")
             if differ:
-                rates = {p: st.slider(f"{D.PARTY_LABELS[p]}", 0.30, 0.90, uniform, 0.01, key=f"fr_{p}")
+                rates = {p: st.slider(f"{D.PARTY_LABELS[p]}", 0.10, 0.95, uniform, 0.01,
+                                      key=f"fr_{target}_{source}_{p}")
                          for p in D.PARTIES}
             else:
                 rates = {p: uniform for p in D.PARTIES}
@@ -695,16 +729,38 @@ with tabs[4]:
             d_, r_ = proj_p.loc["D", "proj_final"], proj_p.loc["R", "proj_final"]
             k = st.columns(3)
             with k[0]:
-                card("Projected VBM ballots", f"{tot_final:,.0f}",
+                card(f"Projected {t_noun}", f"{tot_final:,.0f}",
                      f"{tot_final - proj_p['returned'].sum():,.0f} still to come")
             with k[1]:
-                card("D−R margin, final VBM", pp((d_ - r_) / tot_final),
+                card(f"D−R margin, {t_noun}", pp((d_ - r_) / tot_final),
                      f"returned so far: {pp((proj_p.loc['D','returned'] - proj_p.loc['R','returned']) / proj_p['returned'].sum())}")
             with k[2]:
                 card("D−R among ballots to come", pp(
                     (proj_p.loc["D", "still_to_come"] - proj_p.loc["R", "still_to_come"])
                     / proj_p["still_to_come"].sum()) if proj_p["still_to_come"].sum() else "—",
                      "registration-based, not vote share")
+        with st.expander("Where the defaults come from"):
+            bc = rates22["by_county"].rename(columns={"pre": "pre22", "final": "final22"})
+            if ratesfc:
+                bc = bc.join(ratesfc["by_county"][["pre", "final", "pre_vbm"]].rename(
+                    columns={"pre": "prefc", "final": "finalfc", "pre_vbm": "prefc_n"}))
+            bc = pct_cols(bc.reset_index(), [c for c in ("prefc", "finalfc", "pre22", "final22") if c in bc])
+            st.dataframe(bc, hide_index=True, width="stretch", column_config={
+                "county": "County",
+                "prefc_n": st.column_config.NumberColumn("Forecast early vote", format="localized"),
+                "prefc": pct_col("Forecast pre-election"), "finalfc": pct_col("Forecast final"),
+                "pre22": pct_col("2022 pre-election"), "final22": pct_col("2022 final (est.)")},
+                column_order=["county", "prefc_n", "prefc", "finalfc", "pre22", "final22"])
+            if ratesfc:
+                st.caption(f"Forecast: {ratesfc['total']:,.0f} total ballots (forecast_params.json, structural "
+                           f"model) → {ratesfc['final_vbm']:,.0f} final VBM → {ratesfc['pre_vbm']:,.0f} by "
+                           "the last pre-election report, using each county's VBM share of votes and "
+                           "pre-election share of VBM from vbm_turnout.py (avg of 2022 & 2024). Turnout "
+                           "Explorer adjustments in the forecast app aren't reflected.")
+            st.caption("2022: pre-election = VBM returned ÷ issued at the last report (vbm_2022_baseline.csv); "
+                       "final = pre-election accepted ÷ the county's pre-election share of final VBM. "
+                       "District figures weight counties by 2026 ballots issued. No party-level rates "
+                       "exist for either source.")
         pcols = st.columns(2)
         for i, dim in enumerate(["party", "age"]):
             pr = A.project_final(ct_latest, rates, dim)
@@ -712,7 +768,7 @@ with tabs[4]:
             fig = go.Figure()
             for name, col, colr in (("Returned so far", "share_returned", "#9ca3af"),
                                     ("Still to come", "share_still_to_come", "#d97706"),
-                                    ("Projected final", "share_proj_final", "#1a6b3c")):
+                                    ("At end-point", "share_proj_final", "#1a6b3c")):
                 fig.add_bar(x=pr.index, y=pr[col], name=name, marker_color=colr, hovertemplate="%{y:.1%}")
             fig.update_layout(**{**PLOT_LAYOUT, "legend": dict(orientation="h", y=-0.15, x=0), "margin": dict(l=10, r=10, t=40, b=10)},
                               barmode="group", height=320,
