@@ -180,6 +180,51 @@ def load_county_geojson():
             continue
     return {}
 
+# ── Optiq county feed (primary source for return-rate comparisons) ───────────
+_EDAY_2026_TS = pd.Timestamp("2026-11-03")
+
+
+def _today_ca() -> pd.Timestamp:
+    """Today's date in California (the server runs on UTC)."""
+    return pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None).normalize()
+
+
+@st.cache_data(ttl=3600)
+def fetch_optiq_county_totals() -> dict:
+    """Optiq SD4 county totals: {county: {registered, returned, latest}}.
+
+    `latest` is Optiq's most recent recorded return date for the county (Optiq
+    runs about a day behind, and counties report on different days). Returns
+    {} if the feed can't be reached — callers fall back to SOS.
+    """
+    import urllib.request, json as _json, ssl as _ssl, os as _os
+    url = "https://abev.optiqdata.com/api/geography-breakdown/STATE%20SENATE%204?level=county_name"
+    ca_bundle = "/root/.ccr/ca-bundle.crt"
+    ctx = _ssl.create_default_context(cafile=ca_bundle if _os.path.exists(ca_bundle) else None)
+    try:
+        with urllib.request.urlopen(url, timeout=10, context=ctx) as r:
+            rows = _json.loads(r.read())
+    except Exception:
+        return {}
+    out = {}
+    for row in rows:
+        cn = str(row.get("geography", "")).title()
+        if cn not in SD4_COUNTIES:
+            continue
+        lr = row.get("latestReturnDate")
+        out[cn] = {"registered": int(row.get("totalRegistered") or 0),
+                   "returned": int(row.get("totalReturned") or 0),
+                   "latest": pd.Timestamp(lr) if lr else None}
+    return out if len(out) >= 10 else {}
+
+
+def _optiq_days_left(entry: dict) -> int:
+    """Days before E-day that a county's Optiq data runs through."""
+    today = _today_ca()
+    d = entry.get("latest") or today
+    return int((_EDAY_2026_TS - min(pd.Timestamp(d), today)).days)
+
+
 # ── Forecast model integration ────────────────────────────────────────────────
 def load_forecast_params():
     """Load the most recent forecast_params.json if it exists."""
@@ -470,7 +515,7 @@ if "turnout_adj" not in st.session_state:
 
 # ── VBM-pace-based turnout adjustment helper ─────────────────────────────────
 @st.cache_data(ttl=3600)
-def _compute_vbm_pace_adj(bsr_path: str, base_path: str) -> dict | None:
+def _compute_vbm_pace_adj(bsr_path: str, base_path: str, optiq: dict | None = None) -> dict | None:
     """
     Compute per-county turnout adjustments implied by current VBM return pace.
 
@@ -509,17 +554,25 @@ def _compute_vbm_pace_adj(bsr_path: str, base_path: str) -> dict | None:
     adj = {}
     all_rates: list[float] = []
     for cn, cd in COUNTIES.items():
-        if cn not in latest.index or cn not in base.index:
+        if cn not in base.index:
             continue
-        issued_26   = int(latest.loc[cn].get("vbm_issued",   0) or 0)
-        returned_26 = int(latest.loc[cn].get("vbm_returned", 0) or 0)
         issued_22   = int(base.loc[cn].get("vbm_issued_sd4",   0) or 0)
         returned_22 = int(base.loc[cn].get("vbm_returned_sd4", 0) or 0)
+        if optiq and cn in optiq:
+            # Optiq (primary): each county compared with 2022 at its own data date
+            issued_26, returned_26 = optiq[cn]["registered"], optiq[cn]["returned"]
+            frac_22 = early_vote_fraction_2022(_optiq_days_left(optiq[cn]))
+        elif cn in latest.index:
+            issued_26   = int(latest.loc[cn].get("vbm_issued",   0) or 0)
+            returned_26 = int(latest.loc[cn].get("vbm_returned", 0) or 0)
+            frac_22 = _frac_22
+        else:
+            continue
         if issued_26 == 0 or issued_22 == 0 or returned_22 == 0:
             continue
         rate_26 = returned_26 / issued_26
         # 2022 rate at the same days out: pre-election rate × share of 2022's early vote in by then
-        rate_22 = (returned_22 / issued_22) * _frac_22
+        rate_22 = (returned_22 / issued_22) * frac_22
         all_rates.append(rate_26)
         if rate_22 <= 0:
             continue
@@ -692,7 +745,8 @@ with tab_turnout:
             st.session_state["turnout_adj"]={cn:0.0 for cn in COUNTIES}; st.rerun()
     with _btn_col2:
         if st.button("📊 Sync from VBM pace", help="Auto-set adjustments based on current VBM return pace vs 2022 baseline (requires ≥20% return rate)"):
-            _pace_adj = _compute_vbm_pace_adj(str(DATA_DIR/"ballot_returns.csv"), str(DATA_DIR/"vbm_2022_baseline.csv"))
+            _pace_adj = _compute_vbm_pace_adj(str(DATA_DIR/"ballot_returns.csv"), str(DATA_DIR/"vbm_2022_baseline.csv"),
+                                              fetch_optiq_county_totals())
             if _pace_adj is None:
                 st.warning("VBM returns are too sparse to sync (<20% return rate). Check back closer to election day.")
             elif _pace_adj:
@@ -793,7 +847,8 @@ with tab_returns:
     # ── Ballot Return Tracker ─────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-label">VBM Ballot Return Tracker</div>', unsafe_allow_html=True)
-    st.caption("Live early-vote return rates vs. 2022 final baseline. Updated daily by automated fetch.")
+    st.caption("Early-vote return rates compared with 2022 at the same number of days before Election Day. "
+               "Rates and comparisons use Optiq (SOS if Optiq is unavailable); the district ballot count is SOS.")
 
     _bsr_path      = DATA_DIR / "ballot_returns.csv"
     _base_path     = DATA_DIR / "vbm_2022_baseline.csv"
@@ -809,7 +864,10 @@ with tab_returns:
         _latest_date = _bsr_df["snapshot_date"].max()
         _latest      = _bsr_df[_bsr_df["snapshot_date"] == _latest_date].set_index("county")
 
-        st.caption(f"Latest snapshot: **{_latest_date.strftime('%B %-d, %Y')}**")
+        _optiq = fetch_optiq_county_totals()
+        _use_optiq = bool(_optiq)
+        st.caption(f"SOS latest report: **{_latest_date.strftime('%B %-d, %Y')}**"
+                   + (" · Optiq: live county feed" if _use_optiq else " · Optiq unavailable — using SOS"))
 
         # ── 2022 linear-interpolation baseline at current cycle point ────────
         # CA 2022 general: election day Nov 8. VBM mail-out began ~Oct 10.
@@ -831,24 +889,40 @@ with tab_returns:
             pass
 
         _tracker_rows = []
+        _d_ret26 = _d_den26 = 0
+        _d_ret22_eq = _d_iss22 = 0.0
+        _days_by_cty = {}
         for _cn in county_names:
-            if _cn not in _latest.index or _cn not in _base.index:
+            if _cn not in _base.index:
                 continue
-            _row   = _latest.loc[_cn]
-            _b22   = _base.loc[_cn]
-
-            _issued_26   = int(_row.get("vbm_issued",   0) or 0)
-            _returned_26 = int(_row.get("vbm_returned", 0) or 0)
+            _b22 = _base.loc[_cn]
             _issued_22   = int(_b22.get("vbm_issued_sd4",   0) or 0)
             _returned_22 = int(_b22.get("vbm_returned_sd4", 0) or 0)
+            if _use_optiq and _cn in _optiq:
+                # Optiq (primary): each county compared with 2022 at its own data date
+                _den_26, _returned_26 = _optiq[_cn]["registered"], _optiq[_cn]["returned"]
+                _dl = _optiq_days_left(_optiq[_cn])
+                _frac = early_vote_fraction_2022(_dl)
+                _thru = _optiq[_cn]["latest"].strftime("%b %-d") if _optiq[_cn]["latest"] is not None else "—"
+            elif _cn in _latest.index:
+                _row = _latest.loc[_cn]
+                _den_26 = int(_row.get("vbm_issued", 0) or 0)
+                _returned_26 = int(_row.get("vbm_returned", 0) or 0)
+                _dl, _frac = _days_remaining_26, _interp_frac
+                _thru = _latest_date.strftime("%b %-d")
+            else:
+                continue
+            _days_by_cty[_cn] = (_dl, _den_26)
 
-            _rate_26  = _returned_26 / _issued_26  if _issued_26  > 0 else 0.0
+            _rate_26  = _returned_26 / _den_26  if _den_26  > 0 else 0.0
             _rate_22_final = _returned_22 / _issued_22 if _issued_22 > 0 else 0.0
-            # Interpolated 2022 rate at equivalent cycle point
-            _rate_22_interp = _rate_22_final * _interp_frac
+            # 2022 rate at the same days out
+            _rate_22_interp = _rate_22_final * _frac
             _pct_of_interp = (_rate_26 / _rate_22_interp) if _rate_22_interp > 0 else 0.0
+            _d_ret26 += _returned_26; _d_den26 += _den_26
+            _d_ret22_eq += _returned_22 * _frac; _d_iss22 += _issued_22
 
-            # Pace label (vs interpolated 2022 baseline)
+            # Pace label (vs 2022 at the same point)
             if _rate_26 == 0:
                 _pace = "—"
             elif _pct_of_interp >= 1.10:
@@ -858,7 +932,7 @@ with tab_returns:
             else:
                 _pace = "🔴 Below"
 
-            # Implied turnout from vbm_turnout module
+            # Implied turnout from vbm_turnout module (SOS counts — its calibration is SOS-based)
             _est = _vbm_est.get(_cn, {})
             _est_status = _est.get("status", "no_data")
             if _est_status == "ok":
@@ -876,9 +950,10 @@ with tab_returns:
 
             _tracker_rows.append({
                 "County":             _cn,
-                "2026 Issued":        f"{_issued_26:,}",
+                ("Registered" if _use_optiq else "2026 Issued"): f"{_den_26:,}",
                 "2026 Returned":      f"{_returned_26:,}",
                 "2026 Rate":          f"{_rate_26:.1%}",
+                "Data Through":       _thru,
                 "2022 Same Day":      f"{_rate_22_interp:.1%}",
                 "vs 2022":            f"{_pct_of_interp:.0%}" if _rate_26 > 0 else "—",
                 "Pace vs 2022":       _pace,
@@ -889,34 +964,46 @@ with tab_returns:
             _tracker_df = pd.DataFrame(_tracker_rows)
             st.dataframe(_tracker_df, hide_index=True, width="stretch")
 
-            # District-level rollup
-            _tot_issued_26   = sum(int(_latest.loc[c].get("vbm_issued",   0) or 0) for c in county_names if c in _latest.index)
-            _tot_returned_26 = sum(int(_latest.loc[c].get("vbm_returned", 0) or 0) for c in county_names if c in _latest.index)
+            # District rollup — headline count from SOS; rates and pace from Optiq (or SOS fallback)
+            _sos_issued   = sum(int(_latest.loc[c].get("vbm_issued",   0) or 0) for c in county_names if c in _latest.index)
+            _sos_returned = sum(int(_latest.loc[c].get("vbm_returned", 0) or 0) for c in county_names if c in _latest.index)
             _tot_issued_22   = int(_base_df["vbm_issued_sd4"].sum())
             _tot_returned_22 = int(_base_df["vbm_returned_sd4"].sum())
-            _dist_rate_26 = _tot_returned_26 / _tot_issued_26  if _tot_issued_26  > 0 else 0
-            _dist_rate_22_final  = _tot_returned_22 / _tot_issued_22  if _tot_issued_22  > 0 else 0
-            _dist_rate_22_interp = _dist_rate_22_final * _interp_frac
+            _dist_rate_26 = _d_ret26 / _d_den26 if _d_den26 > 0 else 0
+            _dist_rate_22_final  = _tot_returned_22 / _tot_issued_22 if _tot_issued_22 > 0 else 0
+            _dist_rate_22_interp = _d_ret22_eq / _d_iss22 if _d_iss22 > 0 else 0
+            # District data date: registration-weighted middle of the counties' data dates
+            _dd = sorted(_days_by_cty.values(), key=lambda x: -x[0])
+            _cum, _half, _dist_days = 0, sum(w for _, w in _dd) / 2, _days_remaining_26
+            for _dl_c, _w in _dd:
+                _cum += _w
+                if _cum >= _half:
+                    _dist_days = _dl_c
+                    break
+            _dist_date = _EDAY_2026_TS - pd.Timedelta(days=_dist_days)
+            _src = "Optiq" if _use_optiq else "SOS"
 
             _rc1, _rc2, _rc3, _rc4 = st.columns(4)
             with _rc1:
-                st.markdown(f'<div class="stat-card"><div class="label">District Ballots Returned</div><div class="value">{_tot_returned_26:,}</div><div class="sub">of {_tot_issued_26:,} issued</div></div>', unsafe_allow_html=True)
+                _sub = f"of {_sos_issued:,} issued ({_latest_date:%b %-d})" + (f" · Optiq: {_d_ret26:,}" if _use_optiq else "")
+                st.markdown(f'<div class="stat-card"><div class="label">District Ballots Returned · SOS</div><div class="value">{_sos_returned:,}</div><div class="sub">{_sub}</div></div>', unsafe_allow_html=True)
             with _rc2:
-                st.markdown(f'<div class="stat-card"><div class="label">District Return Rate</div><div class="value">{_dist_rate_26:.1%}</div><div class="sub">2022 final: {_dist_rate_22_final:.1%}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-card"><div class="label">District Return Rate · {_src}</div><div class="value">{_dist_rate_26:.1%}</div><div class="sub">2022 last pre-election report: {_dist_rate_22_final:.1%}</div></div>', unsafe_allow_html=True)
             with _rc3:
                 _vs_base = (_dist_rate_26 / _dist_rate_22_interp) if _dist_rate_22_interp > 0 else 0
                 _col = "#2e7d32" if _vs_base >= 1.10 else ("#f57c00" if _vs_base >= 0.85 else "#c62828") if _dist_rate_26 > 0 else "#888"
-                st.markdown(f'<div class="stat-card"><div class="label">vs 2022 Pace</div><div class="value" style="color:{_col}">{_vs_base:.0%}</div><div class="sub">SOS data {_latest_date:%b %-d} (E−{_days_remaining_26}) · 2022 then: {_dist_rate_22_interp:.1%}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-card"><div class="label">vs 2022 Pace · {_src}</div><div class="value" style="color:{_col}">{_vs_base:.0%}</div><div class="sub">data through {_dist_date:%b %-d} (E−{_dist_days}) · 2022 then: {_dist_rate_22_interp:.1%}</div></div>', unsafe_allow_html=True)
             with _rc4:
                 # Snapshots collected so far
                 _n_snaps = _bsr_df["snapshot_date"].nunique()
-                st.markdown(f'<div class="stat-card"><div class="label">Snapshots Collected</div><div class="value">{_n_snaps}</div><div class="sub">since {_bsr_df["snapshot_date"].min().strftime("%-d %b")}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-card"><div class="label">SOS Snapshots Collected</div><div class="value">{_n_snaps}</div><div class="sub">since {_bsr_df["snapshot_date"].min().strftime("%-d %b")}</div></div>', unsafe_allow_html=True)
 
         st.caption(
-            f"🔵 Compared with 2022 at the same number of days before Election Day. 2022 same-day rate = 2022 "
-            f"pre-election rate × {_interp_frac:.0%}, the share of 2022's early vote in by E−{_days_remaining_26} "
-            f"(SD4 2022 daily returns, read from PDI's tracker; one district curve applied to every county). "
-            f"Above ≥ 110% · Near 85–110% · Below < 85%"
+            "🔵 Each county is compared with 2022 at the same number of days before Election Day, using that "
+            "county's own data date (Optiq's latest recorded return — counties report on different days). "
+            "2022 same-day rate = 2022 pre-election rate × the share of 2022's early vote in by that day (SD4 2022 "
+            "daily returns, read from PDI's tracker). Optiq rates use its registered mail-ballot universe; 2022 "
+            "rates use SOS ballots issued. Above ≥ 110% · Near 85–110% · Below < 85%"
         )
 
     # ── Optiq Crosstab Data ───────────────────────────────────────────────────
