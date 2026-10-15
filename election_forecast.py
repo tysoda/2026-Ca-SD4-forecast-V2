@@ -218,6 +218,22 @@ def fetch_optiq_county_totals() -> dict:
     return out if len(out) >= 10 else {}
 
 
+def _fill_optiq_zeros_from_sos(optiq: dict, sos_latest: pd.DataFrame, sos_date) -> dict:
+    """Where Optiq shows 0 returned for a county but the latest SOS report has
+    some, use the SOS count (and the SOS report date) for that county."""
+    if not optiq or sos_latest is None or sos_latest.empty:
+        return optiq
+    out = {}
+    for cn, e in optiq.items():
+        e = dict(e)
+        if e["returned"] == 0 and cn in sos_latest.index:
+            sos_ret = int(sos_latest.loc[cn].get("vbm_returned", 0) or 0)
+            if sos_ret > 0:
+                e.update(returned=sos_ret, latest=pd.Timestamp(sos_date), sos_filled=True)
+        out[cn] = e
+    return out
+
+
 def _optiq_days_left(entry: dict) -> int:
     """Days before E-day that a county's Optiq data runs through."""
     today = _today_ca()
@@ -551,6 +567,7 @@ def _compute_vbm_pace_adj(bsr_path: str, base_path: str, optiq: dict | None = No
     _snap   = bsr_df["snapshot_date"].max()
     latest  = bsr_df[bsr_df["snapshot_date"] == _snap].set_index("county")
     _frac_22 = early_vote_fraction_2022((pd.Timestamp("2026-11-03") - _snap).days)
+    optiq = _fill_optiq_zeros_from_sos(optiq, latest, _snap)
     adj = {}
     all_rates: list[float] = []
     for cn, cd in COUNTIES.items():
@@ -864,8 +881,8 @@ with tab_returns:
         _latest_date = _bsr_df["snapshot_date"].max()
         _latest      = _bsr_df[_bsr_df["snapshot_date"] == _latest_date].set_index("county")
 
-        _optiq = fetch_optiq_county_totals()
-        _use_optiq = bool(_optiq)
+        _use_optiq = bool(fetch_optiq_county_totals())
+        _optiq = _fill_optiq_zeros_from_sos(fetch_optiq_county_totals(), _latest, _latest_date)
         st.caption(f"SOS latest report: **{_latest_date.strftime('%B %-d, %Y')}**"
                    + (" · Optiq: live county feed" if _use_optiq else " · Optiq unavailable — using SOS"))
 
@@ -904,6 +921,8 @@ with tab_returns:
                 _dl = _optiq_days_left(_optiq[_cn])
                 _frac = early_vote_fraction_2022(_dl)
                 _thru = _optiq[_cn]["latest"].strftime("%b %-d") if _optiq[_cn]["latest"] is not None else "—"
+                if _optiq[_cn].get("sos_filled"):
+                    _thru += " (SOS)"
             elif _cn in _latest.index:
                 _row = _latest.loc[_cn]
                 _den_26 = int(_row.get("vbm_issued", 0) or 0)
@@ -1003,7 +1022,8 @@ with tab_returns:
             "county's own data date (Optiq's latest recorded return — counties report on different days). "
             "2022 same-day rate = 2022 pre-election rate × the share of 2022's early vote in by that day (SD4 2022 "
             "daily returns, read from PDI's tracker). Optiq rates use its registered mail-ballot universe; 2022 "
-            "rates use SOS ballots issued. Above ≥ 110% · Near 85–110% · Below < 85%"
+            "rates use SOS ballots issued. Where Optiq shows 0 returned for a county, the latest SOS count is used "
+            "(marked \"(SOS)\" in Data Through). Above ≥ 110% · Near 85–110% · Below < 85%"
         )
 
     # ── Optiq Crosstab Data ───────────────────────────────────────────────────
