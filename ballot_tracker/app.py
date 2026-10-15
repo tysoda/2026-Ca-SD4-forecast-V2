@@ -487,16 +487,14 @@ with tabs[0]:
     ss = A.sos_series(sos)
     dist = ss[ss["county"] == "SD4 total"]
     fig = go.Figure()
-    # Plotly draws the overlaid axis (y2) on top, so the line goes there to sit in front of the bars.
+    # One shared axis; the line is added after the bars so it draws in front.
     fig.add_bar(x=dist["snapshot_date"], y=dist["per_day"], name="Returns / day",
                 marker_color="#c3dece", hovertemplate="%{y:,.0f}/day")
     fig.add_scatter(x=dist["snapshot_date"], y=dist["vbm_returned"], name="Cumulative returned",
-                    mode="lines+markers", line=dict(color="#1a6b3c", width=2.5), yaxis="y2",
+                    mode="lines+markers", line=dict(color="#1a6b3c", width=2.5),
                     hovertemplate="%{y:,}")
     fig.update_layout(**PLOT_LAYOUT, height=330)
-    fig.update_layout(yaxis=dict(side="right", showgrid=False),
-                      yaxis2=dict(overlaying="y", side="left", gridcolor="#e0e0e0", title=None, rangemode="tozero",
-                                  tickmode="auto", nticks=6, tickformat=","))
+    fig.update_yaxes(tickformat=",", rangemode="tozero")
     st.plotly_chart(fig, width="stretch")
     st.caption("Snapshots where SOS figures didn't change (weekends, no new report) are dropped; "
                "per-day velocity divides by the real gap between reports.")
