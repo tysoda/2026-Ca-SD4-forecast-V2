@@ -702,7 +702,7 @@ with tab_turnout:
     # ── VBM-implied turnout callout ───────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-label">VBM-Implied Turnout Estimates</div>', unsafe_allow_html=True)
-    st.caption("Inferred from pre-election VBM accepted ballots using historical return-rate calibration (2022 & 2024). Estimates stabilize once ≥5% of expected final VBM is in.")
+    st.caption("Current VBM accepted is extrapolated to the last pre-election report (linear in time), then converted with 2022 & 2024 return-rate calibration. Estimates appear once a county has ≥25% of a 2022-sized early vote in; VBM Progress shows that share.")
 
     try:
         _vbm_to_est = estimate_turnout(ballot_returns_path=DATA_DIR / "ballot_returns.csv", verbose=False)
@@ -852,11 +852,11 @@ with tab_returns:
             if _rate_26 == 0:
                 _pace = "—"
             elif _pct_of_interp >= 1.10:
-                _pace = "🟢 High"
+                _pace = "🟢 Above"
             elif _pct_of_interp >= 0.85:
-                _pace = "🟡 On pace"
+                _pace = "🟡 Near"
             else:
-                _pace = "🔴 Low"
+                _pace = "🔴 Below"
 
             # Implied turnout from vbm_turnout module
             _est = _vbm_est.get(_cn, {})
@@ -879,9 +879,9 @@ with tab_returns:
                 "2026 Issued":        f"{_issued_26:,}",
                 "2026 Returned":      f"{_returned_26:,}",
                 "2026 Rate":          f"{_rate_26:.1%}",
-                "2022 Est. Rate":     f"{_rate_22_interp:.1%}",
-                "vs 2022 Pace":       f"{_pct_of_interp:.0%}" if _rate_26 > 0 else "—",
-                "Pace":               _pace,
+                "2022 Linear Est.":   f"{_rate_22_interp:.1%}",
+                "vs 2022 Linear":     f"{_pct_of_interp:.0%}" if _rate_26 > 0 else "—",
+                "vs Linear":          _pace,
                 "Implied Turnout":    _implied_to_str,
             })
 
@@ -906,15 +906,16 @@ with tab_returns:
             with _rc3:
                 _vs_base = (_dist_rate_26 / _dist_rate_22_interp) if _dist_rate_22_interp > 0 else 0
                 _col = "#2e7d32" if _vs_base >= 1.10 else ("#f57c00" if _vs_base >= 0.85 else "#c62828") if _dist_rate_26 > 0 else "#888"
-                st.markdown(f'<div class="stat-card"><div class="label">vs 2022 Pace</div><div class="value" style="color:{_col}">{_vs_base:.0%}</div><div class="sub">est. 2022 rate at E−{_days_remaining_26}d: {_dist_rate_22_interp:.1%}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-card"><div class="label">vs 2022 Linear Path</div><div class="value" style="color:{_col}">{_vs_base:.0%}</div><div class="sub">2022 linear est. at E−{_days_remaining_26}d: {_dist_rate_22_interp:.1%}</div></div>', unsafe_allow_html=True)
             with _rc4:
                 # Snapshots collected so far
                 _n_snaps = _bsr_df["snapshot_date"].nunique()
                 st.markdown(f'<div class="stat-card"><div class="label">Snapshots Collected</div><div class="value">{_n_snaps}</div><div class="sub">since {_bsr_df["snapshot_date"].min().strftime("%-d %b")}</div></div>', unsafe_allow_html=True)
 
         st.caption(
-            f"🔵 Pace thresholds vs interpolated 2022 baseline: High ≥ 110% · On pace 85–110% · Low < 85% · "
-            f"2022 est. rate = 2022 final × {_interp_frac:.0%} ({_days_remaining_26}d to E-day, linear interpolation from Oct 10 mail-out)"
+            f"🔵 Compared with a straight-line path to 2022's last pre-election report (no 2022 day-by-day data exists, "
+            f"and real returns are back-loaded, so early readings run low). Above ≥ 110% · Near 85–110% · Below < 85% · "
+            f"2022 linear est. = 2022 pre-election rate × {_interp_frac:.0%} ({_days_remaining_26}d to E-day, linear interpolation from Oct 10 mail-out)"
         )
 
     # ── Optiq Crosstab Data ───────────────────────────────────────────────────
@@ -1017,6 +1018,12 @@ with tab_returns:
                 f'</div>',
                 unsafe_allow_html=True,
             )
+        st.caption(
+            "ℹ️ Optiq totals differ slightly from the SOS tracker above: the two update at different times; "
+            "SOS figures for the split counties (Madera, Merced, Nevada, Placer) are estimated by scaling the "
+            "county total by SD4's registration share, while Optiq places each voter in or out of the district; "
+            "and Optiq only counts ballots matched to a voter-file record (~98%)."
+        )
         st.markdown("<br>", unsafe_allow_html=True)
 
         # ════════════════════════════════════════════════════════════════════
@@ -1095,8 +1102,8 @@ with tab_returns:
     st.markdown('<div class="section-label">Party Return Rate Trajectory</div>', unsafe_allow_html=True)
     st.caption(
         "Daily party-level VBM return rates from Optiq snapshots. "
-        "Dashed lines show each party's share of total SD4 VBM ballots issued (proxy for registration share). "
-        "When a party's return rate exceeds its issued share, that party is outperforming proportionally."
+        "The benchmark table compares each party's share of returned ballots with its share of registration: "
+        "a party above its registration share is banking a bigger slice of the early vote."
     )
 
     _CROSSTAB_CSV = "optiq_crosstabs.csv"
@@ -1171,12 +1178,14 @@ with tab_returns:
                 _prate = _preturned / _pissued if _pissued > 0 else 0
                 _pissued_share = _issued_share.get(_p, 0)
                 _preg_share = _party_reg.get(_p, 0) / _total_reg if _total_reg > 0 else 0
+                _tot_ret_latest = int(_latest["returned"].sum())
+                _pret_share = _preturned / _tot_ret_latest if _tot_ret_latest > 0 else 0
                 _bench_rows.append({
-                    "Party":          _party_labels_traj[_p],
-                    "Return Rate":    f"{_prate:.1%}",
-                    "Share of Issued": f"{_pissued_share:.1%}",
-                    "Reg Share (Apr 2026)": f"{_preg_share:.1%}",
-                    "vs Reg Share":   f"{_prate - _preg_share:+.1%}",
+                    "Party":            _party_labels_traj[_p],
+                    "Return Rate":      f"{_prate:.1%}",
+                    "Share of Returns": f"{_pret_share:.1%}",
+                    "Reg Share":        f"{_preg_share:.1%}",
+                    "Returns vs Reg":   f"{(_pret_share - _preg_share) * 100:+.1f}pp",
                 })
             st.dataframe(pd.DataFrame(_bench_rows), hide_index=True, width="stretch")
         else:
@@ -1247,19 +1256,22 @@ with tab_returns:
                 _prate = float(_pslice["return_rate"].iloc[0]) if len(_pslice) > 0 else 0
                 _pissued_share = _issued_share.get(_p, 0)
                 _preg_share = _party_reg.get(_p, 0) / _total_reg if _total_reg > 0 else 0
+                _snap_rows = _daily[_daily["snapshot_date"] == _latest_snap]
+                _tot_ret_snap = int(_snap_rows["returned"].sum())
+                _pret = int(_pslice["returned"].iloc[0]) if len(_pslice) > 0 else 0
+                _pret_share = _pret / _tot_ret_snap if _tot_ret_snap > 0 else 0
                 _bench_rows.append({
-                    "Party":               _party_labels_traj[_p],
-                    "Return Rate":         f"{_prate:.1%}",
-                    "Share of Issued":     f"{_pissued_share:.1%}",
-                    "Reg Share (Apr '26)": f"{_preg_share:.1%}",
-                    "Rate vs Reg Share":   f"{_prate - _preg_share:+.1%}",
+                    "Party":            _party_labels_traj[_p],
+                    "Return Rate":      f"{_prate:.1%}",
+                    "Share of Returns": f"{_pret_share:.1%}",
+                    "Reg Share":        f"{_preg_share:.1%}",
+                    "Returns vs Reg":   f"{(_pret_share - _preg_share) * 100:+.1f}pp",
                 })
             st.dataframe(pd.DataFrame(_bench_rows), hide_index=True, width="stretch")
 
         st.caption(
             f"Registration benchmarks: D {_party_reg.get('D',0):,} · R {_party_reg.get('R',0):,} · "
-            f"O/NPP {_party_reg.get('O',0):,} (SOS 60-day primary report, Apr 2026). "
-            "Update sd4_party_registration.csv when general-election figures are available."
+            f"O/NPP {_party_reg.get('O',0):,} (sd4_party_registration.csv)."
         )
 
     # ── VBM County Map ────────────────────────────────────────────────────────

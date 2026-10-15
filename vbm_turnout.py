@@ -7,8 +7,9 @@ California general elections.
 
 Methodology
 -----------
-Three-step conversion:
-  1. pre_vbm_observed  →  implied_final_vbm   = pre_vbm / return_rate
+Four-step conversion:
+  0. snapshot_vbm      →  pre_vbm             = snapshot_vbm / window_fraction
+  1. pre_vbm           →  implied_final_vbm   = pre_vbm / return_rate
   2. implied_final_vbm →  implied_total_votes  = implied_final_vbm / vbm_pct_of_total
   3. implied_total_votes vs forecast_total     → turnout_adj (pp above/below forecast)
 
@@ -21,9 +22,10 @@ Where:
 
 Uncertainty
 -----------
-Returns are early; the return_rate estimate carries noise. A minimum
-observed_return_rate threshold (default 5% of expected final VBM) is
-enforced before producing an estimate — below that the signal is too thin.
+A mid-window snapshot is first extrapolated to the last pre-election report
+assuming returns arrive linearly in time; real returns are back-loaded, so
+early estimates run low. No estimate is produced until at least 25% of a
+2022-sized early vote (by issued ballots) is in.
 """
 
 from pathlib import Path
@@ -55,9 +57,25 @@ COUNTY_PARAMS = {
     "Tuolumne":    (0.644,      0.944),
 }
 
-# Minimum fraction of expected final VBM that must be observed before we
-# produce an estimate. Below this the uncertainty is too wide to be useful.
-MIN_OBSERVED_FRACTION = 0.05   # 5% of expected final VBM
+# Minimum fraction of the 2022 early vote (2022 pre-election VBM returned,
+# scaled to this cycle's issued ballots) that must be in before we produce an
+# estimate. Early in the window the linear time-to-E-day extrapolation below
+# understates back-loaded returns badly, so this is deliberately conservative.
+MIN_OBSERVED_FRACTION = 0.25
+
+# Early-vote window used to extrapolate a mid-window snapshot to the last
+# pre-election report. Mail-out ≈ first SOS snapshot; window ends the day
+# before Election Day. Linear in time — the same assumption as the 2022 pace
+# baseline on the Ballot Returns tab.
+MAILOUT_2026 = pd.Timestamp("2026-10-05")
+EDAY_2026    = pd.Timestamp("2026-11-03")
+
+
+def window_fraction(snapshot_date, mailout=MAILOUT_2026, eday=EDAY_2026) -> float:
+    """Share of the early-vote window elapsed at snapshot_date (0–1)."""
+    window = (eday - pd.Timedelta(days=1) - mailout).days
+    elapsed = (pd.Timestamp(snapshot_date) - mailout).days
+    return float(np.clip(elapsed / window, 0.0, 1.0)) if window > 0 else 1.0
 
 
 def get_latest_returns(ballot_returns_path: Path | None = None) -> pd.DataFrame:
@@ -76,33 +94,54 @@ def estimate_turnout(
     registered_voters: dict | None = None,
     min_fraction: float = MIN_OBSERVED_FRACTION,
     verbose: bool = True,
+    baseline_path: Path | None = None,
 ) -> dict:
     """
     For each SD4 county, estimate implied final turnout from current VBM returns.
 
+    Steps (per county):
+      1. pre_election_vbm  = vbm_accepted / window_fraction(snapshot)
+         (extrapolate this snapshot to the last pre-election report)
+      2. final_vbm         = pre_election_vbm / return_rate
+      3. implied_total     = final_vbm / vbm_pct_of_total
+
+    Progress gate: observed_fraction = vbm_returned / (vbm_issued × 2022
+    pre-election return rate), i.e. how much of a 2022-sized early vote is in.
+    This is independent of the calibration parameters, unlike the previous
+    check (vbm_acc / (vbm_acc / return_rate)), which always equalled
+    return_rate and so never flagged a county as too early.
+
     Parameters
     ----------
     ballot_returns_path : path to ballot_returns.csv (default: DATA_DIR)
-    registered_voters   : dict of {county: n_registered}; if None, uses
-                          vbm_issued from ballot_returns as a proxy denominator
-                          for the return-rate sanity check only
-    min_fraction        : minimum observed/expected VBM fraction before
-                          producing an estimate
+    registered_voters   : unused; kept for backwards compatibility
+    min_fraction        : minimum observed_fraction before producing an estimate
+    baseline_path       : path to vbm_2022_baseline.csv (default: DATA_DIR)
 
     Returns
     -------
     dict keyed by county with keys:
         snapshot_date       : date of most recent return data
-        vbm_accepted        : observed pre-election VBM accepted
-        expected_final_vbm  : implied final VBM (vbm_accepted / return_rate)
+        vbm_accepted        : observed VBM accepted at that snapshot
+        window_fraction     : share of the early-vote window elapsed
+        expected_pre_vbm    : extrapolated pre-election VBM accepted
+        expected_final_vbm  : implied final VBM (expected_pre_vbm / return_rate)
         implied_total       : implied total ballots cast
-        vbm_pct_observed    : vbm_accepted / expected_final_vbm (progress indicator)
+        vbm_pct_observed    : observed_fraction (progress indicator, see above)
         return_rate         : calibration return_rate used
         vbm_pct_of_total    : calibration vbm_pct used
-        status              : "ok" | "too_early" | "no_data" | "uncalibrated"
+        status              : "ok" | "too_early" | "no_data"
     """
     returns = get_latest_returns(ballot_returns_path)
+    base_file = baseline_path or DATA_DIR / "vbm_2022_baseline.csv"
+    base = pd.read_csv(base_file).set_index("county") if Path(base_file).exists() else None
     results = {}
+
+    def _int(v):
+        try:
+            return int(v) if pd.notna(v) else 0
+        except (ValueError, TypeError):
+            return 0
 
     for county, (return_rate, vbm_pct) in COUNTY_PARAMS.items():
         if county not in returns.index:
@@ -110,40 +149,37 @@ def estimate_turnout(
             continue
 
         row = returns.loc[county]
-        vbm_acc = row.get("vbm_accepted", 0)
-        try:
-            vbm_acc = int(vbm_acc) if pd.notna(vbm_acc) else 0
-        except (ValueError, TypeError):
-            vbm_acc = 0
-
+        vbm_acc = _int(row.get("vbm_accepted", 0))
+        vbm_ret = _int(row.get("vbm_returned", 0))
+        vbm_iss = _int(row.get("vbm_issued", 0))
         snapshot_date = row.get("snapshot_date", None)
 
-        # Expected final VBM based on calibration
-        vbm_issued = row.get("vbm_issued", None)
-        try:
-            vbm_issued_n = int(vbm_issued) if pd.notna(vbm_issued) else None
-        except (ValueError, TypeError):
-            vbm_issued_n = None
+        frac = window_fraction(snapshot_date) if snapshot_date is not None else 0.0
+        expected_pre = vbm_acc / frac if frac > 0 else 0
+        expected_final_vbm = expected_pre / return_rate if return_rate > 0 else 0
+        implied_total = expected_final_vbm / vbm_pct if vbm_pct > 0 else 0
 
-        # Rough expected final VBM: use issued ballots × historical acceptance rate
-        # (not the same as return_rate, but a reasonable order-of-magnitude check)
-        expected_final_vbm = vbm_acc / return_rate if vbm_acc > 0 else 0
-
-        # Progress check: what fraction of expected final VBM is already in?
-        observed_fraction = (vbm_acc / expected_final_vbm) if expected_final_vbm > 0 else 0
+        # Progress vs a 2022-sized early vote
+        pre_rate_22 = None
+        if base is not None and county in base.index:
+            b_iss = _int(base.loc[county, "vbm_issued_sd4"])
+            b_ret = _int(base.loc[county, "vbm_returned_sd4"])
+            pre_rate_22 = b_ret / b_iss if b_iss > 0 else None
+        expected_early = vbm_iss * pre_rate_22 if pre_rate_22 else 0
+        observed_fraction = vbm_ret / expected_early if expected_early > 0 else 0
 
         if vbm_acc == 0:
             status = "no_data"
-        elif observed_fraction < min_fraction:
+        elif observed_fraction < min_fraction or frac == 0:
             status = "too_early"
         else:
             status = "ok"
 
-        implied_total = expected_final_vbm / vbm_pct if vbm_pct > 0 else 0
-
         results[county] = {
             "snapshot_date":      snapshot_date,
             "vbm_accepted":       vbm_acc,
+            "window_fraction":    round(frac, 4),
+            "expected_pre_vbm":   round(expected_pre),
             "expected_final_vbm": round(expected_final_vbm),
             "implied_total":      round(implied_total),
             "vbm_pct_observed":   round(observed_fraction, 4),
