@@ -180,23 +180,32 @@ def live_to_snapshot(live: pd.DataFrame, snapshot_date: pd.Timestamp) -> pd.Data
 
 # ── Optiq county × party ─────────────────────────────────────────────────────
 def _parse_geo_rows(rows: list[dict]) -> pd.DataFrame:
+    """geography-breakdown rows → one row per county × party (D/R/O).
+
+    O uses Optiq's npp fields when present, else total − D − R.
+    latest_return_date is Optiq's most recent ballot return date for the county.
+    """
     recs = []
     for r in rows:
         cn = str(r.get("geography", "")).title()
         if cn not in SD4_COUNTIES:
             continue
-        for p, key in (("D", "dem"), ("R", "rep")):
-            recs.append({"county": cn, "party": p,
-                         "registered": int(r.get(f"{key}Registered") or 0),
-                         "returned": int(r.get(f"{key}Returned") or 0)})
         tot_reg = int(r.get("totalRegistered") or 0)
         tot_ret = int(r.get("totalReturned") or 0)
-        d_reg = sum(x["registered"] for x in recs[-2:])
-        d_ret = sum(x["returned"] for x in recs[-2:])
-        recs.append({"county": cn, "party": "O",
-                     "registered": max(tot_reg - d_reg, 0),
-                     "returned": max(tot_ret - d_ret, 0)})
-    return pd.DataFrame(recs)
+        d_reg, d_ret = int(r.get("demRegistered") or 0), int(r.get("demReturned") or 0)
+        r_reg, r_ret = int(r.get("repRegistered") or 0), int(r.get("repReturned") or 0)
+        o_reg = r.get("nppRegistered")
+        o_ret = r.get("nppReturned")
+        o_reg = int(o_reg) if o_reg is not None else max(tot_reg - d_reg - r_reg, 0)
+        o_ret = int(o_ret) if o_ret is not None else max(tot_ret - d_ret - r_ret, 0)
+        latest = r.get("latestReturnDate")
+        for p, reg, ret in (("D", d_reg, d_ret), ("R", r_reg, r_ret), ("O", o_reg, o_ret)):
+            recs.append({"county": cn, "party": p, "registered": reg, "returned": ret,
+                         "latest_return_date": latest})
+    df = pd.DataFrame(recs)
+    if not df.empty:
+        df["latest_return_date"] = pd.to_datetime(df["latest_return_date"], errors="coerce")
+    return df
 
 
 def load_optiq_county_party(drop_stale: bool = True) -> pd.DataFrame:
@@ -205,6 +214,8 @@ def load_optiq_county_party(drop_stale: bool = True) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
     df = pd.read_csv(path, parse_dates=["snapshot_date"])
+    if "latest_return_date" in df:
+        df["latest_return_date"] = pd.to_datetime(df["latest_return_date"], errors="coerce")
     for c in ("registered", "returned"):
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
     if drop_stale:

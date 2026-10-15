@@ -381,6 +381,13 @@ def optiq_county_table(cp_hist: pd.DataFrame, base: pd.DataFrame,
     tot_ret, tot_reg = t["tot_ret"].sum(), t["tot_reg"].sum()
     t["share_of_district_returns"] = t["tot_ret"] / tot_ret if tot_ret else np.nan
     t["share_of_district_reg"] = t["tot_reg"] / tot_reg
+    # Optiq's own most recent return date per county (same on every party row)
+    if "latest_return_date" in cp_hist:
+        cur_raw = cp_hist[cp_hist["snapshot_date"] == cur_date]
+        lr = cur_raw.groupby("county")["latest_return_date"].max()
+        t["latest_return_date"] = t["county"].map(lr)
+    else:
+        t["latest_return_date"] = pd.NaT
     meta = {
         "snapshot": pd.Timestamp(cur_date), "n_snapshots": len(dates),
         "prev_snapshot": pd.Timestamp(dates[-2]) if len(dates) >= 2 else None,

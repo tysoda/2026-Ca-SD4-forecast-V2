@@ -105,10 +105,14 @@ def save_county_party_snapshot() -> None:
         d_reg, r_reg = int(r.get("demRegistered") or 0), int(r.get("repRegistered") or 0)
         d_ret, r_ret = int(r.get("demReturned") or 0), int(r.get("repReturned") or 0)
         t_reg, t_ret = int(r.get("totalRegistered") or 0), int(r.get("totalReturned") or 0)
-        for party, reg, ret in (("D", d_reg, d_ret), ("R", r_reg, r_ret),
-                                ("O", max(t_reg - d_reg - r_reg, 0), max(t_ret - d_ret - r_ret, 0))):
+        o_reg = r.get("nppRegistered")
+        o_ret = r.get("nppReturned")
+        o_reg = int(o_reg) if o_reg is not None else max(t_reg - d_reg - r_reg, 0)
+        o_ret = int(o_ret) if o_ret is not None else max(t_ret - d_ret - r_ret, 0)
+        for party, reg, ret in (("D", d_reg, d_ret), ("R", r_reg, r_ret), ("O", o_reg, o_ret)):
             recs.append({"snapshot_date": SNAPSHOT_DATE, "county": cn, "party": party,
-                         "registered": reg, "returned": ret})
+                         "registered": reg, "returned": ret,
+                         "latest_return_date": r.get("latestReturnDate") or ""})
     if not recs:
         print("WARNING: county breakdown returned no SD4 rows, skipping", file=sys.stderr)
         return

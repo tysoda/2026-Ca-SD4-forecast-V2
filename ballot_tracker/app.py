@@ -61,7 +61,9 @@ def DROP_COLS(unit: str) -> dict:
         "last_drop": st.column_config.NumberColumn(
             "Last drop", format="localized",
             help=f"Ballots added in the county's most recent {unit} that showed an increase."),
-        "last_drop_date": st.column_config.DateColumn("Drop date", format="MMM D"),
+        "last_drop_date": st.column_config.DateColumn(
+            "Drop date", format="MMM D",
+            help="Optiq: the county's most recent ballot return date. SOS: the report the last drop appeared in."),
     }
 
 
@@ -384,6 +386,8 @@ with tabs[1]:
                 "Rates use Optiq's registered count for the SD4 part of each county. Optiq can run "
                 "about a day behind SOS.")
         tab = oct_.merge(A.last_drop(A.optiq_county_series(cp_hist), "tot_ret"), on="county", how="left")
+        # Optiq reports each county's latest return date directly — prefer it
+        tab["last_drop_date"] = tab["latest_return_date"].fillna(tab["last_drop_date"])
         tab["pace"] = tab["pace_ratio"].map(A.pace_label)
         show = pct_cols(tab, ["rate", "rate_2022_equiv", "share_of_district_returns", "share_of_district_reg",
                               "dr_margin_ret", "margin_shift"])
@@ -405,13 +409,16 @@ with tabs[1]:
                 "share_of_district_reg": pct_col("Share of reg."), "outstanding": INT("Not yet returned"),
             },
         )
+        _cap = ("Drop date is Optiq's most recent ballot return date for the county. "
+                "Registered is Optiq's VBM universe (sums to the same total as the crosstab 'issued'). ")
         if ometa["n_snapshots"] < 2:
-            st.caption("Last drop needs Optiq snapshots on two different days. It fills in once the GitHub "
-                       "Action has saved optiq_county_party.csv on a second day (after the PR is merged).")
+            _cap += ("Last drop (ballots added in the latest update) needs Optiq snapshots on two different "
+                     "days; it fills in once the GitHub Action has saved a second day (after the PR is merged).")
         else:
-            st.caption("Last drop: ballots added in the county's most recent update, and the snapshot it "
-                       "appeared in. Counties that haven't moved since keep their earlier drop. 2022 comparison "
-                       "uses 2022 SOS rates (ballots issued), so treat small gaps as noise.")
+            _cap += ("Last drop: ballots added in the county's most recent update. Counties that haven't moved "
+                     "since keep their earlier drop. 2022 comparison uses 2022 SOS rates, so treat small gaps "
+                     "as noise.")
+        st.caption(_cap)
     else:
         cp_tab = pd.DataFrame()
         oct_ = None
