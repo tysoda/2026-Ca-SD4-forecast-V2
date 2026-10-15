@@ -380,7 +380,7 @@ with tabs[1]:
         oct_, ometa = A.optiq_county_table(cp_hist, base, daily22, curve_k)
         cp_tab = A.county_party_table(cp_latest)
         src_txt = ("live API" if cp_source == "live" else f"saved snapshot {ometa['snapshot']:%b %-d}")
-        section("County returns — Optiq",
+        section("County returns: totals — Optiq",
                 f"Source: Optiq ({src_txt}). Optiq assigns each voter to SD4 directly, so split-county "
                 "figures are exact rather than scaled, and every row carries the D/R/O split. "
                 "Rates use Optiq's registered count for the SD4 part of each county. Optiq can run "
@@ -394,8 +394,7 @@ with tabs[1]:
         show["pace_ratio"] = show["pace_ratio"] * 100
         st.dataframe(
             show[["county", "tot_reg", "tot_ret", "rate", "last_drop", "last_drop_date", "rate_2022_equiv",
-                  "pace_ratio", "pace", "dr_margin_ret", "margin_shift", "share_of_district_returns",
-                  "share_of_district_reg", "outstanding"]],
+                  "pace_ratio", "pace", "share_of_district_returns", "share_of_district_reg", "outstanding"]],
             hide_index=True, width="stretch", height=38 + 35 * len(show),
             column_config={
                 "county": "County", "tot_reg": INT("Registered"), "tot_ret": INT("Returned"),
@@ -404,7 +403,6 @@ with tabs[1]:
                 "rate_2022_equiv": pct_col(f"2022 est. ({pace_short})"),
                 "pace_ratio": st.column_config.NumberColumn(f"vs 2022 ({pace_short})", format="%.0f%%"),
                 "pace": f"Pace ({pace_short})",
-                "dr_margin_ret": pct_col("D−R (returns)", True), "margin_shift": pct_col("Shift vs reg", True),
                 "share_of_district_returns": pct_col("Share of returns"),
                 "share_of_district_reg": pct_col("Share of reg."), "outstanding": INT("Not yet returned"),
             },
@@ -419,6 +417,33 @@ with tabs[1]:
                      "since keep their earlier drop. 2022 comparison uses 2022 SOS rates, so treat small gaps "
                      "as noise.")
         st.caption(_cap)
+
+        section("County returns: partisan split — Optiq",
+                "Returned and registered by party, with each party's share of the county total. "
+                "D−R returns = (D − R returned) ÷ all returned; shift vs reg = that margin minus the same "
+                "margin in registration (positive = Democrats banking a bigger share than their registration).")
+        v = cp_tab.copy()
+        for p_ in D.PARTIES:
+            v[f"{p_}_share_ret"] = v[f"{p_}_share_ret"] * 100
+            v[f"{p_}_share_reg"] = v[f"{p_}_share_reg"] * 100
+        v["dr_margin_ret"] = v["dr_margin_ret"] * 100
+        v["margin_shift"] = v["margin_shift"] * 100
+        cols2 = (["county"]
+                 + [c for p_ in D.PARTIES for c in (f"{p_}_ret", f"{p_}_share_ret")]
+                 + [c for p_ in D.PARTIES for c in (f"{p_}_reg", f"{p_}_share_reg")]
+                 + ["raw_dr", "dr_margin_ret", "margin_shift"])
+        cfg2 = {"county": "County",
+                "raw_dr": st.column_config.NumberColumn("D−R returned", format="%+d",
+                                                        help="Democratic minus Republican ballots returned."),
+                "dr_margin_ret": pct_col("D−R returns", True), "margin_shift": pct_col("Shift vs reg", True)}
+        short = {"D": "D", "R": "R", "O": "O/NPP"}
+        for p_ in D.PARTIES:
+            cfg2[f"{p_}_ret"] = INT(f"{short[p_]} ret")
+            cfg2[f"{p_}_share_ret"] = pct_col(f"{short[p_]} ret %")
+            cfg2[f"{p_}_reg"] = INT(f"{short[p_]} reg")
+            cfg2[f"{p_}_share_reg"] = pct_col(f"{short[p_]} reg %")
+        st.dataframe(v[cols2], hide_index=True, width="stretch", height=38 + 35 * len(v),
+                     column_config=cfg2)
     else:
         cp_tab = pd.DataFrame()
         oct_ = None
@@ -490,27 +515,6 @@ with tabs[1]:
             st.caption("Appears once there are snapshots on two different days.")
         st.caption("Stanislaus holds nearly half of SD4's ballots, so its return speed moves the "
                    "district number more than every small county combined.")
-
-    if use_optiq:
-        section("County × party detail — Optiq",
-                "Margin shift = D−R margin among returns minus D−R margin in registration "
-                "(positive = Democrats banking a bigger share than their registration).")
-        v = pct_cols(cp_tab, ["D_rate", "R_rate", "O_rate", "D_share_ret", "R_share_ret", "O_share_ret",
-                              "dr_margin_ret", "dr_margin_reg", "margin_shift", "turnout_gap"])
-        st.dataframe(
-            v[["county", "D_ret", "R_ret", "O_ret", "D_rate", "R_rate", "O_rate",
-               "D_share_ret", "R_share_ret", "O_share_ret", "dr_margin_ret", "dr_margin_reg", "margin_shift",
-               "turnout_gap"]],
-            hide_index=True, width="stretch", height=38 + 35 * len(v),
-            column_config={
-                "county": "County", "D_ret": INT("D ret"), "R_ret": INT("R ret"), "O_ret": INT("O/NPP ret"),
-                "D_rate": pct_col("D rate"), "R_rate": pct_col("R rate"), "O_rate": pct_col("O/NPP rate"),
-                "D_share_ret": pct_col("D share"), "R_share_ret": pct_col("R share"),
-                "O_share_ret": pct_col("O/NPP share"),
-                "dr_margin_ret": pct_col("D−R (returns)", True), "dr_margin_reg": pct_col("D−R (reg)", True),
-                "margin_shift": pct_col("Shift", True), "turnout_gap": pct_col("D−R rate gap", True),
-            },
-        )
 
     # Trends: Optiq once there's history, else SOS
     oser = A.optiq_county_series(cp_hist) if use_optiq else pd.DataFrame()
