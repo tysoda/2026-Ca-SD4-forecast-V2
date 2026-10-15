@@ -68,11 +68,21 @@ def label_codes(s: pd.DataFrame, dims: list[str]) -> pd.DataFrame:
 
 
 # ── SOS county pace vs 2022 ──────────────────────────────────────────────────
-def equiv_2022_fraction(snapshot: pd.Timestamp, k: float = 1.0) -> tuple[int, float]:
-    """Days to E-day and the share of the 2022 early vote assumed in by the
-    equivalent day: (days elapsed / window) ** k. k = 1 is linear; k > 1 is
-    back-loaded (most ballots arrive late in the window)."""
+def equiv_2022_fraction(snapshot: pd.Timestamp, k: float = 1.0,
+                        curve: pd.Series | None = None) -> tuple[int, float]:
+    """Days to E-day and the share of the 2022 early vote in by the same days out.
+
+    curve: share of the 2022 early vote in by each days_before_eday (from the
+    PDI daily returns). Without it, (days elapsed / window) ** k is assumed:
+    k = 1 is linear; k > 1 is back-loaded.
+    """
     days_left = (EDAY_2026 - snapshot).days
+    if curve is not None and len(curve):
+        if days_left > curve.index.max():
+            return days_left, 0.0
+        if days_left < curve.index.min():
+            return days_left, 1.0
+        return days_left, float(curve.loc[curve.index >= days_left].iloc[0])
     equiv = EDAY_2022 - pd.Timedelta(days=days_left)
     window = (EDAY_2022 - MAILOUT_2022).days
     t = float(np.clip((equiv - MAILOUT_2022).days / window, 0, 1))
@@ -92,12 +102,13 @@ def baseline_2022_returned(base: pd.DataFrame, daily22: pd.DataFrame | None,
 
 
 def county_table(sos: pd.DataFrame, base: pd.DataFrame,
-                 daily22: pd.DataFrame | None, k: float = 1.0) -> tuple[pd.DataFrame, dict]:
+                 daily22: pd.DataFrame | None, k: float = 1.0,
+                 curve: pd.Series | None = None) -> tuple[pd.DataFrame, dict]:
     """Latest SOS figures per county with velocity and 2022 pace."""
     snaps = sorted(sos["snapshot_date"].unique())
     cur_date = snaps[-1]
     cur = sos[sos["snapshot_date"] == cur_date].set_index("county")
-    days_left, frac = equiv_2022_fraction(cur_date, k)
+    days_left, frac = equiv_2022_fraction(cur_date, k, curve)
     b22 = baseline_2022_returned(base, daily22, days_left, frac)
 
     # Velocity over the last real (non-stale) interval
@@ -138,7 +149,8 @@ def county_table(sos: pd.DataFrame, base: pd.DataFrame,
     ret22_tot = float(b22.sum())
     meta = {
         "snapshot": cur_date, "days_left": days_left, "interp_frac": frac,
-        "baseline_kind": ("2022 daily curve" if daily22 is not None
+        "baseline_kind": ("2022 county daily curve" if daily22 is not None
+                          else "2022 PDI curve" if curve is not None
                           else "linear path" if k == 1 else f"curve k = {k:g}"),
         "k": k,
         "issued": int(t["issued"].sum()), "returned": int(tot_ret),
@@ -360,7 +372,8 @@ def optiq_county_series(cp_hist: pd.DataFrame) -> pd.DataFrame:
 
 
 def optiq_county_table(cp_hist: pd.DataFrame, base: pd.DataFrame,
-                       daily22: pd.DataFrame | None, k: float = 1.0) -> tuple[pd.DataFrame, dict]:
+                       daily22: pd.DataFrame | None, k: float = 1.0,
+                       curve: pd.Series | None = None) -> tuple[pd.DataFrame, dict]:
     """Latest Optiq county figures with party detail, velocity and 2022 pace.
 
     Denominator is Optiq's per-county registered count. Velocity needs two
@@ -371,7 +384,7 @@ def optiq_county_table(cp_hist: pd.DataFrame, base: pd.DataFrame,
     dates = sorted(s["snapshot_date"].unique())
     cur_date = dates[-1]
     t = s[s["snapshot_date"] == cur_date].copy()
-    days_left, frac = equiv_2022_fraction(pd.Timestamp(cur_date), k)
+    days_left, frac = equiv_2022_fraction(pd.Timestamp(cur_date), k, curve)
     b22 = baseline_2022_returned(base, daily22, days_left, frac)
     iss22 = base["vbm_issued_sd4"]
     t["rate_2022_equiv"] = t["county"].map(lambda c: b22.get(c, np.nan) / iss22.get(c, np.nan)
@@ -488,3 +501,93 @@ def decomposition_series(cp_hist: pd.DataFrame) -> pd.DataFrame:
         tot, _ = margin_decomposition(g)
         rows.append({"snapshot_date": d, **tot})
     return pd.DataFrame(rows)
+
+
+
+# ── 2022 vs 2026 by days out ─────────────────────────────────────────────────
+def pdi_cumulative(pdi: pd.DataFrame) -> pd.DataFrame:
+    """Running totals of the 2022 PDI daily returns, by days before E-day."""
+    d = pdi.sort_values("days_before_eday", ascending=False).copy()
+    for c in ("D", "R", "O", "total"):
+        d[f"cum_{c}"] = d[c].cumsum()
+    t = d[["cum_D", "cum_R", "cum_O"]].sum(axis=1).replace(0, np.nan)
+    for c in ("D", "R", "O"):
+        d[f"share_{c}"] = d[f"cum_{c}"] / t
+    d["dr_margin"] = (d["cum_D"] - d["cum_R"]) / t
+    d["frac_of_final"] = d["cum_total"] / d["cum_total"].iloc[-1]
+    return d.reset_index(drop=True)
+
+
+def pdi_curve(pdi: pd.DataFrame | None) -> pd.Series | None:
+    """Share of the 2022 early vote in by each days_before_eday (index)."""
+    if pdi is None or pdi.empty:
+        return None
+    c = pdi_cumulative(pdi)
+    return c.set_index("days_before_eday")["frac_of_final"].sort_index()
+
+
+def at_days_out(cum22: pd.DataFrame, days_out: int) -> pd.Series | None:
+    """2022 running totals as of a given days-before-E-day (inclusive)."""
+    rows = cum22[cum22["days_before_eday"] >= days_out]
+    return rows.iloc[-1] if len(rows) else None
+
+
+def party_by_days_out(ct: pd.DataFrame) -> pd.DataFrame:
+    """2026 Optiq party totals for each snapshot, keyed by days before E-day."""
+    if ct.empty:
+        return pd.DataFrame()
+    g = ct.groupby(["snapshot_date", "party"])["returned"].sum().unstack("party", fill_value=0)
+    for p in PARTIES:
+        if p not in g:
+            g[p] = 0
+    g = g[PARTIES].reset_index()
+    g["days_before_eday"] = (EDAY_2026 - g["snapshot_date"]).dt.days
+    g["total"] = g[PARTIES].sum(axis=1)
+    t = g["total"].replace(0, np.nan)
+    for p in PARTIES:
+        g[f"share_{p}"] = g[p] / t
+    g["dr_margin"] = (g["D"] - g["R"]) / t
+    return g.sort_values("days_before_eday", ascending=False).reset_index(drop=True)
+
+
+def registration_margin(reg_df: pd.DataFrame) -> dict:
+    """District D/R/O shares and D−R margin from a county registration table."""
+    T = reg_df["registered"].sum()
+    return {"registered": int(T), "D": reg_df["D"].sum() / T, "R": reg_df["R"].sum() / T,
+            "O": reg_df["O"].sum() / T, "dr": (reg_df["D"].sum() - reg_df["R"].sum()) / T}
+
+
+def party_by_days_out_cp(cp_hist: pd.DataFrame) -> pd.DataFrame:
+    """2026 party totals from Optiq county-feed snapshots, keyed by days out.
+    Dated by Optiq's latest recorded return when present (it runs ~a day behind)."""
+    if cp_hist.empty:
+        return pd.DataFrame()
+    g = cp_hist.groupby(["snapshot_date", "party"])["returned"].sum().unstack("party", fill_value=0)
+    for p in PARTIES:
+        if p not in g:
+            g[p] = 0
+    g = g[PARTIES].reset_index()
+    if "latest_return_date" in cp_hist:
+        lr = cp_hist.groupby("snapshot_date")["latest_return_date"].max()
+        g["as_of"] = [min(d, lr.get(d)) if pd.notna(lr.get(d)) else d for d in g["snapshot_date"]]
+    else:
+        g["as_of"] = g["snapshot_date"]
+    g["days_before_eday"] = (EDAY_2026 - pd.to_datetime(g["as_of"])).dt.days
+    g["total"] = g[PARTIES].sum(axis=1)
+    t = g["total"].replace(0, np.nan)
+    for p in PARTIES:
+        g[f"share_{p}"] = g[p] / t
+    g["dr_margin"] = (g["D"] - g["R"]) / t
+    return g.sort_values("days_before_eday", ascending=False).reset_index(drop=True)
+
+
+def series_2026(ct_hist: pd.DataFrame, cp_hist: pd.DataFrame) -> pd.DataFrame:
+    """One 2026 point per days-out: county feed where available, crosstabs otherwise."""
+    a = party_by_days_out_cp(cp_hist).assign(source="Optiq county feed")
+    b = party_by_days_out(ct_hist).assign(source="Optiq crosstabs")
+    both = pd.concat([a, b], ignore_index=True)
+    if both.empty:
+        return both
+    both["_pri"] = (both["source"] != "Optiq county feed").astype(int)
+    both = both.sort_values(["days_before_eday", "_pri"]).drop_duplicates("days_before_eday")
+    return both.drop(columns="_pri").sort_values("days_before_eday", ascending=False).reset_index(drop=True)

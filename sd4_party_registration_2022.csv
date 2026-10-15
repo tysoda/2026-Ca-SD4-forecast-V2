@@ -1,0 +1,14 @@
+county,report_date,registered,D,R,O,sd4_fraction,county_registered,county_D,county_R,method
+Alpine,2022-10-24,915,388,216,311,1.0,915,388,216,whole county
+Amador,2022-10-24,25954,7065,12251,6638,1.0,25954,7065,12251,whole county
+Calaveras,2022-10-24,32172,8529,14857,8786,1.0,32172,8529,14857,whole county
+El Dorado,2022-10-24,138537,42789,55809,39939,1.0,138537,42789,55809,whole county
+Inyo,2022-10-24,10729,3668,4183,2878,1.0,10729,3668,4183,whole county
+Madera,2022-10-24,31634,7789,15693,8152,0.434147,72865,24091,28104,county total x SD4 fraction; party mix from 2026 Optiq SD4 portion
+Mariposa,2022-10-24,11558,3211,5291,3056,1.0,11558,3211,5291,whole county
+Merced,2022-10-24,11937,3624,4962,3351,0.095754,124659,53451,35401,county total x SD4 fraction; party mix from 2026 Optiq SD4 portion
+Mono,2022-10-24,7710,3088,2288,2334,1.0,7710,3088,2288,whole county
+Nevada,2022-10-24,12047,6210,2090,3747,0.161732,74488,29593,23863,county total x SD4 fraction; party mix from 2026 Optiq SD4 portion
+Placer,2022-10-24,7903,3996,1439,2468,0.028323,279016,88405,112111,county total x SD4 fraction; party mix from 2026 Optiq SD4 portion
+Stanislaus,2022-10-24,282393,109731,96798,75864,1.0,282393,109731,96798,whole county
+Tuolumne,2022-10-24,35355,10273,15551,9531,1.0,35355,10273,15551,whole county

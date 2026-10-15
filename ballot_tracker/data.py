@@ -239,3 +239,25 @@ def load_forecast_params() -> dict | None:
         return None
     with open(path) as f:
         return json.load(f)
+
+
+# ── 2022 benchmarks ──────────────────────────────────────────────────────────
+def load_pdi_2022() -> pd.DataFrame | None:
+    """2022 SD4 daily VBM returns by party, read from PDI's tracker chart
+    (average of three readings — estimates, roughly ±300 per party per day).
+    Columns: days_before_eday, D, R, O, total, date_2022.
+    """
+    path = REPO_DIR / "pdi_2022_daily_sd4.csv"
+    if not path.exists():
+        return None
+    return pd.read_csv(path).sort_values("days_before_eday", ascending=False).reset_index(drop=True)
+
+
+def load_registration_2022() -> pd.DataFrame | None:
+    """SD4 party registration estimate from the SOS 15-day report (Oct 24, 2022).
+    Split counties: county total × SD4 fraction, with the 2026 SD4-portion party mix.
+    """
+    path = REPO_DIR / "sd4_party_registration_2022.csv"
+    if not path.exists():
+        return None
+    return pd.read_csv(path)
