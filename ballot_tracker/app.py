@@ -411,10 +411,10 @@ with tabs[1]:
                "turnout_gap"]],
             hide_index=True, width="stretch",
             column_config={
-                "county": "County", "D_ret": INT("D ret"), "R_ret": INT("R ret"), "O_ret": INT("O ret"),
-                "D_rate": pct_col("D rate"), "R_rate": pct_col("R rate"), "O_rate": pct_col("O rate"),
+                "county": "County", "D_ret": INT("D ret"), "R_ret": INT("R ret"), "O_ret": INT("O/NPP ret"),
+                "D_rate": pct_col("D rate"), "R_rate": pct_col("R rate"), "O_rate": pct_col("O/NPP rate"),
                 "D_share_ret": pct_col("D share"), "R_share_ret": pct_col("R share"),
-                "O_share_ret": pct_col("O share"),
+                "O_share_ret": pct_col("O/NPP share"),
                 "dr_margin_ret": pct_col("D−R (returns)", True), "dr_margin_reg": pct_col("D−R (reg)", True),
                 "margin_shift": pct_col("Shift", True), "turnout_gap": pct_col("D−R rate gap", True),
             },
@@ -553,7 +553,7 @@ with tabs[2]:
         gdf["shift"] = gdf["margin_ret"] - gdf["margin_iss"]
         gdf = pct_cols(gdf, ["D rate", "R rate", "O rate", "rate_gap", "margin_ret", "margin_iss", "shift"])
         st.dataframe(gdf, hide_index=True, width="stretch", height=38 + 35 * len(gdf), column_config={
-            "D rate": pct_col("D rate"), "R rate": pct_col("R rate"), "O rate": pct_col("O rate"),
+            "D rate": pct_col("D rate"), "R rate": pct_col("R rate"), "O rate": pct_col("O/NPP rate"),
             "rate_gap": pct_col("D−R rate gap", True), "margin_ret": pct_col("D−R (returns)", True),
             "margin_iss": pct_col("D−R (issued)", True), "shift": pct_col("Shift", True)})
 
