@@ -2,8 +2,9 @@ name: Update Optiq Crosstabs
 
 on:
   schedule:
-    # Run every 4 hours
-    - cron: '0 */4 * * *'
+    # Every 4 hours at :47 — off the top of the hour, when GitHub most often
+    # delays or drops scheduled runs.
+    - cron: '47 */4 * * *'
   workflow_dispatch:   # allow manual trigger
 
 jobs:
@@ -35,5 +36,6 @@ jobs:
             echo "No changes to commit"
           else
             git commit -m "chore: update Optiq crosstab snapshot $(date -u +%Y-%m-%d)"
+            git pull --rebase --autostash origin main
             git push
           fi
