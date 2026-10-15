@@ -475,6 +475,79 @@ with tabs[1]:
             },
         )
 
+    if use_optiq and cp_latest["returned"].sum() > 0:
+        dec, dec_c = A.margin_decomposition(cp_latest)
+        section("Why the district shift differs from the counties",
+                "The district's D−R shift vs registration splits into two parts that add up exactly. "
+                "Within counties: Democrats and Republicans returning at different rates inside each county. "
+                "County mix: some counties making up more of the returns than of registration. "
+                "Mix fades as every county's share of returns approaches its share of registration.")
+        k1, k2, k3 = st.columns(3)
+        with k1:
+            card("Within counties", pp(dec["within"]), "party return rates inside each county",
+                 color=D.PARTY_COLORS["D"] if dec["within"] >= 0 else D.PARTY_COLORS["R"])
+        with k2:
+            card("County mix", pp(dec["mix"]), "which counties have returned most",
+                 color=D.PARTY_COLORS["D"] if dec["mix"] >= 0 else D.PARTY_COLORS["R"])
+        with k3:
+            card("District shift", pp(dec["shift"]),
+                 f"D−R returns {pp(dec['ret'])} vs registration {pp(dec['reg'])}")
+
+        dc1, dc2 = st.columns(2)
+        with dc1:
+            fig = go.Figure(go.Waterfall(
+                orientation="v", measure=["absolute", "relative", "relative", "total"],
+                x=["D−R registration", "Within counties", "County mix", "D−R returns"],
+                y=[dec["reg"] * 100, dec["within"] * 100, dec["mix"] * 100, 0],
+                text=[f"{dec['reg']*100:+.1f}", f"{dec['within']*100:+.1f}", f"{dec['mix']*100:+.1f}",
+                      f"{dec['ret']*100:+.1f}"],
+                textposition="outside",
+                increasing=dict(marker=dict(color=D.PARTY_COLORS["D"])),
+                decreasing=dict(marker=dict(color=D.PARTY_COLORS["R"])),
+                totals=dict(marker=dict(color="#555555")),
+                connector=dict(line=dict(color="#bbb", width=1)),
+                hovertemplate="%{x}: %{y:+.1f} pp<extra></extra>",
+            ))
+            fig.update_layout(**{**PLOT_LAYOUT, "hovermode": "closest"}, height=360, showlegend=False,
+                              title=dict(text="From registration margin to returns margin (pp)",
+                                         font=dict(size=12)))
+            fig.update_yaxes(ticksuffix=" pp", zeroline=True, zerolinecolor="#999")
+            st.plotly_chart(fig, width="stretch")
+        with dc2:
+            dcs = dec_c[(dec_c["within"].abs() + dec_c["mix"].abs()) > 0.0005].copy()
+            dcs["total"] = dcs["within"] + dcs["mix"]
+            dcs = dcs.sort_values("total")
+            fig = go.Figure()
+            fig.add_bar(y=dcs["county"], x=dcs["within"] * 100, name="Within county", orientation="h",
+                        marker_color="#7c9cc4", hovertemplate="%{y}: %{x:+.2f} pp<extra>Within</extra>")
+            fig.add_bar(y=dcs["county"], x=dcs["mix"] * 100, name="County mix", orientation="h",
+                        marker_color="#d9a441", hovertemplate="%{y}: %{x:+.2f} pp<extra>Mix</extra>")
+            fig.update_layout(**{**PLOT_LAYOUT, "hovermode": "closest",
+                                 "legend": dict(orientation="h", y=-0.12, x=0),
+                                 "margin": dict(l=10, r=10, t=40, b=10)},
+                              barmode="relative", height=380,
+                              title=dict(text="Each county's contribution (pp)", font=dict(size=12)))
+            fig.update_xaxes(ticksuffix=" pp", zeroline=True, zerolinecolor="#999")
+            st.plotly_chart(fig, width="stretch")
+        st.caption("Positive = toward Democrats. A county's mix piece is negative when it is over-represented "
+                   "in returns and more Republican than the district, or under-represented and more Democratic.")
+
+        dser = A.decomposition_series(cp_hist)
+        if len(dser) >= 2:
+            fig = go.Figure()
+            for col, name, colr, dash in (("within", "Within counties", "#7c9cc4", None),
+                                          ("mix", "County mix", "#d9a441", None),
+                                          ("shift", "District shift", "#222222", "dot")):
+                fig.add_scatter(x=dser["snapshot_date"], y=dser[col] * 100, name=name, mode="lines+markers",
+                                line=dict(color=colr, width=2.5 if col == "shift" else 2, dash=dash),
+                                hovertemplate="%{y:+.1f} pp")
+            fig.update_layout(**PLOT_LAYOUT, height=320,
+                              title=dict(text="Over time (pp)", font=dict(size=12)))
+            fig.update_yaxes(ticksuffix=" pp", zeroline=True, zerolinecolor="#999")
+            st.plotly_chart(fig, width="stretch")
+        else:
+            st.caption("The over-time chart appears once Optiq county snapshots exist on two different days.")
+
     # Map metrics: Optiq when available, else SOS
     if use_optiq:
         oi = oct_.set_index("county")

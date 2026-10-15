@@ -447,3 +447,44 @@ def county_party_with_total(cp: pd.DataFrame) -> pd.DataFrame:
     t = county_party_table(cp)
     dist = cp.groupby("party", as_index=False)[["registered", "returned"]].sum().assign(county="SD4 total")
     return pd.concat([t, county_party_table(dist)], ignore_index=True)
+
+
+# ── Shift decomposition: within-county vs county mix ─────────────────────────
+def margin_decomposition(cp: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
+    """Split the district D−R shift (returns margin − registration margin)
+    into two exact parts:
+
+      within = Σ_c  w_ret_c · (m_ret_c − m_reg_c)
+               parties returning at different rates inside each county
+      mix    = Σ_c (w_ret_c − w_reg_c) · (m_reg_c − M_reg)
+               some counties making up more of the returns than of registration
+
+    w = county share of district returns / registration; m = county D−R margin
+    (÷ all ballots, incl. O/NPP); M_reg = district registration margin.
+    within + mix = M_ret − M_reg exactly. Centring the mix term on M_reg makes
+    each county's piece read as "over-returning a county more R (or D) than
+    the district"; it doesn't change the total because Σ(w_ret − w_reg) = 0.
+    A county with no returns gets a within-county term of zero.
+    """
+    t = county_party_table(cp)
+    t["w_ret"] = t["tot_ret"] / t["tot_ret"].sum()
+    t["w_reg"] = t["tot_reg"] / t["tot_reg"].sum()
+    m_reg = t["dr_margin_reg"]
+    m_ret = t["dr_margin_ret"].fillna(m_reg)
+    M_reg = float((t["w_reg"] * m_reg).sum())
+    M_ret = float((t["D_ret"].sum() - t["R_ret"].sum()) / t["tot_ret"].sum())
+    t["within"] = t["w_ret"] * (m_ret - m_reg)
+    t["mix"] = (t["w_ret"] - t["w_reg"]) * (m_reg - M_reg)
+    out = {"reg": M_reg, "ret": M_ret, "shift": M_ret - M_reg,
+           "within": float(t["within"].sum()), "mix": float(t["mix"].sum())}
+    return out, t[["county", "w_ret", "w_reg", "dr_margin_reg", "dr_margin_ret", "within", "mix"]]
+
+
+def decomposition_series(cp_hist: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for d, g in cp_hist.groupby("snapshot_date"):
+        if g["returned"].sum() == 0:
+            continue
+        tot, _ = margin_decomposition(g)
+        rows.append({"snapshot_date": d, **tot})
+    return pd.DataFrame(rows)
