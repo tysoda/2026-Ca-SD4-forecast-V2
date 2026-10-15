@@ -269,7 +269,7 @@ with tabs[0]:
     with c[0]:
         card("Ballots returned", f"{meta['returned']:,}", f"of {meta['issued']:,} issued")
     with c[1]:
-        card("Return rate", pct(meta["rate"]), f"2022 baseline file: {pct(meta['rate_2022_baseline'])}")
+        card("Return rate", pct(meta["rate"]), f"2022 last pre-election report: {pct(meta['rate_2022_baseline'])}")
     with c[2]:
         card("Returns / day", f"{meta['per_day']:,.0f}" if np.isfinite(meta["per_day"]) else "—",
              "over the latest reporting interval")
@@ -748,9 +748,10 @@ with tabs[5]:
     st.markdown(f"""
 - **SOS vs Optiq totals differ** — different update times and Optiq's ~98% voter-file match. Use each source on its own terms.
 - **Stale snapshots are dropped.** If a feed re-publishes identical numbers on a new date, that date is removed so velocity isn't understated.
-- **2022 pace baseline: {meta['baseline_kind']}.** The baseline file shows a {pct(meta['rate_2022_baseline'])} district
-  return rate, well below a typical final VBM rate, so it likely reflects the last pre-election report rather than the
-  certified total. To replace the linear curve, add `vbm_2022_daily.csv` with columns
+- **2022 pace baseline: {meta['baseline_kind']}.** The end-point is the last 2022 pre-election report
+  ({pct(meta['rate_2022_baseline'])} district return rate), which is the right target for tracking the early vote.
+  The path to it is assumed linear from mail-out, so early in the window the comparison reads low. To replace it, add
+  `vbm_2022_daily.csv` with columns
   `county, days_before_eday, vbm_returned` (SD4 portion).
 - **Split counties** use a fixed registration-share fraction for the SOS figures; Optiq counts are already district-specific.
 - **Party ≠ vote.** Everything here is party registration of returned ballots, not candidate support.

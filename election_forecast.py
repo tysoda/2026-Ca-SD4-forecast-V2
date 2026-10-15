@@ -702,7 +702,7 @@ with tab_turnout:
     # ── VBM-implied turnout callout ───────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-label">VBM-Implied Turnout Estimates</div>', unsafe_allow_html=True)
-    st.caption("Inferred from pre-election VBM accepted ballots using historical return-rate calibration (2022 & 2024). Estimates stabilize once ≥5% of expected final VBM is in.")
+    st.caption("Current VBM accepted is extrapolated to the last pre-election report (linear in time), then converted with 2022 & 2024 return-rate calibration. Estimates appear once a county has ≥25% of a 2022-sized early vote in; VBM Progress shows that share.")
 
     try:
         _vbm_to_est = estimate_turnout(ballot_returns_path=DATA_DIR / "ballot_returns.csv", verbose=False)
@@ -1095,8 +1095,8 @@ with tab_returns:
     st.markdown('<div class="section-label">Party Return Rate Trajectory</div>', unsafe_allow_html=True)
     st.caption(
         "Daily party-level VBM return rates from Optiq snapshots. "
-        "Dashed lines show each party's share of total SD4 VBM ballots issued (proxy for registration share). "
-        "When a party's return rate exceeds its issued share, that party is outperforming proportionally."
+        "The benchmark table compares each party's share of returned ballots with its share of registration: "
+        "a party above its registration share is banking a bigger slice of the early vote."
     )
 
     _CROSSTAB_CSV = "optiq_crosstabs.csv"
@@ -1171,12 +1171,14 @@ with tab_returns:
                 _prate = _preturned / _pissued if _pissued > 0 else 0
                 _pissued_share = _issued_share.get(_p, 0)
                 _preg_share = _party_reg.get(_p, 0) / _total_reg if _total_reg > 0 else 0
+                _tot_ret_latest = int(_latest["returned"].sum())
+                _pret_share = _preturned / _tot_ret_latest if _tot_ret_latest > 0 else 0
                 _bench_rows.append({
-                    "Party":          _party_labels_traj[_p],
-                    "Return Rate":    f"{_prate:.1%}",
-                    "Share of Issued": f"{_pissued_share:.1%}",
-                    "Reg Share (Apr 2026)": f"{_preg_share:.1%}",
-                    "vs Reg Share":   f"{_prate - _preg_share:+.1%}",
+                    "Party":            _party_labels_traj[_p],
+                    "Return Rate":      f"{_prate:.1%}",
+                    "Share of Returns": f"{_pret_share:.1%}",
+                    "Reg Share":        f"{_preg_share:.1%}",
+                    "Returns vs Reg":   f"{(_pret_share - _preg_share) * 100:+.1f}pp",
                 })
             st.dataframe(pd.DataFrame(_bench_rows), hide_index=True, width="stretch")
         else:
@@ -1247,19 +1249,22 @@ with tab_returns:
                 _prate = float(_pslice["return_rate"].iloc[0]) if len(_pslice) > 0 else 0
                 _pissued_share = _issued_share.get(_p, 0)
                 _preg_share = _party_reg.get(_p, 0) / _total_reg if _total_reg > 0 else 0
+                _snap_rows = _daily[_daily["snapshot_date"] == _latest_snap]
+                _tot_ret_snap = int(_snap_rows["returned"].sum())
+                _pret = int(_pslice["returned"].iloc[0]) if len(_pslice) > 0 else 0
+                _pret_share = _pret / _tot_ret_snap if _tot_ret_snap > 0 else 0
                 _bench_rows.append({
-                    "Party":               _party_labels_traj[_p],
-                    "Return Rate":         f"{_prate:.1%}",
-                    "Share of Issued":     f"{_pissued_share:.1%}",
-                    "Reg Share (Apr '26)": f"{_preg_share:.1%}",
-                    "Rate vs Reg Share":   f"{_prate - _preg_share:+.1%}",
+                    "Party":            _party_labels_traj[_p],
+                    "Return Rate":      f"{_prate:.1%}",
+                    "Share of Returns": f"{_pret_share:.1%}",
+                    "Reg Share":        f"{_preg_share:.1%}",
+                    "Returns vs Reg":   f"{(_pret_share - _preg_share) * 100:+.1f}pp",
                 })
             st.dataframe(pd.DataFrame(_bench_rows), hide_index=True, width="stretch")
 
         st.caption(
             f"Registration benchmarks: D {_party_reg.get('D',0):,} · R {_party_reg.get('R',0):,} · "
-            f"O/NPP {_party_reg.get('O',0):,} (SOS 60-day primary report, Apr 2026). "
-            "Update sd4_party_registration.csv when general-election figures are available."
+            f"O/NPP {_party_reg.get('O',0):,} (sd4_party_registration.csv)."
         )
 
     # ── VBM County Map ────────────────────────────────────────────────────────
