@@ -18,8 +18,15 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+import importlib
+
 import analysis as A
 import data as D
+
+# Streamlit keeps imported helper modules between reruns, so after a git pull the
+# app can run new app.py code against old data.py / analysis.py. Reload them.
+D = importlib.reload(D)
+A = importlib.reload(A)
 
 sys.path.insert(0, str(D.REPO_DIR))
 from vbm_turnout import COUNTY_PARAMS  # noqa: E402
