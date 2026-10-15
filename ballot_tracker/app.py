@@ -48,6 +48,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+SOURCE_GAP_NOTE = (
+    "They're measured differently: (1) they update at different times, so one is often a day ahead; "
+    "(2) for the four split counties (Madera, Merced, Nevada, Placer) the SOS figures are estimates — the "
+    "county total scaled by SD4's share of registration — while Optiq places each voter in or out of the "
+    "district; (3) Optiq only counts ballots it can match to a voter-file record (~98%). Compare each "
+    "source with itself over time rather than one against the other."
+)
+
 PLOT_LAYOUT = dict(
     plot_bgcolor="#f7f7f5", paper_bgcolor="rgba(0,0,0,0)",
     margin=dict(l=10, r=10, t=30, b=10), hovermode="x unified",
@@ -262,6 +270,13 @@ if sos.empty:
     st.stop()
 
 county_t, meta = A.county_table(sos, base, daily22, curve_k)
+# Label every pace comparison with the assumption behind it
+if daily22 is not None:
+    pace_name, pace_short = "2022 daily curve", "daily"
+elif curve_k == 1:
+    pace_name, pace_short = "linear path", "linear"
+else:
+    pace_name, pace_short = f"curve k={curve_k:g}", f"k={curve_k:g}"
 ct_date = (ct_latest["snapshot_date"].max() if not ct_latest.empty else None)
 badges = (
     f'<span class="src-badge">SOS · {meta["snapshot"]:%b %-d}</span>'
@@ -289,7 +304,7 @@ with tabs[0]:
     with c[3]:
         r = meta["pace_ratio"]
         col = "#2e7d32" if r >= 1.10 else ("#d97706" if r >= 0.85 else "#b91c1c")
-        card("vs 2022 pace", f"{r:.0%}" if np.isfinite(r) else "—",
+        card(f"vs 2022 · {pace_name}", f"{r:.0%}" if np.isfinite(r) else "—",
              f"2022 at E−{meta['days_left']}: {pct(meta['rate_2022_equiv'])} ({meta['baseline_kind']})",
              color=col)
     if daily22 is None:
@@ -321,6 +336,11 @@ with tabs[0]:
         reg_margin = (reg_counts.get("D", 0) - reg_counts.get("R", 0)) / reg_total if reg_total else np.nan
         st.caption(f"D−R margin among returned ballots: **{pp((d_ret - r_ret) / tot)}** "
                    f"(registration: {pp(reg_margin)}) · raw D−R: **{int(d_ret - r_ret):+,}**")
+        st.caption(
+            f"ℹ️ **SOS and Optiq totals don't match exactly** — SOS: {meta['returned']:,} returned of "
+            f"{meta['issued']:,} issued ({meta['snapshot']:%b %-d}); Optiq: {int(ct_latest['returned'].sum()):,} "
+            f"of {int(ct_latest['issued'].sum()):,} "
+            f"({'live' if ct_source == 'live' else f'{ct_date:%b %-d}'}). " + SOURCE_GAP_NOTE)
 
     section("Cumulative returns")
     ss = A.sos_series(sos)
@@ -356,9 +376,9 @@ with tabs[1]:
         column_config={
             "county": "County", "issued": INT("Issued"), "returned": INT("Returned"),
             "rate": pct_col("Rate"), "per_day": st.column_config.NumberColumn("Per day", format="%.0f"),
-            "rate_2022_equiv": pct_col("2022 equiv."),
-            "pace_ratio": st.column_config.NumberColumn("vs 2022", format="%.0f%%"),
-            "pace": "Pace", "share_of_district_returns": pct_col("Share of returns"),
+            "rate_2022_equiv": pct_col(f"2022 est. ({pace_short})"),
+            "pace_ratio": st.column_config.NumberColumn(f"vs 2022 ({pace_short})", format="%.0f%%"),
+            "pace": f"Pace ({pace_short})", "share_of_district_returns": pct_col("Share of returns"),
             "share_of_district_issued": pct_col("Share of issued"), "outstanding": INT("Outstanding"),
         },
         height=38 + 35 * len(show),
@@ -384,10 +404,11 @@ with tabs[1]:
             "Raw D − R returned": (cpi["raw_dr"].astype(float).to_dict(), True, "{:+,.0f}", "RdBu"),
         })
     with mcol:
-        sel = st.selectbox("Map metric", list(metric_opts))
+        _lbl = lambda k: f"vs 2022 {pace_name} (SOS)" if k == "vs 2022 pace (SOS)" else k
+        sel = st.selectbox("Map metric", list(metric_opts), format_func=_lbl, key="map_metric")
         vals, div, fmt, cs = metric_opts[sel]
         vals = {cn: float(vals.get(cn, np.nan)) for cn in D.SD4_COUNTIES}
-        county_map(vals, sel, div, fmt, cs)
+        county_map(vals, _lbl(sel), div, fmt, cs)
     with tcol:
         st.markdown("**Biggest daily contributors**")
         top = county_t.sort_values("per_day", ascending=False)[["county", "per_day", "returned"]].head(6)
@@ -815,7 +836,7 @@ with tabs[5]:
 """)
     section("Caveats")
     st.markdown(f"""
-- **SOS vs Optiq totals differ** — different update times and Optiq's ~98% voter-file match. Use each source on its own terms.
+- **SOS vs Optiq totals differ.** {SOURCE_GAP_NOTE}
 - **Stale snapshots are dropped.** If a feed re-publishes identical numbers on a new date, that date is removed so velocity isn't understated.
 - **2022 pace baseline: {meta['baseline_kind']}.** The end-point is the last 2022 pre-election report
   ({pct(meta['rate_2022_baseline'])} district return rate), which is the right target for tracking the early vote.

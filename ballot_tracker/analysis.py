@@ -168,10 +168,10 @@ def pace_label(ratio: float) -> str:
     if ratio is None or not np.isfinite(ratio):
         return "—"
     if ratio >= 1.10:
-        return "Ahead"
+        return "Above"
     if ratio >= 0.85:
-        return "On pace"
-    return "Behind"
+        return "Near"
+    return "Below"
 
 
 # ── Time series ──────────────────────────────────────────────────────────────

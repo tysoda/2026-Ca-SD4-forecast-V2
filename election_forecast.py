@@ -852,11 +852,11 @@ with tab_returns:
             if _rate_26 == 0:
                 _pace = "—"
             elif _pct_of_interp >= 1.10:
-                _pace = "🟢 High"
+                _pace = "🟢 Above"
             elif _pct_of_interp >= 0.85:
-                _pace = "🟡 On pace"
+                _pace = "🟡 Near"
             else:
-                _pace = "🔴 Low"
+                _pace = "🔴 Below"
 
             # Implied turnout from vbm_turnout module
             _est = _vbm_est.get(_cn, {})
@@ -879,9 +879,9 @@ with tab_returns:
                 "2026 Issued":        f"{_issued_26:,}",
                 "2026 Returned":      f"{_returned_26:,}",
                 "2026 Rate":          f"{_rate_26:.1%}",
-                "2022 Est. Rate":     f"{_rate_22_interp:.1%}",
-                "vs 2022 Pace":       f"{_pct_of_interp:.0%}" if _rate_26 > 0 else "—",
-                "Pace":               _pace,
+                "2022 Linear Est.":   f"{_rate_22_interp:.1%}",
+                "vs 2022 Linear":     f"{_pct_of_interp:.0%}" if _rate_26 > 0 else "—",
+                "vs Linear":          _pace,
                 "Implied Turnout":    _implied_to_str,
             })
 
@@ -906,15 +906,16 @@ with tab_returns:
             with _rc3:
                 _vs_base = (_dist_rate_26 / _dist_rate_22_interp) if _dist_rate_22_interp > 0 else 0
                 _col = "#2e7d32" if _vs_base >= 1.10 else ("#f57c00" if _vs_base >= 0.85 else "#c62828") if _dist_rate_26 > 0 else "#888"
-                st.markdown(f'<div class="stat-card"><div class="label">vs 2022 Pace</div><div class="value" style="color:{_col}">{_vs_base:.0%}</div><div class="sub">est. 2022 rate at E−{_days_remaining_26}d: {_dist_rate_22_interp:.1%}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-card"><div class="label">vs 2022 Linear Path</div><div class="value" style="color:{_col}">{_vs_base:.0%}</div><div class="sub">2022 linear est. at E−{_days_remaining_26}d: {_dist_rate_22_interp:.1%}</div></div>', unsafe_allow_html=True)
             with _rc4:
                 # Snapshots collected so far
                 _n_snaps = _bsr_df["snapshot_date"].nunique()
                 st.markdown(f'<div class="stat-card"><div class="label">Snapshots Collected</div><div class="value">{_n_snaps}</div><div class="sub">since {_bsr_df["snapshot_date"].min().strftime("%-d %b")}</div></div>', unsafe_allow_html=True)
 
         st.caption(
-            f"🔵 Pace thresholds vs interpolated 2022 baseline: High ≥ 110% · On pace 85–110% · Low < 85% · "
-            f"2022 est. rate = 2022 final × {_interp_frac:.0%} ({_days_remaining_26}d to E-day, linear interpolation from Oct 10 mail-out)"
+            f"🔵 Compared with a straight-line path to 2022's last pre-election report (no 2022 day-by-day data exists, "
+            f"and real returns are back-loaded, so early readings run low). Above ≥ 110% · Near 85–110% · Below < 85% · "
+            f"2022 linear est. = 2022 pre-election rate × {_interp_frac:.0%} ({_days_remaining_26}d to E-day, linear interpolation from Oct 10 mail-out)"
         )
 
     # ── Optiq Crosstab Data ───────────────────────────────────────────────────
@@ -1017,6 +1018,12 @@ with tab_returns:
                 f'</div>',
                 unsafe_allow_html=True,
             )
+        st.caption(
+            "ℹ️ Optiq totals differ slightly from the SOS tracker above: the two update at different times; "
+            "SOS figures for the split counties (Madera, Merced, Nevada, Placer) are estimated by scaling the "
+            "county total by SD4's registration share, while Optiq places each voter in or out of the district; "
+            "and Optiq only counts ballots matched to a voter-file record (~98%)."
+        )
         st.markdown("<br>", unsafe_allow_html=True)
 
         # ════════════════════════════════════════════════════════════════════
