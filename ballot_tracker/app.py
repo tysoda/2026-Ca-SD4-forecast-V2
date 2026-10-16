@@ -963,6 +963,39 @@ with tabs[3]:
 # OUTSTANDING
 # ══════════════════════════════════════════════════════════════════════════════
 with tabs[4]:
+    # ── O/NPP split needed to close the D−R gap among returned ballots ──────
+    if use_optiq or not ct_latest.empty:
+        _pt = (cp_latest.groupby("party")["returned"].sum() if use_optiq
+               else ct_latest.groupby("party")["returned"].sum())
+        _d, _r, _n = (int(_pt.get(p_, 0)) for p_ in ("D", "R", "O"))
+        section("What O/NPP voters would need to do",
+                "If every Democratic ballot votes Democratic and every Republican ballot votes Republican, "
+                "this is the share of O/NPP ballots the trailing side needs just to draw level on the ballots "
+                "returned so far.")
+        nc = st.columns(3)
+        with nc[0]:
+            if _n > 0:
+                need_d = (_n + _r - _d) / (2 * _n)   # D + x·N = R + (1 − x)·N
+                if need_d > 1:
+                    val, sub, colr = ">100%", "Democrats can't close the gap with O/NPP ballots alone", D.PARTY_COLORS["R"]
+                elif need_d < 0:
+                    val, sub, colr = "<0%", "Democrats lead even if every O/NPP ballot goes Republican", D.PARTY_COLORS["D"]
+                else:
+                    val, sub, colr = pct(need_d), f"Republicans would need {pct(1 - need_d)}", (
+                        D.PARTY_COLORS["R"] if need_d > 0.5 else D.PARTY_COLORS["D"])
+                card("O/NPP share Democrats need", val, sub, color=colr)
+            else:
+                card("O/NPP share Democrats need", "—", "no O/NPP ballots returned yet")
+        with nc[1]:
+            gap = _d - _r
+            card("Democrats vs Republicans", f"{gap:+,}",
+                 f"{_d:,} D · {_r:,} R returned", color=D.PARTY_COLORS["D"] if gap >= 0 else D.PARTY_COLORS["R"])
+        with nc[2]:
+            card("O/NPP ballots returned", f"{_n:,}", f"{_n / max(_d + _r + _n, 1):.1%} of returns")
+        st.caption("Party registration of returned ballots, not candidate votes — crossover and O/NPP turnout "
+                   "differences will move the real figure. Source: "
+                   + ("Optiq county feed." if use_optiq else "Optiq crosstabs."))
+
     if ct_latest.empty:
         st.info("No Optiq crosstab data available.")
     else:
