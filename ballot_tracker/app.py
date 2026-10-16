@@ -525,7 +525,7 @@ with tabs[1]:
                                          ["share_of_district_returns", "share_of_district_reg"]),
                         ["rate", "rate_2022_equiv", "share_of_district_returns", "share_of_district_reg"])
         _filled = show["county"].isin(tab.loc[tab["sos_filled"], "county"])
-        show.loc[_filled, "county"] = show.loc[_filled, "county"] + " (SOS)"
+        show.loc[_filled, "county"] = show.loc[_filled, "county"] + "*"
         show["pace_ratio"] = show["pace_ratio"] * 100
         st.dataframe(
             show[["county", "tot_reg", "tot_ret", "rate", "last_drop", "last_drop_date", "rate_2022_equiv",
@@ -545,8 +545,8 @@ with tabs[1]:
         _cap = ("Drop date is Optiq's most recent ballot return date for the county. "
                 "Registered is Optiq's VBM universe (sums to the same total as the crosstab 'issued'). ")
         if tab["sos_filled"].any():
-            _cap += ("Counties marked (SOS) show 0 returned in Optiq, so their returned count and date come from "
-                     "the latest SOS report; their party split isn't available. ")
+            _cap += ("* Optiq shows 0 returned for this county, so its returned count and date come from "
+                     "the latest SOS report; its party split isn't available. ")
         if ometa["n_snapshots"] < 2:
             _cap += ("Last drop (ballots added in the latest update) needs Optiq snapshots on two different "
                      "days; it fills in once the GitHub Action has saved a second day (after the PR is merged).")
