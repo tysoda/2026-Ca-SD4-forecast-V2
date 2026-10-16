@@ -915,7 +915,7 @@ with tab_returns:
                 _dl, _frac = _days_remaining_26, _interp_frac
                 _thru = _optiq[_cn]["latest"].strftime("%b %-d") if _optiq[_cn]["latest"] is not None else "—"
                 if _optiq[_cn].get("sos_filled"):
-                    _thru += " (SOS)"
+                    _thru += "*"
             elif _cn in _latest.index:
                 _row = _latest.loc[_cn]
                 _den_26 = int(_row.get("vbm_issued", 0) or 0)
@@ -1005,7 +1005,7 @@ with tab_returns:
             "2022 same-day rate = 2022 pre-election rate × the share of 2022's early vote in by that day (SD4 2022 "
             "daily returns, read from PDI's tracker). Optiq rates use its registered mail-ballot universe; 2022 "
             "rates use SOS ballots issued. Where Optiq shows 0 returned for a county, the latest SOS count is used "
-            "(marked \"(SOS)\" in Latest Return). Above ≥ 110% · Near 85–110% · Below < 85%"
+            "(marked * in Latest Return). Above ≥ 110% · Near 85–110% · Below < 85%"
         )
 
     # ── Optiq Crosstab Data ───────────────────────────────────────────────────
