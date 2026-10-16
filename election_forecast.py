@@ -234,13 +234,6 @@ def _fill_optiq_zeros_from_sos(optiq: dict, sos_latest: pd.DataFrame, sos_date) 
     return out
 
 
-def _optiq_days_left(entry: dict) -> int:
-    """Days before E-day that a county's Optiq data runs through."""
-    today = _today_ca()
-    d = entry.get("latest") or today
-    return int((_EDAY_2026_TS - min(pd.Timestamp(d), today)).days)
-
-
 # ── Forecast model integration ────────────────────────────────────────────────
 def load_forecast_params():
     """Load the most recent forecast_params.json if it exists."""
@@ -566,7 +559,8 @@ def _compute_vbm_pace_adj(bsr_path: str, base_path: str, optiq: dict | None = No
     base    = base_df.set_index("county")
     _snap   = bsr_df["snapshot_date"].max()
     latest  = bsr_df[bsr_df["snapshot_date"] == _snap].set_index("county")
-    _frac_22 = early_vote_fraction_2022((pd.Timestamp("2026-11-03") - _snap).days)
+    # Compare with 2022 at today's E-number
+    _frac_22 = early_vote_fraction_2022(int((_EDAY_2026_TS - _today_ca()).days))
     optiq = _fill_optiq_zeros_from_sos(optiq, latest, _snap)
     adj = {}
     all_rates: list[float] = []
@@ -578,7 +572,7 @@ def _compute_vbm_pace_adj(bsr_path: str, base_path: str, optiq: dict | None = No
         if optiq and cn in optiq:
             # Optiq (primary): each county compared with 2022 at its own data date
             issued_26, returned_26 = optiq[cn]["registered"], optiq[cn]["returned"]
-            frac_22 = early_vote_fraction_2022(_optiq_days_left(optiq[cn]))
+            frac_22 = _frac_22
         elif cn in latest.index:
             issued_26   = int(latest.loc[cn].get("vbm_issued",   0) or 0)
             returned_26 = int(latest.loc[cn].get("vbm_returned", 0) or 0)
@@ -892,7 +886,8 @@ with tab_returns:
         # returns would have been at the same number of days before election day,
         # assuming linear growth from 0 at mail-out to final total at E-day.
         _EDAY_2026   = pd.Timestamp("2026-11-03")
-        _days_remaining_26 = (_EDAY_2026 - _latest_date).days
+        # All 2022 comparisons are made at today's E-number
+        _days_remaining_26 = int((_EDAY_2026 - _today_ca()).days)
         # Fraction of the 2022 window elapsed at the equivalent point
         # Share of 2022's early vote that was in at the same days out (2022 SD4
         # daily return curve, pdi_2022_daily_sd4.csv; linear if the file is missing)
@@ -908,7 +903,6 @@ with tab_returns:
         _tracker_rows = []
         _d_ret26 = _d_den26 = 0
         _d_ret22_eq = _d_iss22 = 0.0
-        _days_by_cty = {}
         for _cn in county_names:
             if _cn not in _base.index:
                 continue
@@ -918,8 +912,7 @@ with tab_returns:
             if _use_optiq and _cn in _optiq:
                 # Optiq (primary): each county compared with 2022 at its own data date
                 _den_26, _returned_26 = _optiq[_cn]["registered"], _optiq[_cn]["returned"]
-                _dl = _optiq_days_left(_optiq[_cn])
-                _frac = early_vote_fraction_2022(_dl)
+                _dl, _frac = _days_remaining_26, _interp_frac
                 _thru = _optiq[_cn]["latest"].strftime("%b %-d") if _optiq[_cn]["latest"] is not None else "—"
                 if _optiq[_cn].get("sos_filled"):
                     _thru += " (SOS)"
@@ -931,7 +924,6 @@ with tab_returns:
                 _thru = _latest_date.strftime("%b %-d")
             else:
                 continue
-            _days_by_cty[_cn] = (_dl, _den_26)
 
             _rate_26  = _returned_26 / _den_26  if _den_26  > 0 else 0.0
             _rate_22_final = _returned_22 / _issued_22 if _issued_22 > 0 else 0.0
@@ -972,7 +964,7 @@ with tab_returns:
                 ("Registered" if _use_optiq else "2026 Issued"): f"{_den_26:,}",
                 "2026 Returned":      f"{_returned_26:,}",
                 "2026 Rate":          f"{_rate_26:.1%}",
-                "Data Through":       _thru,
+                "Latest Return":      _thru,
                 "2022 Same Day":      f"{_rate_22_interp:.1%}",
                 "vs 2022":            f"{_pct_of_interp:.0%}" if _rate_26 > 0 else "—",
                 "Pace vs 2022":       _pace,
@@ -991,15 +983,6 @@ with tab_returns:
             _dist_rate_26 = _d_ret26 / _d_den26 if _d_den26 > 0 else 0
             _dist_rate_22_final  = _tot_returned_22 / _tot_issued_22 if _tot_issued_22 > 0 else 0
             _dist_rate_22_interp = _d_ret22_eq / _d_iss22 if _d_iss22 > 0 else 0
-            # District data date: registration-weighted middle of the counties' data dates
-            _dd = sorted(_days_by_cty.values(), key=lambda x: -x[0])
-            _cum, _half, _dist_days = 0, sum(w for _, w in _dd) / 2, _days_remaining_26
-            for _dl_c, _w in _dd:
-                _cum += _w
-                if _cum >= _half:
-                    _dist_days = _dl_c
-                    break
-            _dist_date = _EDAY_2026_TS - pd.Timedelta(days=_dist_days)
             _src = "Optiq" if _use_optiq else "SOS"
 
             _rc1, _rc2, _rc3, _rc4 = st.columns(4)
@@ -1011,19 +994,18 @@ with tab_returns:
             with _rc3:
                 _vs_base = (_dist_rate_26 / _dist_rate_22_interp) if _dist_rate_22_interp > 0 else 0
                 _col = "#2e7d32" if _vs_base >= 1.10 else ("#f57c00" if _vs_base >= 0.85 else "#c62828") if _dist_rate_26 > 0 else "#888"
-                st.markdown(f'<div class="stat-card"><div class="label">vs 2022 Pace · {_src}</div><div class="value" style="color:{_col}">{_vs_base:.0%}</div><div class="sub">data through {_dist_date:%b %-d} (E−{_dist_days}) · 2022 then: {_dist_rate_22_interp:.1%}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-card"><div class="label">vs 2022 Pace · {_src}</div><div class="value" style="color:{_col}">{_vs_base:.0%}</div><div class="sub">2022 at today\'s point (E−{_days_remaining_26}): {_dist_rate_22_interp:.1%}</div></div>', unsafe_allow_html=True)
             with _rc4:
                 # Snapshots collected so far
                 _n_snaps = _bsr_df["snapshot_date"].nunique()
                 st.markdown(f'<div class="stat-card"><div class="label">SOS Snapshots Collected</div><div class="value">{_n_snaps}</div><div class="sub">since {_bsr_df["snapshot_date"].min().strftime("%-d %b")}</div></div>', unsafe_allow_html=True)
 
         st.caption(
-            "🔵 Each county is compared with 2022 at the same number of days before Election Day, using that "
-            "county's own data date (Optiq's latest recorded return — counties report on different days). "
+            f"🔵 Compared with 2022 at today's point: E−{_days_remaining_26}. "
             "2022 same-day rate = 2022 pre-election rate × the share of 2022's early vote in by that day (SD4 2022 "
             "daily returns, read from PDI's tracker). Optiq rates use its registered mail-ballot universe; 2022 "
             "rates use SOS ballots issued. Where Optiq shows 0 returned for a county, the latest SOS count is used "
-            "(marked \"(SOS)\" in Data Through). Above ≥ 110% · Near 85–110% · Below < 85%"
+            "(marked \"(SOS)\" in Latest Return). Above ≥ 110% · Near 85–110% · Below < 85%"
         )
 
     # ── Optiq Crosstab Data ───────────────────────────────────────────────────

@@ -280,17 +280,20 @@ else:
     ct_latest = A.latest(ct_saved)
     ct_source = "saved"
 # Time series always use saved snapshots, plus today's live pull if it's newer
+# A live pull replaces any saved snapshot from the same day (it's at least as fresh)
 ct_hist = ct_saved
-if ct_source == "live" and (ct_saved.empty or today > ct_saved["snapshot_date"].max()):
-    ct_hist = pd.concat([ct_saved, ct_latest], ignore_index=True)
+if ct_source == "live":
+    ct_hist = pd.concat([ct_saved[ct_saved["snapshot_date"] != today] if not ct_saved.empty else ct_saved,
+                         ct_latest], ignore_index=True)
 
 if not live_cp.empty:
     cp_latest, cp_source = live_cp.assign(snapshot_date=today), "live"
 else:
     cp_latest, cp_source = A.latest(cp_saved), "saved"
 cp_hist = cp_saved
-if cp_source == "live" and (cp_saved.empty or today > cp_saved["snapshot_date"].max()):
-    cp_hist = pd.concat([cp_saved, cp_latest], ignore_index=True)
+if cp_source == "live":
+    cp_hist = pd.concat([cp_saved[cp_saved["snapshot_date"] != today] if not cp_saved.empty else cp_saved,
+                         cp_latest], ignore_index=True)
 
 reg_counts = reg.get("counts", {})
 reg_total = sum(reg_counts.values())
@@ -301,11 +304,12 @@ if sos.empty:
     st.warning("No SOS ballot return data found (ballot_returns.csv).")
     st.stop()
 
-county_t, meta = A.county_table(sos, base, daily22, curve_k, curve)
+# All 2022 comparisons are made at today's E-number
+county_t, meta = A.county_table(sos, base, daily22, curve_k, curve, compare_date=today)
 # Optiq county feed is the primary source for district figures; SOS is the fallback
 use_optiq = not cp_hist.empty
 if use_optiq:
-    oct_, ometa = A.optiq_county_table(cp_hist, base, daily22, curve_k, curve, sos=sos)
+    oct_, ometa = A.optiq_county_table(cp_hist, base, daily22, curve_k, curve, sos=sos, compare_date=today)
 else:
     oct_, ometa = None, None
 # Label every pace comparison with the assumption behind it
@@ -321,8 +325,9 @@ ct_date = (ct_latest["snapshot_date"].max() if not ct_latest.empty else None)
 badges = (
     f'<span class="src-badge">E−{days_to_eday} · {days_to_eday} days to Nov 3</span>'
     + (f'<span class="src-badge {"live" if cp_source == "live" else ""}">'
-       f'Optiq data · {ometa["as_of"]:%b %-d} (E−{ometa["days_left"]})</span>' if use_optiq else "")
-    + f'<span class="src-badge">SOS data · {meta["snapshot"]:%b %-d} (E−{meta["days_left"]})</span>'
+       f'Optiq · {"live, " if cp_source == "live" else ""}fetched {ometa["snapshot"]:%b %-d}</span>'
+       if use_optiq else "")
+    + f'<span class="src-badge">SOS report · {meta["snapshot"]:%b %-d}</span>'
 )
 st.markdown(badges, unsafe_allow_html=True)
 
@@ -336,8 +341,9 @@ with tabs[0]:
     if use_optiq:
         dm = ometa
         section("District",
-                f"Ballots returned is the official SOS count ({meta['snapshot']:%b %-d}). Rates and comparisons "
-                f"use Optiq, through {dm['as_of']:%b %-d} (E−{dm['days_left']}).")
+                f"Ballots returned is the official SOS count ({meta['snapshot']:%b %-d} report). Rates and "
+                f"comparisons use Optiq (fetched {dm['snapshot']:%b %-d}). 2022 is taken at today's point, "
+                f"E−{dm['days_left']}.")
         c = st.columns(4)
         with c[0]:
             card("Ballots returned · SOS", f"{meta['returned']:,}",
@@ -369,10 +375,10 @@ with tabs[0]:
     if daily22 is None:
         if use_optiq:
             parts = " · ".join(
-                f"k={k_:g}: {A.optiq_county_table(cp_hist, base, None, k_, None, sos=sos)[1]['pace_ratio']:.0%}"
+                f"k={k_:g}: {A.optiq_county_table(cp_hist, base, None, k_, None, sos=sos, compare_date=today)[1]['pace_ratio']:.0%}"
                 for k_ in (1.0, 1.5, 2.0, 2.5))
         else:
-            sens = A.pace_sensitivity(sos, base)
+            sens = A.pace_sensitivity(sos, base, compare_date=today)
             parts = " · ".join(f"k={r.k:g}: {r.pace_ratio:.0%}" for r in sens.itertuples())
         if curve is not None:
             st.caption(f"The 2022 path uses SD4's real 2022 daily returns (PDI, read from their chart), aligned by "
@@ -417,7 +423,7 @@ with tabs[0]:
             f"ℹ️ **SOS and Optiq totals don't match exactly** — SOS: {meta['returned']:,} returned of "
             f"{meta['issued']:,} issued ({meta['snapshot']:%b %-d}); Optiq: {int(ps['returned'].sum()):,} "
             f"of {int(ps['issued'].sum()):,} "
-            + (f"(through {party_src['as_of']:%b %-d}). " if party_src else
+            + (f"(fetched {party_src['snapshot']:%b %-d}). " if party_src else
                f"({'live' if ct_source == 'live' else f'{ct_date:%b %-d}'}). ") + SOURCE_GAP_NOTE)
 
     # ── 2026 vs 2022 at the same days out, both against their own registration
@@ -438,11 +444,11 @@ with tabs[0]:
         # Returns from the same Optiq feed as registration when possible, so both are the same moment
         if not cp_latest.empty:
             ret26 = cp_latest.groupby("party")[["returned"]].sum()
-            # Dated by the registration-weighted middle of the counties' latest returns
-            ret_src, ret_date = "Optiq county feed", A.optiq_as_of(cp_latest)
+            ret_src = "Optiq county feed"
         else:
             ret26 = A.group_summary(ct_latest, ["party"]).set_index("party")
-            ret_src, ret_date = "Optiq crosstabs", pd.Timestamp(ct_date)
+            ret_src = "Optiq crosstabs"
+        ret_date = today   # compare with 2022 at today's E-number
         days_out = int((D.EDAY_2026 - ret_date).days)
         r22 = A.at_days_out(cum22, days_out)
         tot26 = ret26["returned"].sum()
