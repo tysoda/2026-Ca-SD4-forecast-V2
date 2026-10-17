@@ -38,7 +38,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add optiq_crosstabs.csv
-          for f in optiq_county_party.csv optiq_precincts.csv sd4_precincts.geojson; do
+          for f in optiq_county_party.csv optiq_precincts.csv optiq_precincts_coverage.csv sd4_precincts.geojson; do
             [ -f "$f" ] && git add "$f"
           done
           # Only commit if there are changes

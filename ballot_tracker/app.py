@@ -145,6 +145,7 @@ def load_all():
         "ct": D.load_optiq_crosstabs(),
         "cp": D.load_optiq_county_party(),
         "pre": D.load_optiq_precincts(),
+        "pre_cov": D.load_precinct_coverage(),
     }
 
 
@@ -798,6 +799,17 @@ with tabs[2]:
                 f"{'s' if pmeta['n_snapshots'] != 1 else ''}). Split counties keep the precincts whose centre "
                 f"is inside SD4. Precincts with fewer than {A.PRECINCT_MIN_REG} registered voters are greyed "
                 f"out on the map — their rates swing too much to read.")
+        pcov = data["pre_cov"]
+        if not pcov.empty:
+            pcov = pcov[pcov["snapshot_date"] == pmeta["snapshot"]]
+            short = pcov[(~pcov["split"].astype(bool)) & (pcov["reg_optiq"] > 0)
+                         & (pcov["reg_precincts"] < pcov["reg_optiq"] * 0.98)]
+            if len(short):
+                st.caption("⚠ Precinct map covers less than Optiq's county total in: " + ", ".join(
+                    f"{r.county} ({r.reg_precincts / r.reg_optiq:.0%} of registered voters)"
+                    for r in short.itertuples())
+                    + ". Some precincts there aren't on Civiq's map, so they're missing here; "
+                      "county-level figures on the other tabs are complete.")
         c1, c2 = st.columns([2, 1])
         metrics = {
             "Return rate": ("rate", False, "{:.1%}", "Greens"),

@@ -276,6 +276,14 @@ def load_optiq_precincts() -> pd.DataFrame:
     return df
 
 
+def load_precinct_coverage() -> pd.DataFrame:
+    """Per-county precinct sums vs Optiq county totals, one block per snapshot."""
+    path = REPO_DIR / "optiq_precincts_coverage.csv"
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_csv(path, parse_dates=["snapshot_date"])
+
+
 def load_precinct_shapes() -> dict | None:
     """sd4_precincts.geojson — feature id is 'County|precinct'."""
     path = REPO_DIR / "sd4_precincts.geojson"
