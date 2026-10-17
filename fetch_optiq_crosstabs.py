@@ -21,7 +21,7 @@ from datetime import date
 import pandas as pd
 
 DISTRICT_SLUG = "STATE%20SENATE%204"
-API_URL = f"https://abev.optiqdata.com/api/ballot-returns/{DISTRICT_SLUG}"
+API_URL = f"https://abev.civiq.vote/api/ballot-returns/{DISTRICT_SLUG}"
 OUTPUT_CSV = os.path.join(os.path.dirname(__file__), "optiq_crosstabs.csv")
 SNAPSHOT_DATE = date.today().isoformat()  # e.g. "2026-10-07"
 
@@ -38,11 +38,20 @@ def fetch_rows(url: str) -> list[dict]:
     ctx = ssl.create_default_context(cafile=ca_bundle if os.path.exists(ca_bundle) else None)
     try:
         with urllib.request.urlopen(url, timeout=15, context=ctx) as resp:
-            data = json.loads(resp.read())
-            return data.get("ballotReturns", [])
+            final_url, body = resp.geturl(), resp.read()
     except Exception as exc:
         print(f"ERROR fetching Optiq API: {exc}", file=sys.stderr)
         sys.exit(1)
+    try:
+        data = json.loads(body)
+    except ValueError:
+        # Not JSON: usually the site moved and we were redirected to a web page
+        moved = f" (redirected to {final_url})" if final_url != url else ""
+        print(f"ERROR: Optiq returned a web page instead of data{moved}. "
+              f"First bytes: {body[:120]!r}. If the site has moved, update API_URL/GEO_URL.",
+              file=sys.stderr)
+        sys.exit(1)
+    return data.get("ballotReturns", [])
 
 
 def process_rows(raw_rows: list[dict]) -> pd.DataFrame:
@@ -75,7 +84,7 @@ def load_existing(path: str) -> pd.DataFrame:
                                   "ethnicity", "issued", "returned", "return_rate"])
 
 
-GEO_URL = f"https://abev.optiqdata.com/api/geography-breakdown/{DISTRICT_SLUG}?level=county_name"
+GEO_URL = f"https://abev.civiq.vote/api/geography-breakdown/{DISTRICT_SLUG}?level=county_name"
 COUNTY_CSV = os.path.join(os.path.dirname(__file__), "optiq_county_party.csv")
 SD4_COUNTIES = {
     "Alpine", "Amador", "Calaveras", "El Dorado", "Inyo", "Madera", "Mariposa",
