@@ -140,8 +140,7 @@ def decode_tiles(tiles, tiles_dir: Path | None, stats: dict | None = None) -> di
             county = str(p.get("county_name") or "").upper().strip()
             pid = str(p.get("precinct_shapefile") or "").strip()
             if not county:
-                stats["no_county"] += 1
-                continue
+                stats["no_county"] += 1      # kept; county is inferred from neighbours in select_sd4
             if not pid:
                 stats["no_id"] += 1
                 pid = "(no id)"
@@ -196,12 +195,32 @@ def centroid(polygons: list) -> tuple[float, float]:
     return sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
 
 
-def select_sd4(precincts: dict, boundary_ring: list) -> pd.DataFrame:
+def select_sd4(precincts: dict, boundary_ring: list, stats: dict | None = None) -> pd.DataFrame:
+    centres = {key: centroid(rec["polygons"]) for key, rec in precincts.items()}
+    # Precincts with no county label take the county of the nearest labelled precinct
+    labelled = [(c, lon, lat) for (c, _), (lon, lat) in centres.items() if c]
+    assigned: dict = {}
+    for (county, pid), (lon, lat) in list(centres.items()):
+        if county or not labelled:
+            continue
+        k = math.cos(math.radians(lat))
+        near = min(labelled, key=lambda r: ((r[1] - lon) * k) ** 2 + (r[2] - lat) ** 2)[0]
+        assigned[near] = assigned.get(near, 0) + 1
+        rec, c = precincts.pop((county, pid)), centres.pop((county, pid))
+        new = (near, pid)
+        if new in precincts and precincts[new]["props"] == rec["props"]:
+            precincts[new]["polygons"].extend(rec["polygons"])   # same precinct, label missing in one tile
+            continue
+        while new in precincts:
+            new = (near, new[1] + "+")
+        precincts[new], centres[new] = rec, c
+    if stats is not None:
+        stats["assigned"] = assigned
     rows = []
     for (county, pid), rec in precincts.items():
         if county not in SD4_COUNTIES:
             continue
-        lon, lat = centroid(rec["polygons"])
+        lon, lat = centres[(county, pid)]
         if county in SPLIT_COUNTIES and not point_in_polygon(lon, lat, boundary_ring):
             continue
         p = rec["props"]
@@ -213,8 +232,14 @@ def select_sd4(precincts: dict, boundary_ring: list) -> pd.DataFrame:
 # ── Validation against Optiq county totals ───────────────────────────────────
 def optiq_county_totals(geo_rows: list | None = None) -> dict:
     rows = geo_rows if geo_rows is not None else json.loads(_get(GEO_URL))
-    return {str(r["geography"]).title(): {"registered": int(r.get("totalRegistered") or 0),
-                                          "returned": int(r.get("totalReturned") or 0)} for r in rows}
+    out = {}
+    for r in rows:
+        o = {"registered": int(r.get("totalRegistered") or 0), "returned": int(r.get("totalReturned") or 0)}
+        for party, key in (("dem", "dem"), ("rep", "rep"), ("other", "npp")):
+            o[f"{party}_registered"] = int(r.get(f"{key}Registered") or 0)
+            o[f"{party}_returned"] = int(r.get(f"{key}Returned") or 0)
+        out[str(r["geography"]).title()] = o
+    return out
 
 
 def validate(df: pd.DataFrame, optiq: dict) -> tuple[bool, float, pd.DataFrame]:
@@ -223,7 +248,7 @@ def validate(df: pd.DataFrame, optiq: dict) -> tuple[bool, float, pd.DataFrame]:
     Returns (all whole counties within tolerance, whole-county registered
     coverage, per-county report).
     """
-    g = df.groupby("county")[["total_registered", "total_returned"]].sum()
+    g = df.groupby("county")[FIELDS].sum()
     rows, ok = [], True
     whole_reg = whole_optiq = 0
     for c, o in sorted(optiq.items()):
@@ -237,15 +262,59 @@ def validate(df: pd.DataFrame, optiq: dict) -> tuple[bool, float, pd.DataFrame]:
                 ok = False
         rows.append({"county": c, "precincts": int((df["county"] == c).sum()), "reg_precincts": reg,
                      "reg_optiq": o["registered"], "reg_diff": round(diff, 4),
-                     "ret_precincts": ret, "ret_optiq": o["returned"], "split": split})
+                     "ret_precincts": ret, "ret_optiq": o["returned"], "split": split,
+                     # Party figures for the part of the county not on the map (Optiq − precinct sum)
+                     **{f"gap_{k}": (o.get(k, 0) - (int(g.loc[c, k]) if c in g.index else 0))
+                        for k in FIELDS if not k.startswith("total")}})
     coverage = whole_reg / whole_optiq if whole_optiq else 0.0
     return ok, coverage, pd.DataFrame(rows)
 
 
 # ── Output ───────────────────────────────────────────────────────────────────
+SIMPLIFY_DEG = 0.0004   # ~40 m: plenty for a precinct map, and keeps the file ~2–3 MB
+
+
+def _rdp(pts: list, eps: float) -> list:
+    """Douglas–Peucker line simplification (open line)."""
+    if len(pts) < 3:
+        return pts
+    keep = [False] * len(pts)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(pts) - 1)]
+    while stack:
+        a, b = stack.pop()
+        (x0, y0), (x1, y1) = pts[a], pts[b]
+        dx, dy = x1 - x0, y1 - y0
+        n = math.hypot(dx, dy) or 1e-12
+        dmax, im = 0.0, None
+        for i in range(a + 1, b):
+            d = abs(dy * (pts[i][0] - x0) - dx * (pts[i][1] - y0)) / n
+            if d > dmax:
+                dmax, im = d, i
+        if im is not None and dmax > eps:
+            keep[im] = True
+            stack += [(a, im), (im, b)]
+    return [p for p, k in zip(pts, keep) if k]
+
+
+def _slim(ring: list) -> list:
+    """Simplify a closed ring (split in two so the closed ends don't collapse it)."""
+    if len(ring) >= 8:
+        m = len(ring) // 2
+        out = _rdp(ring[:m + 1], SIMPLIFY_DEG)[:-1] + _rdp(ring[m:], SIMPLIFY_DEG)
+        ring = out if len(out) >= 4 else ring
+    out = []
+    for lon, lat in ring:
+        pt = [round(lon, 4), round(lat, 4)]
+        if not out or pt != out[-1]:
+            out.append(pt)
+    return out
+
+
 def write_outputs(df: pd.DataFrame, precincts: dict, snapshot: str, report: pd.DataFrame) -> None:
-    cov = report.assign(snapshot_date=snapshot)[["snapshot_date", "county", "split", "precincts",
-                                                  "reg_precincts", "reg_optiq", "ret_precincts", "ret_optiq"]]
+    cov = report.assign(snapshot_date=snapshot)[
+        ["snapshot_date", "county", "split", "precincts", "reg_precincts", "reg_optiq", "ret_precincts", "ret_optiq"]
+        + [c for c in report.columns if c.startswith("gap_")]]
     if OUT_COVERAGE.exists():
         oldc = pd.read_csv(OUT_COVERAGE)
         cov = pd.concat([oldc[oldc["snapshot_date"] != snapshot], cov], ignore_index=True)
@@ -265,15 +334,15 @@ def write_outputs(df: pd.DataFrame, precincts: dict, snapshot: str, report: pd.D
         if (county, pid) not in keys:
             continue
         r = df[(df["county"].str.upper() == county) & (df["precinct"] == pid)].iloc[0]
-        coords = [[[list(pt) for pt in ring] for ring in poly] for poly in rec["polygons"]]
+        coords = [[_slim(ring) for ring in poly] for poly in rec["polygons"]]
         feats.append({"type": "Feature", "id": f"{county.title()}|{pid}",
                       "properties": {"county": county.title(), "precinct": pid,
                                      "lon": float(r["lon"]), "lat": float(r["lat"])},
                       "geometry": {"type": "MultiPolygon", "coordinates": coords}})
-    gj = {"type": "FeatureCollection", "features": feats}
+    gj = {"type": "FeatureCollection", "format": 2, "features": feats}
     if OUT_GEOJSON.exists():
-        old_ids = {f["id"] for f in json.loads(OUT_GEOJSON.read_text())["features"]}
-        if old_ids == {f["id"] for f in feats}:
+        old = json.loads(OUT_GEOJSON.read_text())
+        if old.get("format") == 2 and {f["id"] for f in old["features"]} == {f["id"] for f in feats}:
             print(f"  · {OUT_GEOJSON.name} unchanged (same precinct set)")
             return
     OUT_GEOJSON.write_text(json.dumps(gj, separators=(",", ":")))
@@ -299,12 +368,15 @@ def main():
         tiles = tiles_for_bbox(bbox, z)
         stats: dict = {}
         precincts = decode_tiles(tiles, args.tiles_dir, stats)
-        df = select_sd4(precincts, ring)
+        df = select_sd4(precincts, ring, stats)
         ok, coverage, report = validate(df, optiq)
         print(f"Zoom {z}: {len(tiles)} tiles, {stats['features']} features "
               f"({stats['no_county']} without a county, {stats['no_id']} without a precinct id, "
               f"{stats['shared_ids']} ids shared by more than one precinct)")
-        print(report.to_string(index=False))
+        if stats.get("assigned"):
+            print("  Unlabelled precincts given their nearest neighbour's county: "
+                  + ", ".join(f"{c.title()} {n}" for c, n in sorted(stats["assigned"].items())))
+        print(report[[c for c in report.columns if not c.startswith("gap_")]].to_string(index=False))
         print(f"  Whole-county registration coverage: {coverage:.2%}")
         if best is None or coverage > best[0] + 1e-9 or (abs(coverage - best[0]) < 1e-9 and len(df) > len(best[2])):
             best = (coverage, z, df, precincts, report)
