@@ -607,6 +607,45 @@ with tabs[1]:
             cfg2[f"{p_}_share_ret"] = pct_col(f"{short[p_]} ret %")
         st.dataframe(v[cols2], hide_index=True, width="stretch", height=38 + 35 * len(v),
                      column_config=cfg2)
+
+        section("Returns margin vs registration margin — counties",
+                "Each county, sized by ballots returned. Above the diagonal, the county's returns so far are "
+                "more Democratic than its registration; below, more Republican. The black diamond is SD4.")
+        cs_ = v[v["county"] != "SD4 total"].copy()
+        cs_["ret_all"] = cs_[[f"{p_}_ret" for p_ in D.PARTIES]].sum(axis=1)
+        cs_ = cs_[(cs_["ret_all"] > 0) & np.isfinite(cs_["dr_margin_ret"])]
+        few_ = cs_[cs_["ret_all"] < 25]
+        cs_ = cs_[cs_["ret_all"] >= 25]
+        if len(few_):
+            st.caption("Not shown (fewer than 25 ballots back, so the margin is noise): "
+                       + ", ".join(f"{r_.county} ({int(r_.ret_all)})" for r_ in few_.itertuples()) + ".")
+        if len(cs_):
+            fig = go.Figure()
+            smax = float(cs_["ret_all"].max())
+            for r_ in cs_.itertuples():
+                fig.add_scatter(
+                    x=[r_.dr_margin_reg], y=[r_.dr_margin_ret], mode="markers+text", name=r_.county,
+                    text=[r_.county], textposition="top center", textfont=dict(size=10),
+                    marker=dict(size=float(np.clip(np.sqrt(r_.ret_all / smax) * 46, 8, 46)),
+                                color=COUNTY_COLORS.get(r_.county, "#666"), opacity=0.75,
+                                line=dict(width=0.5, color="white")),
+                    showlegend=False,
+                    hovertemplate=(f"<b>{r_.county}</b><br>{int(r_.ret_all):,} returned<br>"
+                                   "Reg %{x:+.1f}% · Returns %{y:+.1f}%<extra></extra>"))
+            tot_ = v[v["county"] == "SD4 total"]
+            if len(tot_):
+                fig.add_scatter(x=tot_["dr_margin_reg"], y=tot_["dr_margin_ret"], mode="markers+text",
+                                text=["SD4"], textposition="bottom center", showlegend=False,
+                                marker=dict(symbol="diamond", size=14, color="#111"),
+                                hovertemplate="<b>SD4</b><br>Reg %{x:+.1f}% · Returns %{y:+.1f}%<extra></extra>")
+            lo = float(min(cs_["dr_margin_reg"].min(), cs_["dr_margin_ret"].min())) - 5
+            hi = float(max(cs_["dr_margin_reg"].max(), cs_["dr_margin_ret"].max())) + 5
+            fig.add_scatter(x=[lo, hi], y=[lo, hi], mode="lines", line=dict(color="#999", dash="dot"),
+                            showlegend=False, hoverinfo="skip")
+            fig.update_layout(**{**PLOT_LAYOUT, "hovermode": "closest"}, height=480)
+            fig.update_xaxes(title="D−R margin of registration", ticksuffix="%", tickformat="+.0f")
+            fig.update_yaxes(title="D−R margin of returns", ticksuffix="%", tickformat="+.0f")
+            st.plotly_chart(fig, width="stretch")
     else:
         cp_tab = pd.DataFrame()
         section("County returns — SOS (Optiq unavailable)",
@@ -786,7 +825,7 @@ with tabs[1]:
 # PRECINCTS
 # ══════════════════════════════════════════════════════════════════════════════
 with tabs[2]:
-    ptab, pmeta = A.precinct_table(data["pre"])
+    ptab, pmeta = A.precinct_table(data["pre"], data["pre_cov"])
     if ptab.empty:
         st.info("No precinct data yet. It's saved by the *Update Optiq Crosstabs* Action "
                 "(`fetch_optiq_precincts.py`) from Civiq's precinct map, and appears here after its next run.")
@@ -795,21 +834,16 @@ with tabs[2]:
         new_lbl = f"New since {pmeta['prev']:%b %-d}" if pmeta["prev"] is not None else None
         section("Precincts",
                 f"Optiq precinct figures from Civiq's map, saved {pmeta['snapshot']:%b %-d} "
-                f"({len(ptab):,} SD4 precincts; {pmeta['n_snapshots']} saved snapshot"
+                f"({int((~ptab['unmapped']).sum()):,} SD4 precincts; {pmeta['n_snapshots']} saved snapshot"
                 f"{'s' if pmeta['n_snapshots'] != 1 else ''}). Split counties keep the precincts whose centre "
-                f"is inside SD4. Precincts with fewer than {A.PRECINCT_MIN_REG} registered voters are greyed "
-                f"out on the map — their rates swing too much to read.")
-        pcov = data["pre_cov"]
-        if not pcov.empty:
-            pcov = pcov[pcov["snapshot_date"] == pmeta["snapshot"]]
-            short = pcov[(~pcov["split"].astype(bool)) & (pcov["reg_optiq"] > 0)
-                         & (pcov["reg_precincts"] < pcov["reg_optiq"] * 0.98)]
-            if len(short):
-                st.caption("⚠ Precinct map covers less than Optiq's county total in: " + ", ".join(
-                    f"{r.county} ({r.reg_precincts / r.reg_optiq:.0%} of registered voters)"
-                    for r in short.itertuples())
-                    + ". Some precincts there aren't on Civiq's map, so they're missing here; "
-                      "county-level figures on the other tabs are complete.")
+                f"is inside SD4. Grey on the map: precincts with fewer than {A.PRECINCT_MIN_REG} registered voters, "
+                f"and for the margin views, fewer than {A.PRECINCT_MIN_RET} ballots back — too few to read.")
+        if pmeta.get("unmapped_counties"):
+            st.caption("Some precincts aren't on Civiq's map, so their ballots can't be placed. Each county's "
+                       f"remainder is a “{A.UNMAPPED}” row in the table (party split from Optiq's county "
+                       "figures), so totals match Optiq: " + ", ".join(
+                           f"{c} {n:,} voters" for c, n in sorted(pmeta["unmapped_counties"].items(),
+                                                                  key=lambda kv: -kv[1])) + ".")
         c1, c2 = st.columns([2, 1])
         metrics = {
             "Return rate": ("rate", False, "{:.1%}", "Greens"),
@@ -833,7 +867,8 @@ with tabs[2]:
             card("Ballots returned", f"{tot_ret:,}", f"{tot_reg:,} registered")
         with k[1]:
             card("Return rate", pct(tot_ret / tot_reg if tot_reg else np.nan),
-                 f"Range {pct(view.loc[~view['small'], 'rate'].min())} – {pct(view.loc[~view['small'], 'rate'].max())}")
+                 f"Precincts {pct(view.loc[~view['small'] & ~view['unmapped'], 'rate'].min())} – "
+                 f"{pct(view.loc[~view['small'] & ~view['unmapped'], 'rate'].max())}")
         with k[2]:
             dr_ret = (card_ret["D"] - card_ret["R"]) / tot_ret if tot_ret else np.nan
             card("D−R margin of returns", pct(dr_ret) if not np.isfinite(dr_ret) else f"{dr_ret:+.1%}")
@@ -848,6 +883,8 @@ with tabs[2]:
         else:
             shown = view[view["id"].isin({f["id"] for f in shapes["features"]})]
             z = shown[col].where(~shown["small"]) if col not in ("returned", "new") else shown[col]
+            if col in ("dr_ret", "shift"):
+                z = z.where(shown["returned"] >= A.PRECINCT_MIN_RET)
             finite = z[np.isfinite(z.astype(float))]
             if diverging:
                 m = float(np.nanpercentile(np.abs(finite), 95)) if len(finite) else 1.0
@@ -866,14 +903,19 @@ with tabs[2]:
                 + (("<br>" + new_lbl + ": " + shown["new"].map(lambda v: f"{int(v):,}")) if new_lbl else "")
             )
             fig = go.Figure()
-            # Grey layer underneath so small / no-data precincts still show
-            fig.add_trace(go.Choroplethmap(
-                geojson=shapes, locations=shown["id"], featureidkey="id", z=[0] * len(shown),
-                colorscale=[[0, "#e4e4e0"], [1, "#e4e4e0"]], showscale=False,
-                marker=dict(line=dict(width=0.3, color="#999")), text=hover, hoverinfo="text"))
             ok = np.isfinite(z.astype(float))
+            # Each trace gets only its own precincts' shapes, so no shape is sent to the browser twice
+            feat_by_id = {f["id"]: f for f in shapes["features"]}
+            def sub_geo(ids):
+                return {"type": "FeatureCollection", "features": [feat_by_id[i] for i in ids]}
+            # Grey for small / no-data precincts
+            if (~ok).any():
+                fig.add_trace(go.Choroplethmap(
+                    geojson=sub_geo(shown.loc[~ok, "id"]), locations=shown.loc[~ok, "id"], featureidkey="id",
+                    z=[0] * int((~ok).sum()), colorscale=[[0, "#e4e4e0"], [1, "#e4e4e0"]], showscale=False,
+                    marker=dict(line=dict(width=0.3, color="#999")), text=hover[~ok], hoverinfo="text"))
             fig.add_trace(go.Choroplethmap(
-                geojson=shapes, locations=shown.loc[ok, "id"], featureidkey="id", z=z[ok],
+                geojson=sub_geo(shown.loc[ok, "id"]), locations=shown.loc[ok, "id"], featureidkey="id", z=z[ok],
                 zmin=zmin, zmax=zmax, colorscale=cs, zmid=0 if diverging else None,
                 marker=dict(line=dict(width=0.3, color="#666"), opacity=0.9),
                 text=hover[ok], hoverinfo="text",
@@ -896,13 +938,20 @@ with tabs[2]:
             # white-bg needs no base-map tiles, so it renders behind any network
             fig.update_layout(map=dict(style="white-bg", zoom=zoom, center=center), height=620,
                               margin=dict(l=0, r=0, t=10, b=0), paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig, width="stretch")
+            # Framed, and the mouse wheel scrolls the page rather than zooming: zoom with the +/− buttons
+            with st.container(border=True):
+                st.plotly_chart(fig, width="stretch",
+                                config={"scrollZoom": False, "displayModeBar": True,
+                                        "modeBarButtonsToRemove": ["select2d", "lasso2d"]})
+                st.caption("Zoom with the +/− buttons in the corner (or pinch / double-click); "
+                           "the mouse wheel scrolls the page.")
 
         # Registration margin vs returns margin
         section("Returns margin vs registration margin",
-                "Each dot is a precinct, sized by ballots returned. Above the diagonal, the returns so far are "
+                f"Each precinct with at least {A.PRECINCT_MIN_RET} ballots back, sized by ballots returned. Above the diagonal, the returns so far are "
                 "more Democratic than the precinct's registration; below, more Republican.")
-        sc = view[~view["small"] & np.isfinite(view["dr_ret"])]
+        sc = view[~view["small"] & ~view["unmapped"] & np.isfinite(view["dr_ret"])
+                  & (view["returned"] >= A.PRECINCT_MIN_RET)]
         if len(sc):
             fig = go.Figure()
             for cty, g in sc.groupby("county"):

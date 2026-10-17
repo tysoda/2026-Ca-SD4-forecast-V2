@@ -628,13 +628,32 @@ def series_2026(ct_hist: pd.DataFrame, cp_hist: pd.DataFrame) -> pd.DataFrame:
 
 # ── Precincts ────────────────────────────────────────────────────────────────
 PRECINCT_MIN_REG = 25   # below this, rates and margins are too noisy to colour
+PRECINCT_MIN_RET = 10   # margins of returns need at least this many ballots back
 
 
-def precinct_table(pre: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+UNMAPPED = "(not on map)"
+
+
+def _precinct_metrics(out: pd.DataFrame) -> pd.DataFrame:
+    reg = out["registered"].where(out["registered"] > 0)
+    ret = out["returned"].where(out["returned"] > 0)
+    out["rate"] = out["returned"] / reg
+    for p in ("D", "R", "O"):
+        out[f"{p.lower()}_share"] = out[p] / ret
+    out["dr_ret"] = (out["D"] - out["R"]) / ret
+    out["dr_reg"] = (out["D_reg"] - out["R_reg"]) / reg
+    out["shift"] = out["dr_ret"] - out["dr_reg"]
+    return out
+
+
+def precinct_table(pre: pd.DataFrame, coverage: pd.DataFrame | None = None) -> tuple[pd.DataFrame, dict]:
     """Latest precinct snapshot with rates, margins and change since the previous one.
 
     Columns: county, precinct, id, registered, returned, rate, D/R/O returned,
-    d_share/r_share/o_share (of returns), dr_ret, dr_reg, shift, new, small.
+    d_share/r_share/o_share (of returns), dr_ret, dr_reg, shift, new, small, unmapped.
+    With the coverage file, each county whose map precincts fall short of Optiq's
+    county total gets an extra "(not on map)" row for the remainder, so county and
+    district totals match Optiq.
     """
     if pre.empty:
         return pd.DataFrame(), {}
@@ -648,20 +667,37 @@ def precinct_table(pre: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         "D": cur["dem_returned"], "R": cur["rep_returned"], "O": cur["other_returned"],
         "D_reg": cur["dem_registered"], "R_reg": cur["rep_registered"],
     })
-    out["id"] = out["county"] + "|" + out["precinct"]
-    reg = out["registered"].where(out["registered"] > 0)
-    ret = out["returned"].where(out["returned"] > 0)
-    out["rate"] = out["returned"] / reg
-    for p in ("D", "R", "O"):
-        out[f"{p.lower()}_share"] = out[p] / ret
-    out["dr_ret"] = (out["D"] - out["R"]) / ret
-    out["dr_reg"] = (out["D_reg"] - out["R_reg"]) / reg
-    out["shift"] = out["dr_ret"] - out["dr_reg"]
     if meta["prev"] is not None:
         prev = pre[pre["snapshot_date"] == dates[-2]].set_index(["county", "precinct"])["total_returned"]
         out["new"] = (out.set_index(["county", "precinct"])["returned"]
                       - prev.reindex(out.set_index(["county", "precinct"]).index).fillna(0)).values.astype(int)
     else:
         out["new"] = np.nan
+    out["unmapped"] = False
+
+    gaps = []
+    if coverage is not None and not coverage.empty:
+        cov = coverage[coverage["snapshot_date"] == meta["snapshot"]]
+        has_party = "gap_dem_returned" in cov
+        for r in cov.itertuples():
+            g_reg, g_ret = int(r.reg_optiq - r.reg_precincts), int(r.ret_optiq - r.ret_precincts)
+            if g_reg <= 0:
+                continue
+            row = {"county": r.county, "precinct": UNMAPPED, "registered": g_reg, "returned": max(g_ret, 0),
+                   "D": np.nan, "R": np.nan, "O": np.nan, "D_reg": np.nan, "R_reg": np.nan,
+                   "new": np.nan, "unmapped": True}
+            if has_party:
+                row.update(D=max(r.gap_dem_returned, 0), R=max(r.gap_rep_returned, 0),
+                           O=max(r.gap_other_returned, 0),
+                           D_reg=max(r.gap_dem_registered, 0), R_reg=max(r.gap_rep_registered, 0))
+            gaps.append(row)
+    if gaps:
+        out = pd.concat([out, pd.DataFrame(gaps)], ignore_index=True)
+    meta["unmapped_reg"] = int(sum(g["registered"] for g in gaps))
+    meta["unmapped_counties"] = {g["county"]: g["registered"] for g in gaps}
+
+    out["id"] = out["county"] + "|" + out["precinct"]
+    out = _precinct_metrics(out)
     out["small"] = out["registered"] < PRECINCT_MIN_REG
-    return out.sort_values(["county", "precinct"]).reset_index(drop=True), meta
+    out = out.sort_values(["county", "unmapped", "precinct"]).reset_index(drop=True)
+    return out, meta
