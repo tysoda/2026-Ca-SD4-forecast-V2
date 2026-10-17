@@ -1,0 +1,50 @@
+name: Daily Snapshot Email
+
+on:
+  schedule:
+    # 14:07 UTC = 7:07am Pacific while daylight time lasts (until Nov 1; 6:07am after).
+    # GitHub can run scheduled jobs late at busy times, so allow for some delay.
+    - cron: '7 14 * * *'
+  workflow_dispatch:
+    inputs:
+      preview_only:
+        description: "Build the email but don't send it (download it from the run's artifacts)"
+        type: boolean
+        default: false
+
+jobs:
+  email:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pandas numpy
+
+      - name: Preview email
+        if: ${{ inputs.preview_only }}
+        env:
+          TRACKER_URL: ${{ vars.TRACKER_URL }}
+        run: python3 ballot_tracker/daily_email.py --preview email_preview.html
+
+      - name: Upload preview
+        if: ${{ inputs.preview_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: email-preview
+          path: email_preview.html
+
+      - name: Send email
+        if: ${{ !inputs.preview_only }}
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          TRACKER_URL: ${{ vars.TRACKER_URL }}
+        run: python3 ballot_tracker/daily_email.py

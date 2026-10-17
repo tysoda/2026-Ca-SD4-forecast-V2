@@ -39,3 +39,20 @@ A county-level `vbm_2022_daily.csv` overrides both when present. Schema:
 
 Snapshots whose numbers are identical to the previous one are dropped before computing trends, so
 weekend re-publishes don't show up as zero-return days.
+
+## Daily snapshot email
+
+`daily_email.py` sends the Overview's headline figures (District and By party), change since the previous
+day, a county table and a link to the tracker. The *Daily Snapshot Email* Action runs it at about 7am Pacific.
+
+Setup (repo **Settings → Secrets and variables → Actions**):
+
+| Name | Kind | Value |
+|---|---|---|
+| `GMAIL_USER` | secret | the Gmail / Google Workspace address that sends the email |
+| `GMAIL_APP_PASSWORD` | secret | a Google app password for that account (needs 2-Step Verification) |
+| `EMAIL_TO` | secret, optional | recipients, comma-separated (default: `GMAIL_USER`) |
+| `TRACKER_URL` | variable, optional | the tracker's Streamlit URL, for the "Open the tracker" button |
+
+Preview without sending: Actions → *Daily Snapshot Email* → Run workflow → tick "preview only", then download
+the `email-preview` artifact. Locally: `python3 ballot_tracker/daily_email.py --preview email.html`.
