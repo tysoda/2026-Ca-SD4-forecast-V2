@@ -16,9 +16,12 @@ This script:
   3. keeps SD4 precincts: all of the 9 whole counties, and in the 4 split
      counties those whose centre falls inside sd4_boundary.json,
   4. checks county totals against Optiq's county feed (geography-breakdown)
-     and, if they don't match, retries at a higher zoom,
-  5. appends today's snapshot to optiq_precincts.csv and writes the shapes
-     to sd4_precincts.geojson (only when the precinct set changes).
+     and, if they don't match, retries at a higher zoom; if no zoom matches
+     every county, keeps the best one as long as it covers ≥95% of the
+     whole counties' registration (some precincts may have no map shape),
+  5. appends today's snapshot to optiq_precincts.csv, per-county coverage to
+     optiq_precincts_coverage.csv, and writes the shapes to
+     sd4_precincts.geojson (only when the precinct set changes).
 
 Usage
   python3 fetch_optiq_precincts.py            # fetch, validate, write
@@ -50,6 +53,7 @@ TILE_URL = f"{BASE}/tiles/{SLUG}/{{z}}/{{x}}/{{y}}.pbf"
 GEO_URL = f"{BASE}/geography-breakdown/{SLUG}?level=county_name"
 OUT_CSV = REPO / "optiq_precincts.csv"
 OUT_GEOJSON = REPO / "sd4_precincts.geojson"
+OUT_COVERAGE = REPO / "optiq_precincts_coverage.csv"
 BOUNDARY = REPO / "sd4_boundary.json"
 
 SD4_COUNTIES = {"ALPINE", "AMADOR", "CALAVERAS", "EL DORADO", "INYO", "MADERA", "MARIPOSA",
@@ -59,6 +63,7 @@ FIELDS = ["dem_registered", "rep_registered", "other_registered", "total_registe
           "dem_returned", "rep_returned", "other_returned", "total_returned"]
 ZOOMS = (6, 7, 8)            # tried in order until county totals match Optiq
 MATCH_TOLERANCE = 0.02       # whole counties: |precinct sum − Optiq| / Optiq
+MIN_COVERAGE = 0.95          # if no zoom matches every county, save the best one if it covers this much
 
 
 # ── Tiles ────────────────────────────────────────────────────────────────────
@@ -108,9 +113,17 @@ def load_tile(z, x, y, tiles_dir: Path | None) -> bytes | None:
 
 
 # ── Decode and merge ─────────────────────────────────────────────────────────
-def decode_tiles(tiles, tiles_dir: Path | None) -> dict:
-    """{(county, precinct): {"props": {...}, "polygons": [[ring, ...], ...]}}"""
-    out: dict = {}
+def decode_tiles(tiles, tiles_dir: Path | None, stats: dict | None = None) -> dict:
+    """{(county, precinct): {"props": {...}, "polygons": [[ring, ...], ...]}}
+
+    A precinct cut by a tile edge appears in each tile with identical figures,
+    so pieces are merged on (county, precinct id, figures). Different precincts
+    that share a shapefile id (consolidated precincts) keep separate entries,
+    labelled id, id#2, ….
+    """
+    stats = stats if stats is not None else {}
+    stats.update(features=0, no_county=0, no_id=0)
+    groups: dict = {}
     for z, x, y in tiles:
         data = load_tile(z, x, y, tiles_dir)
         if not data:
@@ -120,19 +133,38 @@ def decode_tiles(tiles, tiles_dir: Path | None) -> dict:
         if not layer:
             continue
         ext = layer.get("extent", 4096)
+        seen_here: dict = {}
         for f in layer["features"]:
+            stats["features"] += 1
             p = f["properties"]
             county = str(p.get("county_name") or "").upper().strip()
             pid = str(p.get("precinct_shapefile") or "").strip()
-            if not county or not pid:
+            if not county:
+                stats["no_county"] += 1
                 continue
+            if not pid:
+                stats["no_id"] += 1
+                pid = "(no id)"
+            sig = tuple(int(p.get(k) or 0) for k in FIELDS)
+            # The same key twice in one tile means two different precincts
+            n = seen_here.get((county, pid, sig), 0)
+            seen_here[(county, pid, sig)] = n + 1
+            sig = sig + (n,)
             g = f["geometry"]
             polys = [g["coordinates"]] if g["type"] == "Polygon" else g["coordinates"]
             polys = [[[to_lonlat(px, py, z, x, y, ext) for px, py in ring] for ring in poly] for poly in polys]
-            rec = out.setdefault((county, pid), {"props": p, "polygons": []})
-            rec["polygons"].extend(polys)   # pieces clipped at tile edges are kept together
+            rec = groups.setdefault((county, pid), {}).setdefault(sig, {"props": p, "polygons": []})
+            rec["polygons"].extend(polys)
         if not tiles_dir:
             time.sleep(0.3)                 # be gentle with the server
+    out = {}
+    shared = 0
+    for (county, pid), by_sig in groups.items():
+        if len(by_sig) > 1:
+            shared += 1
+        for i, sig in enumerate(sorted(by_sig, key=lambda s: (-s[3], s[-1]))):
+            out[(county, pid if i == 0 else f"{pid}#{i + 1}")] = by_sig[sig]
+    stats["shared_ids"] = shared
     return out
 
 
@@ -185,24 +217,40 @@ def optiq_county_totals(geo_rows: list | None = None) -> dict:
                                           "returned": int(r.get("totalReturned") or 0)} for r in rows}
 
 
-def validate(df: pd.DataFrame, optiq: dict) -> tuple[bool, pd.DataFrame]:
+def validate(df: pd.DataFrame, optiq: dict) -> tuple[bool, float, pd.DataFrame]:
+    """Compare precinct sums with Optiq's county totals.
+
+    Returns (all whole counties within tolerance, whole-county registered
+    coverage, per-county report).
+    """
     g = df.groupby("county")[["total_registered", "total_returned"]].sum()
     rows, ok = [], True
+    whole_reg = whole_optiq = 0
     for c, o in sorted(optiq.items()):
         reg = int(g.loc[c, "total_registered"]) if c in g.index else 0
         ret = int(g.loc[c, "total_returned"]) if c in g.index else 0
         diff = (reg - o["registered"]) / o["registered"] if o["registered"] else 0.0
         split = c.upper() in SPLIT_COUNTIES
-        if not split and abs(diff) > MATCH_TOLERANCE:
-            ok = False
+        if not split:
+            whole_reg += reg; whole_optiq += o["registered"]
+            if abs(diff) > MATCH_TOLERANCE:
+                ok = False
         rows.append({"county": c, "precincts": int((df["county"] == c).sum()), "reg_precincts": reg,
                      "reg_optiq": o["registered"], "reg_diff": round(diff, 4),
                      "ret_precincts": ret, "ret_optiq": o["returned"], "split": split})
-    return ok, pd.DataFrame(rows)
+    coverage = whole_reg / whole_optiq if whole_optiq else 0.0
+    return ok, coverage, pd.DataFrame(rows)
 
 
 # ── Output ───────────────────────────────────────────────────────────────────
-def write_outputs(df: pd.DataFrame, precincts: dict, snapshot: str) -> None:
+def write_outputs(df: pd.DataFrame, precincts: dict, snapshot: str, report: pd.DataFrame) -> None:
+    cov = report.assign(snapshot_date=snapshot)[["snapshot_date", "county", "split", "precincts",
+                                                  "reg_precincts", "reg_optiq", "ret_precincts", "ret_optiq"]]
+    if OUT_COVERAGE.exists():
+        oldc = pd.read_csv(OUT_COVERAGE)
+        cov = pd.concat([oldc[oldc["snapshot_date"] != snapshot], cov], ignore_index=True)
+    cov.to_csv(OUT_COVERAGE, index=False)
+
     snap = df.drop(columns=["lon", "lat"]).assign(snapshot_date=snapshot)
     snap = snap[["snapshot_date", "county", "precinct"] + FIELDS]
     if OUT_CSV.exists():
@@ -246,23 +294,37 @@ def main():
     optiq = optiq_county_totals(json.loads(args.geo_json.read_text()) if args.geo_json else None)
     snapshot = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=-8))).date().isoformat()
 
+    best = None
     for z in ([args.zoom] if args.zoom else ZOOMS):
         tiles = tiles_for_bbox(bbox, z)
-        print(f"Zoom {z}: {len(tiles)} tiles")
-        precincts = decode_tiles(tiles, args.tiles_dir)
+        stats: dict = {}
+        precincts = decode_tiles(tiles, args.tiles_dir, stats)
         df = select_sd4(precincts, ring)
-        ok, report = validate(df, optiq)
+        ok, coverage, report = validate(df, optiq)
+        print(f"Zoom {z}: {len(tiles)} tiles, {stats['features']} features "
+              f"({stats['no_county']} without a county, {stats['no_id']} without a precinct id, "
+              f"{stats['shared_ids']} ids shared by more than one precinct)")
         print(report.to_string(index=False))
+        print(f"  Whole-county registration coverage: {coverage:.2%}")
+        if best is None or coverage > best[0] + 1e-9 or (abs(coverage - best[0]) < 1e-9 and len(df) > len(best[2])):
+            best = (coverage, z, df, precincts, report)
         if ok and len(df):
-            if args.dry_run:
-                print("Dry run — nothing written.")
-            else:
-                write_outputs(df, precincts, snapshot)
-            return
-        print(f"  ✗ county totals don't match Optiq at zoom {z}" + (" — trying higher zoom" if not args.zoom else ""))
-    print("ERROR: precinct totals never matched Optiq's county totals; nothing written.", file=sys.stderr)
-    sys.exit(1)
+            break
+        print(f"  ✗ some whole counties are more than {MATCH_TOLERANCE:.0%} off Optiq at zoom {z}")
 
+    coverage, z, df, precincts, report = best
+    off = report[~report["split"] & (report["reg_diff"].abs() > MATCH_TOLERANCE)]
+    if coverage < MIN_COVERAGE or df.empty:
+        print(f"ERROR: best coverage {coverage:.1%} (zoom {z}) is below {MIN_COVERAGE:.0%}; nothing written.",
+              file=sys.stderr)
+        sys.exit(1)
+    if len(off):
+        print(f"WARNING: saving zoom {z} ({coverage:.2%} coverage) — precinct totals short of Optiq in: "
+              + ", ".join(f"{r.county} ({r.reg_diff:+.1%})" for r in off.itertuples()))
+    if args.dry_run:
+        print("Dry run — nothing written.")
+    else:
+        write_outputs(df, precincts, snapshot, report)
 
 if __name__ == "__main__":
     main()
