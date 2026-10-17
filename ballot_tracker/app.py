@@ -496,14 +496,31 @@ with tabs[0]:
     # One shared axis; the line is added after the bars so it draws in front.
     fig.add_bar(x=dist["snapshot_date"], y=dist["per_day"], name="Returns / day",
                 marker_color="#c3dece", hovertemplate="%{y:,.0f}/day")
-    fig.add_scatter(x=dist["snapshot_date"], y=dist["vbm_returned"], name="Cumulative returned",
+    fig.add_scatter(x=dist["snapshot_date"], y=dist["vbm_returned"], name="Cumulative returned (SOS)",
                     mode="lines+markers", line=dict(color="#1a6b3c", width=2.5),
                     hovertemplate="%{y:,}")
-    fig.update_layout(**PLOT_LAYOUT, height=330)
+    # Cumulative returns by party (Optiq): exact by return date when the live feed is up,
+    # otherwise from the saved daily snapshots
+    party_src = None
+    if not live_cells.empty and live_cells["return_date"].notna().any():
+        _rp = (live_cells.dropna(subset=["return_date"]).groupby(["return_date", "party"])["voters"].sum()
+               .unstack("party", fill_value=0))
+        _rp = _rp.reindex(pd.date_range(_rp.index.min(), _rp.index.max(), freq="D"), fill_value=0).cumsum()
+        party_src = "Optiq, by each ballot's return date"
+    elif not ct_hist.empty:
+        _rp = ct_hist.groupby(["snapshot_date", "party"])["returned"].sum().unstack("party", fill_value=0)
+        party_src = "Optiq daily snapshots, dated by fetch day"
+    if party_src:
+        for p_ in D.PARTIES:
+            if p_ in _rp:
+                fig.add_scatter(x=_rp.index, y=_rp[p_], name=f"{D.PARTY_LABELS[p_]} (Optiq)", mode="lines",
+                                line=dict(color=D.PARTY_COLORS[p_], width=2), hovertemplate="%{y:,}")
+    fig.update_layout(**PLOT_LAYOUT, height=360)
     fig.update_yaxes(tickformat=",", rangemode="tozero")
     st.plotly_chart(fig, width="stretch")
-    st.caption("Snapshots where SOS figures didn't change (weekends, no new report) are dropped; "
-               "per-day velocity divides by the real gap between reports.")
+    st.caption("Bars and the green line: SOS. Snapshots where SOS figures didn't change (weekends, no new "
+               "report) are dropped; per-day velocity divides by the real gap between reports."
+               + (f" Party lines: {party_src} — Optiq's totals run a little below SOS." if party_src else ""))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # COUNTIES
