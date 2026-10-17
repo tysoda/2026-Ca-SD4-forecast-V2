@@ -624,3 +624,44 @@ def series_2026(ct_hist: pd.DataFrame, cp_hist: pd.DataFrame) -> pd.DataFrame:
     both["_pri"] = (both["source"] != "Optiq county feed").astype(int)
     both = both.sort_values(["days_before_eday", "_pri"]).drop_duplicates("days_before_eday")
     return both.drop(columns="_pri").sort_values("days_before_eday", ascending=False).reset_index(drop=True)
+
+
+# ── Precincts ────────────────────────────────────────────────────────────────
+PRECINCT_MIN_REG = 25   # below this, rates and margins are too noisy to colour
+
+
+def precinct_table(pre: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Latest precinct snapshot with rates, margins and change since the previous one.
+
+    Columns: county, precinct, id, registered, returned, rate, D/R/O returned,
+    d_share/r_share/o_share (of returns), dr_ret, dr_reg, shift, new, small.
+    """
+    if pre.empty:
+        return pd.DataFrame(), {}
+    dates = sorted(pre["snapshot_date"].unique())
+    cur = pre[pre["snapshot_date"] == dates[-1]].copy()
+    meta = {"snapshot": pd.Timestamp(dates[-1]), "n_snapshots": len(dates),
+            "prev": pd.Timestamp(dates[-2]) if len(dates) > 1 else None}
+    out = pd.DataFrame({
+        "county": cur["county"], "precinct": cur["precinct"],
+        "registered": cur["total_registered"], "returned": cur["total_returned"],
+        "D": cur["dem_returned"], "R": cur["rep_returned"], "O": cur["other_returned"],
+        "D_reg": cur["dem_registered"], "R_reg": cur["rep_registered"],
+    })
+    out["id"] = out["county"] + "|" + out["precinct"]
+    reg = out["registered"].where(out["registered"] > 0)
+    ret = out["returned"].where(out["returned"] > 0)
+    out["rate"] = out["returned"] / reg
+    for p in ("D", "R", "O"):
+        out[f"{p.lower()}_share"] = out[p] / ret
+    out["dr_ret"] = (out["D"] - out["R"]) / ret
+    out["dr_reg"] = (out["D_reg"] - out["R_reg"]) / reg
+    out["shift"] = out["dr_ret"] - out["dr_reg"]
+    if meta["prev"] is not None:
+        prev = pre[pre["snapshot_date"] == dates[-2]].set_index(["county", "precinct"])["total_returned"]
+        out["new"] = (out.set_index(["county", "precinct"])["returned"]
+                      - prev.reindex(out.set_index(["county", "precinct"]).index).fillna(0)).values.astype(int)
+    else:
+        out["new"] = np.nan
+    out["small"] = out["registered"] < PRECINCT_MIN_REG
+    return out.sort_values(["county", "precinct"]).reset_index(drop=True), meta

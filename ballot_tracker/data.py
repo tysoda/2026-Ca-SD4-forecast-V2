@@ -261,3 +261,33 @@ def load_registration_2022() -> pd.DataFrame | None:
     if not path.exists():
         return None
     return pd.read_csv(path)
+
+
+# ── Optiq precincts (from Civiq's map tiles, via fetch_optiq_precincts.py) ───
+def load_optiq_precincts() -> pd.DataFrame:
+    """Precinct × snapshot D/R/O registered and returned (SD4 precincts only)."""
+    path = REPO_DIR / "optiq_precincts.csv"
+    if not path.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(path, dtype={"precinct": str}, parse_dates=["snapshot_date"])
+    for c in df.columns:
+        if c.endswith(("_registered", "_returned")):
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+    return df
+
+
+def load_precinct_shapes() -> dict | None:
+    """sd4_precincts.geojson — feature id is 'County|precinct'."""
+    path = REPO_DIR / "sd4_precincts.geojson"
+    if not path.exists():
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
+def load_sd4_boundary() -> list | None:
+    path = REPO_DIR / "sd4_boundary.json"
+    if not path.exists():
+        return None
+    with open(path) as f:
+        return json.load(f)["coordinates"][0]

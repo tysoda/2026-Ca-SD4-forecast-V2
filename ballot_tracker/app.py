@@ -144,7 +144,13 @@ def load_all():
         "reg": D.load_party_registration(),
         "ct": D.load_optiq_crosstabs(),
         "cp": D.load_optiq_county_party(),
+        "pre": D.load_optiq_precincts(),
     }
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_precinct_geo():
+    return D.load_precinct_shapes(), D.load_sd4_boundary()
 
 
 @st.cache_data(ttl=3600, show_spinner="Fetching live Optiq data…")
@@ -331,8 +337,8 @@ badges = (
 )
 st.markdown(badges, unsafe_allow_html=True)
 
-tabs = st.tabs(["Overview", "Counties", "Crosstabs", "Trends", "Outstanding", "2022 comparison",
-                "Method & data"])
+tabs = st.tabs(["Overview", "Counties", "Precincts", "Crosstabs", "Trends", "Outstanding",
+                "2022 comparison", "Method & data"])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # OVERVIEW
@@ -776,9 +782,157 @@ with tabs[1]:
         st.plotly_chart(fig, width="stretch")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CROSSTABS
+# PRECINCTS
 # ══════════════════════════════════════════════════════════════════════════════
 with tabs[2]:
+    ptab, pmeta = A.precinct_table(data["pre"])
+    if ptab.empty:
+        st.info("No precinct data yet. It's saved by the *Update Optiq Crosstabs* Action "
+                "(`fetch_optiq_precincts.py`) from Civiq's precinct map, and appears here after its next run.")
+    else:
+        shapes, sd4_ring = load_precinct_geo()
+        new_lbl = f"New since {pmeta['prev']:%b %-d}" if pmeta["prev"] is not None else None
+        section("Precincts",
+                f"Optiq precinct figures from Civiq's map, saved {pmeta['snapshot']:%b %-d} "
+                f"({len(ptab):,} SD4 precincts; {pmeta['n_snapshots']} saved snapshot"
+                f"{'s' if pmeta['n_snapshots'] != 1 else ''}). Split counties keep the precincts whose centre "
+                f"is inside SD4. Precincts with fewer than {A.PRECINCT_MIN_REG} registered voters are greyed "
+                f"out on the map — their rates swing too much to read.")
+        c1, c2 = st.columns([2, 1])
+        metrics = {
+            "Return rate": ("rate", False, "{:.1%}", "Greens"),
+            "D−R margin of returns": ("dr_ret", True, "{:+.1%}", "RdBu"),
+            "Shift vs registration (D−R returns − D−R reg)": ("shift", True, "{:+.1%}", "RdBu"),
+            "Ballots returned": ("returned", False, "{:,.0f}", "Greens"),
+        }
+        if new_lbl:
+            metrics[new_lbl] = ("new", False, "{:,.0f}", "Greens")
+        mname = c1.selectbox("Colour precincts by", list(metrics), key="pre_metric")
+        county_opts = ["All of SD4"] + sorted(ptab["county"].unique())
+        csel = c2.selectbox("County", county_opts, key="pre_county")
+        view = ptab if csel == "All of SD4" else ptab[ptab["county"] == csel]
+        col, diverging, fmt, cs = metrics[mname]
+
+        # Summary cards for the selection
+        k = st.columns(4)
+        tot_reg, tot_ret = int(view["registered"].sum()), int(view["returned"].sum())
+        card_ret = view[["D", "R", "O"]].sum()
+        with k[0]:
+            card("Ballots returned", f"{tot_ret:,}", f"{tot_reg:,} registered")
+        with k[1]:
+            card("Return rate", pct(tot_ret / tot_reg if tot_reg else np.nan),
+                 f"Range {pct(view.loc[~view['small'], 'rate'].min())} – {pct(view.loc[~view['small'], 'rate'].max())}")
+        with k[2]:
+            dr_ret = (card_ret["D"] - card_ret["R"]) / tot_ret if tot_ret else np.nan
+            card("D−R margin of returns", pct(dr_ret) if not np.isfinite(dr_ret) else f"{dr_ret:+.1%}")
+        with k[3]:
+            dr_reg = (view["D_reg"].sum() - view["R_reg"].sum()) / tot_reg if tot_reg else np.nan
+            shift = dr_ret - dr_reg
+            card("Shift vs registration", pp(shift), f"D−R registration {dr_reg:+.1%}" if np.isfinite(dr_reg) else "")
+
+        # Map
+        if shapes is None:
+            st.info("Precinct shapes (sd4_precincts.geojson) aren't saved yet — showing the table only.")
+        else:
+            shown = view[view["id"].isin({f["id"] for f in shapes["features"]})]
+            z = shown[col].where(~shown["small"]) if col not in ("returned", "new") else shown[col]
+            finite = z[np.isfinite(z.astype(float))]
+            if diverging:
+                m = float(np.nanpercentile(np.abs(finite), 95)) if len(finite) else 1.0
+                zmin, zmax = -(m or 1), (m or 1)
+            else:
+                zmin = float(np.nanpercentile(finite, 2)) if len(finite) else 0
+                zmax = float(np.nanpercentile(finite, 98)) if len(finite) else 1
+            hover = (
+                "<b>" + shown["county"] + " " + shown["precinct"] + "</b><br>"
+                + shown["returned"].map("{:,}".format) + " of " + shown["registered"].map("{:,}".format)
+                + " returned (" + shown["rate"].map(lambda v: pct(v)) + ")<br>"
+                + "D " + shown["D"].map("{:,}".format) + " · R " + shown["R"].map("{:,}".format)
+                + " · O/NPP " + shown["O"].map("{:,}".format) + "<br>"
+                + "D−R returns " + shown["dr_ret"].map(lambda v: "—" if not np.isfinite(v) else f"{v:+.1%}")
+                + " vs reg " + shown["dr_reg"].map(lambda v: "—" if not np.isfinite(v) else f"{v:+.1%}")
+                + (("<br>" + new_lbl + ": " + shown["new"].map(lambda v: f"{int(v):,}")) if new_lbl else "")
+            )
+            fig = go.Figure()
+            # Grey layer underneath so small / no-data precincts still show
+            fig.add_trace(go.Choroplethmap(
+                geojson=shapes, locations=shown["id"], featureidkey="id", z=[0] * len(shown),
+                colorscale=[[0, "#e4e4e0"], [1, "#e4e4e0"]], showscale=False,
+                marker=dict(line=dict(width=0.3, color="#999")), text=hover, hoverinfo="text"))
+            ok = np.isfinite(z.astype(float))
+            fig.add_trace(go.Choroplethmap(
+                geojson=shapes, locations=shown.loc[ok, "id"], featureidkey="id", z=z[ok],
+                zmin=zmin, zmax=zmax, colorscale=cs, zmid=0 if diverging else None,
+                marker=dict(line=dict(width=0.3, color="#666"), opacity=0.9),
+                text=hover[ok], hoverinfo="text",
+                colorbar=dict(thickness=10, len=0.7,
+                              tickformat=("+.0%" if diverging else (".0%" if "%" in fmt else ",.0f")))))
+            if sd4_ring and csel == "All of SD4":
+                fig.add_trace(go.Scattermap(lon=[p[0] for p in sd4_ring], lat=[p[1] for p in sd4_ring],
+                                            mode="lines", line=dict(color="#111", width=1.5),
+                                            hoverinfo="skip", showlegend=False))
+            lons = [pt[0] for f in shapes["features"] if f["id"] in set(shown["id"])
+                    for poly in f["geometry"]["coordinates"] for pt in poly[0]]
+            lats = [pt[1] for f in shapes["features"] if f["id"] in set(shown["id"])
+                    for poly in f["geometry"]["coordinates"] for pt in poly[0]]
+            if lons:
+                span = max(max(lons) - min(lons), (max(lats) - min(lats)) * 1.3, 0.05)
+                zoom = float(np.clip(np.log2(360 / span) + 0.1, 4, 12))
+                center = dict(lon=(min(lons) + max(lons)) / 2, lat=(min(lats) + max(lats)) / 2)
+            else:
+                zoom, center = 6, dict(lon=-119.0, lat=37.6)
+            # white-bg needs no base-map tiles, so it renders behind any network
+            fig.update_layout(map=dict(style="white-bg", zoom=zoom, center=center), height=620,
+                              margin=dict(l=0, r=0, t=10, b=0), paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig, width="stretch")
+
+        # Registration margin vs returns margin
+        section("Returns margin vs registration margin",
+                "Each dot is a precinct, sized by ballots returned. Above the diagonal, the returns so far are "
+                "more Democratic than the precinct's registration; below, more Republican.")
+        sc = view[~view["small"] & np.isfinite(view["dr_ret"])]
+        if len(sc):
+            fig = go.Figure()
+            for cty, g in sc.groupby("county"):
+                fig.add_scatter(x=g["dr_reg"], y=g["dr_ret"], mode="markers", name=cty,
+                                marker=dict(size=np.clip(np.sqrt(g["returned"]) * 0.9, 4, 24),
+                                            color=COUNTY_COLORS.get(cty, "#666"), opacity=0.7,
+                                            line=dict(width=0.5, color="white")),
+                                text=g["precinct"] + " · " + g["returned"].map("{:,}".format) + " returned",
+                                hovertemplate="<b>%{text}</b><br>Reg %{x:+.1%} · Returns %{y:+.1%}<extra>"
+                                              + cty + "</extra>")
+            lo = float(min(sc["dr_reg"].min(), sc["dr_ret"].min())) - 0.05
+            hi = float(max(sc["dr_reg"].max(), sc["dr_ret"].max())) + 0.05
+            fig.add_scatter(x=[lo, hi], y=[lo, hi], mode="lines", line=dict(color="#999", dash="dot"),
+                            showlegend=False, hoverinfo="skip")
+            fig.update_layout(**{**PLOT_LAYOUT, "hovermode": "closest"}, height=480)
+            fig.update_xaxes(title="D−R margin of registration", tickformat="+.0%")
+            fig.update_yaxes(title="D−R margin of returns", tickformat="+.0%")
+            st.plotly_chart(fig, width="stretch")
+        else:
+            st.info("No precincts with returns to plot yet.")
+
+        # Table
+        section("Precinct table", "Sort by any column. Shares are of each precinct's returned ballots.")
+        cols = ["county", "precinct", "registered", "returned", "rate"] + (["new"] if new_lbl else []) + \
+               ["D", "R", "O", "d_share", "r_share", "o_share", "dr_ret", "dr_reg", "shift"]
+        tbl = pct_cols(view[cols], ["rate", "d_share", "r_share", "o_share", "dr_ret", "dr_reg", "shift"])
+        st.dataframe(tbl, hide_index=True, width="stretch", height=560, column_config={
+            "county": "County", "precinct": "Precinct",
+            "registered": INT("Registered"), "returned": INT("Returned"), "rate": pct_col("Rate"),
+            "new": INT(new_lbl or "New"),
+            "D": INT("D returned"), "R": INT("R returned"), "O": INT("O/NPP returned"),
+            "d_share": pct_col("D %"), "r_share": pct_col("R %"), "o_share": pct_col("O/NPP %"),
+            "dr_ret": pct_col("D−R returns", signed=True), "dr_reg": pct_col("D−R reg", signed=True),
+            "shift": pct_col("Shift vs reg", signed=True),
+        })
+        st.download_button("Download precinct table (CSV)", view[cols].to_csv(index=False).encode(),
+                           f"sd4_precincts_{pmeta['snapshot']:%Y-%m-%d}.csv", "text/csv")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CROSSTABS
+# ══════════════════════════════════════════════════════════════════════════════
+with tabs[3]:
     if ct_latest.empty:
         st.info("No Optiq crosstab data available.")
     else:
@@ -900,7 +1054,7 @@ with tabs[2]:
 # ══════════════════════════════════════════════════════════════════════════════
 # TRENDS
 # ══════════════════════════════════════════════════════════════════════════════
-with tabs[3]:
+with tabs[4]:
     section("Daily returns — SOS", "New ballots per day between reports, by county (stacked).")
     ss = A.sos_series(sos)
     cty = ss[(ss["county"] != "SD4 total") & ss["per_day"].notna()]
@@ -979,7 +1133,7 @@ with tabs[3]:
 # ══════════════════════════════════════════════════════════════════════════════
 # OUTSTANDING
 # ══════════════════════════════════════════════════════════════════════════════
-with tabs[4]:
+with tabs[5]:
     # ── O/NPP split needed to close the D−R gap among returned ballots ──────
     if use_optiq or not ct_latest.empty:
         _pt = (cp_latest.groupby("party")["returned"].sum() if use_optiq
@@ -1151,7 +1305,7 @@ with tabs[4]:
 # ══════════════════════════════════════════════════════════════════════════════
 # 2022 COMPARISON
 # ══════════════════════════════════════════════════════════════════════════════
-with tabs[5]:
+with tabs[6]:
     if pdi22 is None:
         st.info("2022 data not found (pdi_2022_daily_sd4.csv).")
     else:
@@ -1368,7 +1522,7 @@ with tabs[5]:
 # ══════════════════════════════════════════════════════════════════════════════
 # METHOD & DATA
 # ══════════════════════════════════════════════════════════════════════════════
-with tabs[6]:
+with tabs[7]:
     section("Sources")
     st.markdown(f"""
 - **SOS ballot status report** (`ballot_returns.csv`) — county VBM issued / returned / accepted, pulled every
@@ -1378,6 +1532,9 @@ with tabs[6]:
   matched (~98% coverage). {ct_saved['snapshot_date'].nunique() if not ct_saved.empty else 0} distinct snapshots.
 - **Optiq county × party** (`optiq_county_party.csv`) — county D/R/O registered and returned.
   {cp_saved['snapshot_date'].nunique() if not cp_saved.empty else 0} saved snapshots.
+- **Optiq precincts** (`optiq_precincts.csv`, shapes in `sd4_precincts.geojson`) — precinct D/R/O registered and
+  returned, read from the precinct map tiles on abev.civiq.vote. Saved only when each whole county's precinct
+  total matches Optiq's county figure; split counties keep the precincts whose centre falls inside SD4.
 - **2022 baseline** (`vbm_2022_baseline.csv`) — SD4-portion 2022 VBM issued/returned by county.
 - **Registration** (`sd4_party_registration.csv`) — SOS report dated {reg.get('report_date', 'n/a')}.
 """)
