@@ -50,7 +50,7 @@ EDAY_2022 = pd.Timestamp("2022-11-08")
 MAILOUT_2022 = pd.Timestamp("2022-10-10")
 
 OPTIQ_SLUG = "STATE%20SENATE%204"
-OPTIQ_BASE = "https://abev.optiqdata.com/api"
+OPTIQ_BASE = "https://abev.civiq.vote/api"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

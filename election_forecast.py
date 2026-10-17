@@ -198,7 +198,7 @@ def fetch_optiq_county_totals() -> dict:
     {} if the feed can't be reached — callers fall back to SOS.
     """
     import urllib.request, json as _json, ssl as _ssl, os as _os
-    url = "https://abev.optiqdata.com/api/geography-breakdown/STATE%20SENATE%204?level=county_name"
+    url = "https://abev.civiq.vote/api/geography-breakdown/STATE%20SENATE%204?level=county_name"
     ca_bundle = "/root/.ccr/ca-bundle.crt"
     ctx = _ssl.create_default_context(cafile=ca_bundle if _os.path.exists(ca_bundle) else None)
     try:
@@ -1017,7 +1017,7 @@ with tab_returns:
     def _fetch_optiq(district_slug: str) -> list:
         """Fetch Optiq ballot-return crosstabs; cached for 1 hour."""
         import urllib.request, json as _json, ssl as _ssl, os as _os
-        url = f"https://abev.optiqdata.com/api/ballot-returns/{district_slug}"
+        url = f"https://abev.civiq.vote/api/ballot-returns/{district_slug}"
         ca_bundle = "/root/.ccr/ca-bundle.crt"
         ctx = _ssl.create_default_context(cafile=ca_bundle if _os.path.exists(ca_bundle) else None)
         try:
@@ -1032,7 +1032,7 @@ with tab_returns:
         Returns dict keyed by title-cased county name with dem/rep return rates and advantage.
         """
         import urllib.request, json as _json, ssl as _ssl, os as _os
-        url = f"https://abev.optiqdata.com/api/geography-breakdown/{district_slug}?level=county_name"
+        url = f"https://abev.civiq.vote/api/geography-breakdown/{district_slug}?level=county_name"
         ca_bundle = "/root/.ccr/ca-bundle.crt"
         ctx = _ssl.create_default_context(cafile=ca_bundle if _os.path.exists(ca_bundle) else None)
         try:
@@ -1185,7 +1185,7 @@ with tab_returns:
                 _eth_rows.append({"Ethnicity": _elbl, "Issued": f"{_eissued:,}", "Returned": f"{_ereturned:,}", "Rate": f"{_erate:.1%}"})
             st.dataframe(pd.DataFrame(_eth_rows), hide_index=True, width="stretch")
 
-        st.caption("Age codes: 1=18–34 · 3=35–49 · 4=50–64 · 6=65+ · Ethnicity: modeled/attributed via voter file · Data: Optiq Data (abev.optiqdata.com)")
+        st.caption("Age codes: 1=18–34 · 3=35–49 · 4=50–64 · 6=65+ · Ethnicity: modeled/attributed via voter file · Data: Optiq / Civiq (abev.civiq.vote)")
 
     # ── Party Return Rate Trajectory ─────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
