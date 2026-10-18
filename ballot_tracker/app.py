@@ -514,23 +514,26 @@ with tabs[0]:
     DAY_MS = 86_400_000
     fig = go.Figure()
     # One shared axis; bars first so the lines draw in front.
-    fig.add_bar(x=dist["snapshot_date"], y=dist["per_day"], name="Returns / day",
-                marker_color="#c3dece", hovertemplate="%{y:,.0f}/day",
-                width=0.84 * DAY_MS, offset=-0.42 * DAY_MS)
-    # Party per-day bars inside each wide bar: Optiq's party returns over the same interval
-    # between SOS reports, divided by the same number of days
     if party_src:
-        _cum_at = _rp.reindex(_rp.index.union(dist["snapshot_date"])).ffill().fillna(0)
-        _cum_at = _cum_at.reindex(dist["snapshot_date"])
-        _gap = dist.set_index("snapshot_date")["gap_days"] if "gap_days" in dist else \
-            dist["snapshot_date"].diff().dt.days.set_axis(dist["snapshot_date"])
-        _pd = _cum_at.diff().div(_gap, axis=0)
+        # Wide bar = Optiq's total returns per day; thin bars inside = its D / R / O-NPP parts,
+        # so the three always add up to the wide bar
+        _pd = _rp.diff()
+        _pd.iloc[0] = _rp.iloc[0]
+        _gap = _rp.index.to_series().diff().dt.days.fillna(1).clip(lower=1)
+        _pd = _pd.div(_gap, axis=0).clip(lower=0)
+        _pd = _pd[_pd.sum(axis=1) > 0]
+        fig.add_bar(x=_pd.index, y=_pd.sum(axis=1), name="Returns / day (Optiq)",
+                    marker_color="#c3dece", hovertemplate="%{y:,.0f}/day",
+                    width=0.84 * DAY_MS, offset=-0.42 * DAY_MS)
         for i_, p_ in enumerate(D.PARTIES):
             if p_ in _pd:
-                fig.add_bar(x=_pd.index, y=_pd[p_].clip(lower=0), name=f"{D.PARTY_LABELS[p_]} / day (Optiq)",
-                            marker_color=D.PARTY_COLORS[p_], opacity=0.85, legendgroup=p_,
+                fig.add_bar(x=_pd.index, y=_pd[p_], name=f"{D.PARTY_LABELS[p_]} / day", legendgroup=p_,
+                            marker_color=D.PARTY_COLORS[p_], opacity=0.85,
                             width=0.24 * DAY_MS, offset=(-0.37 + 0.25 * i_) * DAY_MS,
                             hovertemplate="%{y:,.0f}/day")
+    else:
+        fig.add_bar(x=dist["snapshot_date"], y=dist["per_day"], name="Returns / day (SOS)",
+                    marker_color="#c3dece", hovertemplate="%{y:,.0f}/day")
     fig.add_scatter(x=dist["snapshot_date"], y=dist["vbm_returned"], name="Cumulative returned (SOS)",
                     mode="lines+markers", line=dict(color="#1a6b3c", width=2.5),
                     hovertemplate="%{y:,}")
@@ -543,11 +546,10 @@ with tabs[0]:
     fig.update_layout(**PLOT_LAYOUT, height=360, barmode="overlay")
     fig.update_yaxes(tickformat=",", rangemode="tozero")
     st.plotly_chart(fig, width="stretch")
-    st.caption("Wide bars and the green line: SOS. Thin bars inside each wide bar: Optiq's D / R / O-NPP "
-               "returns over the same interval, per day — they won't add up exactly to the SOS bar. "
-               "SOS snapshots where the figures didn't change (weekends, no new "
-               "report) are dropped; per-day velocity divides by the real gap between reports."
-               + (f" Party lines: {party_src} — Optiq's totals run a little below SOS." if party_src else ""))
+    st.caption(("Bars: Optiq returns per day — the wide bar is the total, the thin bars inside are Democrat, "
+                "Republican and Other/NPP. " if party_src else "Bars: SOS returns per day. ")
+               + "Green line: SOS cumulative returns (snapshots where the figures didn't change are dropped)."
+               + (f" Party data: {party_src}; Optiq's totals run a little below SOS." if party_src else ""))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # COUNTIES
