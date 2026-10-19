@@ -849,24 +849,23 @@ with tab_turnout:
                 _prog    = _e.get("vbm_pct_observed", 0)
 
                 # Blend live Optiq party split with 2022 PDI prior.
-                # Weight towards live data proportional to VBM progress (0→1).
-                # At 0% progress: use pure prior. At 100%: pure live Optiq split.
-                _dr_ret = _dem_ret + _rep_ret
-                if _dr_ret > 0:
-                    _live_d_share = _dem_ret / _dr_ret
-                    _live_r_share = _rep_ret / _dr_ret
+                # Both shares are expressed as fraction of TOTAL ballots (incl. Others)
+                # so that implied_D + implied_R < implied_total (Others take the rest).
+                # Prior: 2022 PDI — D=38.4%, R=42.4% of total pre-eday VBM.
+                # Live: dem_ret / tot_ret, rep_ret / tot_ret (Optiq county totals).
+                # Weight blends 0→live as VBM progress grows; full live at ≥20%.
+                _tot_ret = _geo.get("tot_ret", 0) if _geo else 0
+                if _tot_ret > 0:
+                    _live_d_share = _dem_ret / _tot_ret
+                    _live_r_share = _rep_ret / _tot_ret
                 else:
-                    _live_d_share = _PDI_D_SHARE / (_PDI_D_SHARE + _PDI_R_SHARE)
-                    _live_r_share = _PDI_R_SHARE / (_PDI_D_SHARE + _PDI_R_SHARE)
-                _prior_d = _PDI_D_SHARE / (_PDI_D_SHARE + _PDI_R_SHARE)
-                _prior_r = _PDI_R_SHARE / (_PDI_D_SHARE + _PDI_R_SHARE)
+                    _live_d_share = _PDI_D_SHARE
+                    _live_r_share = _PDI_R_SHARE
                 _w = min(_prog * 5, 1.0)  # full weight at 20% VBM progress
-                _d_share = (1 - _w) * _prior_d + _w * _live_d_share
-                _r_share = (1 - _w) * _prior_r + _w * _live_r_share
+                _d_share = (1 - _w) * _PDI_D_SHARE + _w * _live_d_share
+                _r_share = (1 - _w) * _PDI_R_SHARE + _w * _live_r_share
 
-                # Implied voters by party (share of D+R applied to implied total)
-                # Scale so D+R shares sum to 1 within their pair
-                _dr_total = _impl * (_d_share + _r_share)  # D+R portion of implied total
+                # Implied voters by party — shares of total implied turnout
                 _impl_D = _impl * _d_share
                 _impl_R = _impl * _r_share
                 _impl_D_to = _impl_D / _dem_reg if _dem_reg > 0 else float("nan")
