@@ -873,9 +873,14 @@ with tab_turnout:
                 import math as _math
                 _gap = _impl_D_to - _impl_R_to if (not _math.isnan(_impl_D_to) and not _math.isnan(_impl_R_to)) else float("nan")
 
-                import math as _math
-                _dem_to_str = f"{_impl_D_to:.1%}" if not _math.isnan(_impl_D_to) else "—"
-                _rep_to_str = f"{_impl_R_to:.1%}" if not _math.isnan(_impl_R_to) else "—"
+                # Cap display at 100%; >100% means the model is extrapolating aggressively
+                # early in the window — show the capped value with a ⚠ flag.
+                def _fmt_to(v):
+                    if _math.isnan(v): return "—"
+                    if v > 1.0: return "⚠ >100%"
+                    return f"{v:.1%}"
+                _dem_to_str = _fmt_to(_impl_D_to)
+                _rep_to_str = _fmt_to(_impl_R_to)
                 _gap_str    = (f"{'D+' if _gap >= 0 else 'R+'}{abs(_gap):.1%}"
                                if not _math.isnan(_gap) else "—")
 
@@ -890,12 +895,13 @@ with tab_turnout:
                     "VBM Progress":  f"{_prog:.0%}",
                 })
 
-                # District accumulators
+                # District accumulators — cap partisan voters at registration to avoid
+                # impossible >100% counties inflating the district-wide total.
                 _dist_total_implied += _impl
                 _dist_total_reg     += _reg
                 _dist_base_votes    += _reg * _base_to
-                _dist_impl_D_voters += _impl_D
-                _dist_impl_R_voters += _impl_R
+                _dist_impl_D_voters += min(_impl_D, _dem_reg) if _dem_reg > 0 else _impl_D
+                _dist_impl_R_voters += min(_impl_R, _rep_reg) if _rep_reg > 0 else _impl_R
                 if _dem_reg > 0: _dist_dem_reg += _dem_reg
                 if _rep_reg > 0: _dist_rep_reg += _rep_reg
                 _n_ok += 1
