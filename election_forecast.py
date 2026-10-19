@@ -522,6 +522,46 @@ def counties_to_frozen(d):
 if "turnout_adj" not in st.session_state:
     st.session_state["turnout_adj"] = {cn: 0.0 for cn in COUNTIES}
 
+# ── Optiq county-level geo breakdown (module-level so all tabs can call it) ──
+@st.cache_data(ttl=3600)
+def fetch_geo_breakdown(district_slug: str) -> dict:
+    """Fetch Optiq county-level VBM return rates and raw counts. Cached 1 hour."""
+    import urllib.request, json as _json, ssl as _ssl, os as _os
+    url = f"https://abev.civiq.vote/api/geography-breakdown/{district_slug}?level=county_name"
+    ca_bundle = "/root/.ccr/ca-bundle.crt"
+    ctx = _ssl.create_default_context(cafile=ca_bundle if _os.path.exists(ca_bundle) else None)
+    try:
+        with urllib.request.urlopen(url, timeout=10, context=ctx) as r:
+            rows = _json.loads(r.read())
+    except Exception:
+        return {}
+    out = {}
+    for row in rows:
+        cn = row["geography"].title()
+        dem_reg = row.get("demRegistered", 0) or 0
+        rep_reg = row.get("repRegistered", 0) or 0
+        dem_ret = row.get("demReturned",   0) or 0
+        rep_ret = row.get("repReturned",   0) or 0
+        tot_reg = row.get("totalRegistered", 0) or 0
+        tot_ret = row.get("totalReturned",   0) or 0
+        dem_rate = dem_ret / dem_reg if dem_reg > 0 else float("nan")
+        rep_rate = rep_ret / rep_reg if rep_reg > 0 else float("nan")
+        dr_reg = dem_reg + rep_reg
+        dr_ret = dem_ret + rep_ret
+        dem_reg_share = dem_reg / dr_reg if dr_reg > 0 else float("nan")
+        dem_ret_share = dem_ret / dr_ret if dr_ret > 0 else float("nan")
+        out[cn] = {
+            "dem_rate": dem_rate, "rep_rate": rep_rate,
+            "dem_reg": dem_reg, "rep_reg": rep_reg,
+            "dem_ret": dem_ret, "rep_ret": rep_ret,
+            "tot_reg": tot_reg, "tot_ret": tot_ret,
+            "return_share_adv": dem_ret_share - dem_reg_share,
+            "return_margin": (dem_ret - rep_ret) / dr_ret if dr_ret > 0 else float("nan"),
+            "turnout_margin": dem_rate - rep_rate if (dem_reg > 0 and rep_reg > 0) else float("nan"),
+            "raw_margin": dem_ret - rep_ret,
+        }
+    return out
+
 # ── VBM-pace-based turnout adjustment helper ─────────────────────────────────
 @st.cache_data(ttl=3600)
 def _compute_vbm_pace_adj(bsr_path: str, base_path: str, optiq: dict | None = None) -> dict | None:
@@ -782,27 +822,8 @@ with tab_turnout:
     _PDI_R_SHARE = 0.424
 
     try:
-        _vbm_to_est  = estimate_turnout(ballot_returns_path=DATA_DIR / "ballot_returns.csv", verbose=False)
-
-        # Fetch county-level Optiq geo breakdown (inline, mirrors _fetch_geo_breakdown)
-        import urllib.request as _ureq, json as _json2, ssl as _ssl2, os as _os2
-        _geo_data = {}
-        try:
-            _geo_url = "https://abev.optiqdata.com/api/geography-breakdown/STATE%20SENATE%204?level=county_name"
-            _ca_bundle = "/root/.ccr/ca-bundle.crt"
-            _ctx2 = _ssl2.create_default_context(cafile=_ca_bundle if _os2.path.exists(_ca_bundle) else None)
-            with _ureq.urlopen(_geo_url, timeout=10, context=_ctx2) as _r2:
-                for _row2 in _json2.loads(_r2.read()):
-                    _cn2 = _row2["geography"].title()
-                    _dr2 = (_row2.get("demReturned", 0) or 0) + (_row2.get("repReturned", 0) or 0)
-                    _geo_data[_cn2] = {
-                        "dem_reg": _row2.get("demRegistered", 0) or 0,
-                        "rep_reg": _row2.get("repRegistered", 0) or 0,
-                        "dem_ret": _row2.get("demReturned",   0) or 0,
-                        "rep_ret": _row2.get("repReturned",   0) or 0,
-                    }
-        except Exception:
-            pass  # geo data unavailable; partisan split falls back to PDI prior only
+        _vbm_to_est = estimate_turnout(ballot_returns_path=DATA_DIR / "ballot_returns.csv", verbose=False)
+        _geo_data   = fetch_geo_breakdown("STATE%20SENATE%204")
 
         _vbm_rows = []
         _dist_impl_D_voters = 0; _dist_impl_R_voters = 0
@@ -1121,57 +1142,11 @@ with tab_returns:
         except Exception:
             return []
 
-    @st.cache_data(ttl=3600)
     def _fetch_geo_breakdown(district_slug: str) -> dict:
-        """Fetch Optiq county-level return rates; cached for 1 hour.
-        Returns dict keyed by title-cased county name with dem/rep return rates and advantage.
-        """
-        import urllib.request, json as _json, ssl as _ssl, os as _os
-        url = f"https://abev.civiq.vote/api/geography-breakdown/{district_slug}?level=county_name"
-        ca_bundle = "/root/.ccr/ca-bundle.crt"
-        ctx = _ssl.create_default_context(cafile=ca_bundle if _os.path.exists(ca_bundle) else None)
-        try:
-            with urllib.request.urlopen(url, timeout=10, context=ctx) as r:
-                rows = _json.loads(r.read())
-        except Exception:
-            return {}
-        out = {}
-        for row in rows:
-            cn = row["geography"].title()  # "AMADOR" -> "Amador"
-            dem_reg = row.get("demRegistered", 0) or 0
-            rep_reg = row.get("repRegistered", 0) or 0
-            dem_ret = row.get("demReturned", 0) or 0
-            rep_ret = row.get("repReturned", 0) or 0
-            tot_reg = row.get("totalRegistered", 0) or 0
-            tot_ret = row.get("totalReturned", 0) or 0
-            dem_rate = dem_ret / dem_reg if dem_reg > 0 else float("nan")
-            rep_rate = rep_ret / rep_reg if rep_reg > 0 else float("nan")
-            dr_reg = dem_reg + rep_reg
-            dr_ret = dem_ret + rep_ret
-            dem_reg_share = dem_reg / dr_reg if dr_reg > 0 else float("nan")
-            dem_ret_share = dem_ret / dr_ret if dr_ret > 0 else float("nan")
-            out[cn] = {
-                "dem_rate": dem_rate,
-                "rep_rate": rep_rate,
-                # Raw counts (needed for partisan turnout estimates)
-                "dem_reg": dem_reg,
-                "rep_reg": rep_reg,
-                "dem_ret": dem_ret,
-                "rep_ret": rep_ret,
-                "tot_reg": tot_reg,
-                "tot_ret": tot_ret,
-                # Dem share of (D+R) returns minus Dem share of (D+R) registration
-                "return_share_adv": dem_ret_share - dem_reg_share,
-                # Optiq Return Margin: (dem_ret − rep_ret) / (dem_ret + rep_ret)
-                "return_margin": (dem_ret - rep_ret) / dr_ret if dr_ret > 0 else float("nan"),
-                # Optiq Turnout Margin: dem return rate minus rep return rate
-                "turnout_margin": dem_rate - rep_rate if (dem_reg > 0 and rep_reg > 0) else float("nan"),
-                # Raw count: dem returns minus rep returns
-                "raw_margin": dem_ret - rep_ret,
-            }
-        return out
+        """Delegate to module-level fetch_geo_breakdown (cached there)."""
+        return fetch_geo_breakdown(district_slug)
 
-    _geo_breakdown = _fetch_geo_breakdown("STATE%20SENATE%204")
+    _geo_breakdown = fetch_geo_breakdown("STATE%20SENATE%204")
 
     _optiq_rows = _fetch_optiq("STATE%20SENATE%204")
 
