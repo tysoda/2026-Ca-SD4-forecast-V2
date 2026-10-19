@@ -783,7 +783,26 @@ with tab_turnout:
 
     try:
         _vbm_to_est  = estimate_turnout(ballot_returns_path=DATA_DIR / "ballot_returns.csv", verbose=False)
-        _geo_data    = _fetch_geo_breakdown("STATE%20SENATE%204")  # county-level Optiq data
+
+        # Fetch county-level Optiq geo breakdown (inline, mirrors _fetch_geo_breakdown)
+        import urllib.request as _ureq, json as _json2, ssl as _ssl2, os as _os2
+        _geo_data = {}
+        try:
+            _geo_url = "https://abev.optiqdata.com/api/geography-breakdown/STATE%20SENATE%204?level=county_name"
+            _ca_bundle = "/root/.ccr/ca-bundle.crt"
+            _ctx2 = _ssl2.create_default_context(cafile=_ca_bundle if _os2.path.exists(_ca_bundle) else None)
+            with _ureq.urlopen(_geo_url, timeout=10, context=_ctx2) as _r2:
+                for _row2 in _json2.loads(_r2.read()):
+                    _cn2 = _row2["geography"].title()
+                    _dr2 = (_row2.get("demReturned", 0) or 0) + (_row2.get("repReturned", 0) or 0)
+                    _geo_data[_cn2] = {
+                        "dem_reg": _row2.get("demRegistered", 0) or 0,
+                        "rep_reg": _row2.get("repRegistered", 0) or 0,
+                        "dem_ret": _row2.get("demReturned",   0) or 0,
+                        "rep_ret": _row2.get("repReturned",   0) or 0,
+                    }
+        except Exception:
+            pass  # geo data unavailable; partisan split falls back to PDI prior only
 
         _vbm_rows = []
         _dist_impl_D_voters = 0; _dist_impl_R_voters = 0
