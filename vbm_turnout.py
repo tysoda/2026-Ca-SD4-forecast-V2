@@ -62,7 +62,7 @@ COUNTY_PARAMS = {
 # scaled to this cycle's issued ballots) that must be in before we produce an
 # estimate. Early in the window the linear time-to-E-day extrapolation below
 # understates back-loaded returns badly, so this is deliberately conservative.
-MIN_OBSERVED_FRACTION = 0.25
+MIN_OBSERVED_FRACTION = 0.30
 
 # Early-vote window used to extrapolate a mid-window snapshot to the last
 # pre-election report — now via the 2022 SD4 return curve (below).
