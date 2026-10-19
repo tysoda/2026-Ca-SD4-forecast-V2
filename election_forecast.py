@@ -770,59 +770,135 @@ with tab_turnout:
     # ── VBM-implied turnout callout ───────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-label">VBM-Implied Turnout Estimates</div>', unsafe_allow_html=True)
-    st.caption("Current VBM accepted is extrapolated to the last pre-election report (linear in time), then converted with 2022 & 2024 return-rate calibration. Estimates appear once a county has ≥25% of a 2022-sized early vote in; VBM Progress shows that share.")
+    st.caption(
+        "Total implied turnout from VBM calibration (2022 & 2024). "
+        "Partisan split: live Optiq return counts blended with 2022 PDI district prior "
+        "(D=38.4% / R=42.4%) — prior weight fades as returns accumulate. "
+        "Estimates stabilize once ≥5% of expected final VBM is in."
+    )
+
+    # 2022 PDI district-wide party split of pre-election VBM (used as prior)
+    _PDI_D_SHARE = 0.384
+    _PDI_R_SHARE = 0.424
 
     try:
-        _vbm_to_est = estimate_turnout(ballot_returns_path=DATA_DIR / "ballot_returns.csv", verbose=False)
+        _vbm_to_est  = estimate_turnout(ballot_returns_path=DATA_DIR / "ballot_returns.csv", verbose=False)
+        _geo_data    = _fetch_geo_breakdown("STATE%20SENATE%204")  # county-level Optiq data
+
         _vbm_rows = []
+        _dist_impl_D_voters = 0; _dist_impl_R_voters = 0
+        _dist_dem_reg = 0;       _dist_rep_reg = 0
+        _dist_total_implied = 0; _dist_total_reg = 0
+        _dist_base_votes = 0;    _n_ok = 0
+
         for _cn in county_names:
-            _e = _vbm_to_est.get(_cn, {})
-            _s = _e.get("status", "no_data")
+            _e   = _vbm_to_est.get(_cn, {})
+            _s   = _e.get("status", "no_data")
             _base_to = COUNTIES[_cn]["turnout"]
-            _reg = COUNTIES[_cn]["registration"]
+            _reg     = COUNTIES[_cn]["registration"]
+            _geo     = _geo_data.get(_cn, {})
+            _dem_reg = _geo.get("dem_reg", 0) if _geo else 0
+            _rep_reg = _geo.get("rep_reg", 0) if _geo else 0
+            _dem_ret = _geo.get("dem_ret", 0) if _geo else 0
+            _rep_ret = _geo.get("rep_ret", 0) if _geo else 0
+
             if _s == "ok":
-                _impl = _e["implied_total"]
+                _impl  = _e["implied_total"]
                 _impl_to = _impl / _reg if _reg > 0 else 0
-                _delta = _impl_to - _base_to
-                _prog = _e.get("vbm_pct_observed", 0)
+                _delta   = _impl_to - _base_to
+                _prog    = _e.get("vbm_pct_observed", 0)
+
+                # Blend live Optiq party split with 2022 PDI prior.
+                # Weight towards live data proportional to VBM progress (0→1).
+                # At 0% progress: use pure prior. At 100%: pure live Optiq split.
+                _dr_ret = _dem_ret + _rep_ret
+                if _dr_ret > 0:
+                    _live_d_share = _dem_ret / _dr_ret
+                    _live_r_share = _rep_ret / _dr_ret
+                else:
+                    _live_d_share = _PDI_D_SHARE / (_PDI_D_SHARE + _PDI_R_SHARE)
+                    _live_r_share = _PDI_R_SHARE / (_PDI_D_SHARE + _PDI_R_SHARE)
+                _prior_d = _PDI_D_SHARE / (_PDI_D_SHARE + _PDI_R_SHARE)
+                _prior_r = _PDI_R_SHARE / (_PDI_D_SHARE + _PDI_R_SHARE)
+                _w = min(_prog * 5, 1.0)  # full weight at 20% VBM progress
+                _d_share = (1 - _w) * _prior_d + _w * _live_d_share
+                _r_share = (1 - _w) * _prior_r + _w * _live_r_share
+
+                # Implied voters by party (share of D+R applied to implied total)
+                # Scale so D+R shares sum to 1 within their pair
+                _dr_total = _impl * (_d_share + _r_share)  # D+R portion of implied total
+                _impl_D = _impl * _d_share
+                _impl_R = _impl * _r_share
+                _impl_D_to = _impl_D / _dem_reg if _dem_reg > 0 else float("nan")
+                _impl_R_to = _impl_R / _rep_reg if _rep_reg > 0 else float("nan")
+                import math as _math
+                _gap = _impl_D_to - _impl_R_to if (not _math.isnan(_impl_D_to) and not _math.isnan(_impl_R_to)) else float("nan")
+
+                import math as _math
+                _dem_to_str = f"{_impl_D_to:.1%}" if not _math.isnan(_impl_D_to) else "—"
+                _rep_to_str = f"{_impl_R_to:.1%}" if not _math.isnan(_impl_R_to) else "—"
+                _gap_str    = (f"{'D+' if _gap >= 0 else 'R+'}{abs(_gap):.1%}"
+                               if not _math.isnan(_gap) else "—")
+
                 _vbm_rows.append({
-                    "County":         _cn,
-                    "Forecast":       f"{_base_to:.1%}",
-                    "Implied":        f"{_impl_to:.1%}",
-                    "Δ vs Forecast":  f"{'▲' if _delta >= 0 else '▼'} {abs(_delta):.1%}",
-                    "VBM Progress":   f"{_prog:.0%}",
-                    "Implied Total":  f"{_impl:,}",
+                    "County":        _cn,
+                    "Forecast":      f"{_base_to:.1%}",
+                    "Implied":       f"{_impl_to:.1%}",
+                    "Δ vs Forecast": f"{'▲' if _delta >= 0 else '▼'} {abs(_delta):.1%}",
+                    "Dem Turnout":   _dem_to_str,
+                    "Rep Turnout":   _rep_to_str,
+                    "Turnout Gap":   _gap_str,
+                    "VBM Progress":  f"{_prog:.0%}",
                 })
+
+                # District accumulators
+                _dist_total_implied += _impl
+                _dist_total_reg     += _reg
+                _dist_base_votes    += _reg * _base_to
+                _dist_impl_D_voters += _impl_D
+                _dist_impl_R_voters += _impl_R
+                if _dem_reg > 0: _dist_dem_reg += _dem_reg
+                if _rep_reg > 0: _dist_rep_reg += _rep_reg
+                _n_ok += 1
             else:
                 _vbm_rows.append({
-                    "County":         _cn,
-                    "Forecast":       f"{_base_to:.1%}",
-                    "Implied":        "⏳" if _s == "too_early" else "—",
-                    "Δ vs Forecast":  "—",
-                    "VBM Progress":   f"{_e.get('vbm_pct_observed', 0):.0%}" if _s == "too_early" else "—",
-                    "Implied Total":  "—",
+                    "County":        _cn,
+                    "Forecast":      f"{_base_to:.1%}",
+                    "Implied":       "⏳" if _s == "too_early" else "—",
+                    "Δ vs Forecast": "—",
+                    "Dem Turnout":   "—",
+                    "Rep Turnout":   "—",
+                    "Turnout Gap":   "—",
+                    "VBM Progress":  f"{_e.get('vbm_pct_observed', 0):.0%}" if _s == "too_early" else "—",
                 })
+
         if _vbm_rows:
-            _vbm_df = pd.DataFrame(_vbm_rows)
-            st.dataframe(_vbm_df, hide_index=True, use_container_width=True)
-            # District-level summary across "ok" counties
-            _ok = [_vbm_to_est[c] for c in county_names if _vbm_to_est.get(c, {}).get("status") == "ok"]
-            if _ok:
-                _total_implied = sum(e["implied_total"] for e in _ok)
-                _total_reg     = sum(COUNTIES[c]["registration"] for c in county_names if _vbm_to_est.get(c, {}).get("status") == "ok")
-                _dist_impl_to  = _total_implied / _total_reg if _total_reg > 0 else 0
-                _dist_base_to  = sum(COUNTIES[c]["turnout"] * COUNTIES[c]["registration"] for c in county_names if _vbm_to_est.get(c, {}).get("status") == "ok") / _total_reg if _total_reg > 0 else 0
-                _dist_delta    = _dist_impl_to - _dist_base_to
-                _col_a, _col_b, _col_c = st.columns(3)
-                with _col_a:
-                    st.markdown(f'<div class="stat-card"><div class="label">Implied District Turnout</div><div class="value">{_dist_impl_to:.1%}</div><div class="sub">counties with data only</div></div>', unsafe_allow_html=True)
-                with _col_b:
-                    _dcol = "#2e7d32" if _dist_delta >= 0 else "#c62828"
-                    st.markdown(f'<div class="stat-card"><div class="label">vs Forecast</div><div class="value" style="color:{_dcol}">{"▲" if _dist_delta >= 0 else "▼"} {abs(_dist_delta):.1%}</div><div class="sub">forecast: {_dist_base_to:.1%}</div></div>', unsafe_allow_html=True)
-                with _col_c:
-                    st.markdown(f'<div class="stat-card"><div class="label">Counties w/ Estimates</div><div class="value">{len(_ok)}</div><div class="sub">of {len(county_names)} total</div></div>', unsafe_allow_html=True)
-        else:
+            st.dataframe(pd.DataFrame(_vbm_rows), hide_index=True, use_container_width=True)
+
+        if _n_ok > 0:
+            _dist_impl_to  = _dist_total_implied / _dist_total_reg if _dist_total_reg > 0 else 0
+            _dist_base_to  = _dist_base_votes / _dist_total_reg    if _dist_total_reg > 0 else 0
+            _dist_delta    = _dist_impl_to - _dist_base_to
+            _dist_D_to     = _dist_impl_D_voters / _dist_dem_reg   if _dist_dem_reg > 0 else float("nan")
+            _dist_R_to     = _dist_impl_R_voters / _dist_rep_reg   if _dist_rep_reg > 0 else float("nan")
+            _dist_gap      = _dist_D_to - _dist_R_to if not (_math.isnan(_dist_D_to) or _math.isnan(_dist_R_to)) else float("nan")
+
+            _ca, _cb, _cc, _cd, _ce = st.columns(5)
+            with _ca:
+                st.markdown(f'<div class="stat-card"><div class="label">Implied District Turnout</div><div class="value">{_dist_impl_to:.1%}</div><div class="sub">{"▲" if _dist_delta >= 0 else "▼"} {abs(_dist_delta):.1%} vs forecast · {_n_ok} counties</div></div>', unsafe_allow_html=True)
+            with _cb:
+                st.markdown(f'<div class="stat-card"><div class="label">Implied Dem Turnout</div><div class="value" style="color:#1a56a0">{_dist_D_to:.1%}</div><div class="sub">of Dem-registered voters</div></div>', unsafe_allow_html=True)
+            with _cc:
+                st.markdown(f'<div class="stat-card"><div class="label">Implied Rep Turnout</div><div class="value" style="color:#b91c1c">{_dist_R_to:.1%}</div><div class="sub">of Rep-registered voters</div></div>', unsafe_allow_html=True)
+            with _cd:
+                _gap_col = "#1a56a0" if not _math.isnan(_dist_gap) and _dist_gap >= 0 else "#b91c1c"
+                _gap_lbl = f'{"D+" if _dist_gap >= 0 else "R+"}{abs(_dist_gap):.1%}' if not _math.isnan(_dist_gap) else "—"
+                st.markdown(f'<div class="stat-card"><div class="label">Turnout Gap (D−R)</div><div class="value" style="color:{_gap_col}">{_gap_lbl}</div><div class="sub">positive = Dems turning out more</div></div>', unsafe_allow_html=True)
+            with _ce:
+                st.markdown(f'<div class="stat-card"><div class="label">Counties w/ Estimates</div><div class="value">{_n_ok}</div><div class="sub">of {len(county_names)} total</div></div>', unsafe_allow_html=True)
+        elif not _vbm_rows:
             st.info("No VBM return data yet.")
+
     except FileNotFoundError:
         st.info("No ballot return data yet — estimates will appear once the daily fetch has run.")
     except Exception as _ex:
@@ -1058,6 +1134,13 @@ with tab_returns:
             out[cn] = {
                 "dem_rate": dem_rate,
                 "rep_rate": rep_rate,
+                # Raw counts (needed for partisan turnout estimates)
+                "dem_reg": dem_reg,
+                "rep_reg": rep_reg,
+                "dem_ret": dem_ret,
+                "rep_ret": rep_ret,
+                "tot_reg": tot_reg,
+                "tot_ret": tot_ret,
                 # Dem share of (D+R) returns minus Dem share of (D+R) registration
                 "return_share_adv": dem_ret_share - dem_reg_share,
                 # Optiq Return Margin: (dem_ret − rep_ret) / (dem_ret + rep_ret)
