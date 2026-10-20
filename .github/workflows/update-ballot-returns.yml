@@ -2,10 +2,10 @@ name: Update Ballot Returns
 
 on:
   schedule:
-    # Every 2 hours at :17. GitHub delays or drops scheduled runs at busy times —
-    # especially on the hour — so an off-peak minute and a shorter interval mean
-    # a new SOS report is picked up within a few hours even when runs are skipped.
-    - cron: '17 */2 * * *'
+    # Hourly at :17. GitHub delays or drops many scheduled runs (in practice this
+    # ran every 4–7 hours on a 2-hour schedule), so ask often. The tracker app also
+    # checks SOS directly, so a new report shows there even before this runs.
+    - cron: '17 * * * *'
   workflow_dispatch:  # Allow manual trigger from the Actions tab
 
 jobs:

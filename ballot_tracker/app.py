@@ -136,7 +136,7 @@ def dim_color(dim: str, code: str, i: int) -> str:
 @st.cache_data(ttl=900)
 def load_all():
     return {
-        "sos": D.load_sos_returns(),
+        "sos": D.load_sos_returns(drop_stale=False),
         "base": D.load_2022_baseline(),
         "daily22": D.load_2022_daily(),
         "pdi22": D.load_pdi_2022(),
@@ -157,6 +157,11 @@ def load_precinct_geo():
 @st.cache_data(ttl=3600, show_spinner="Fetching live Optiq data…")
 def load_live():
     return D.fetch_optiq_live(), D.fetch_optiq_county_party_live()
+
+
+@st.cache_data(ttl=1800, show_spinner="Checking SOS for a new report…")
+def load_sos_live():
+    return D.fetch_sos_live()
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -307,6 +312,17 @@ reg_total = sum(reg_counts.values())
 
 # ── Header ───────────────────────────────────────────────────────────────────
 st.markdown("# 📬 SD4 Ballot Return Tracker")
+# SOS: saved reports plus, if SOS has posted a newer one than the Action has saved, that report
+sos_source = "saved"
+if use_live and not sos.empty:
+    _sl_live = load_sos_live()
+    if not _sl_live.empty and _sl_live["snapshot_date"].max() > sos["snapshot_date"].max():
+        sos = pd.concat([sos, _sl_live[[c for c in sos.columns if c in _sl_live]]], ignore_index=True)
+        sos_source = "live"
+sos_latest_report = sos["snapshot_date"].max() if not sos.empty else None
+# Repeated reports (weekends: counties don't report, so SOS re-posts the same numbers) are dropped
+sos = D._drop_stale_snapshots(sos, "snapshot_date", ["vbm_issued", "vbm_returned"], ["county"]) \
+    .sort_values(["snapshot_date", "county"]).reset_index(drop=True) if not sos.empty else sos
 if sos.empty:
     st.warning("No SOS ballot return data found (ballot_returns.csv).")
     st.stop()
@@ -334,7 +350,10 @@ badges = (
     + (f'<span class="src-badge {"live" if cp_source == "live" else ""}">'
        f'Optiq · {"live, " if cp_source == "live" else ""}fetched {ometa["snapshot"]:%b %-d}</span>'
        if use_optiq else "")
-    + f'<span class="src-badge">SOS report · {meta["snapshot"]:%b %-d}</span>'
+    + (f'<span class="src-badge {"live" if sos_source == "live" else ""}">SOS report · '
+       f'{sos_latest_report:%b %-d}{" · live" if sos_source == "live" else ""}'
+       + (f' · no change since {meta["snapshot"]:%b %-d}' if sos_latest_report > meta["snapshot"] else "")
+       + '</span>')
 )
 st.markdown(badges, unsafe_allow_html=True)
 
@@ -1611,7 +1630,7 @@ with tabs[7]:
             "Optiq's 'registered' is its VBM universe (SD4 voters sent a ballot); SOS 'issued' is ballots "
             "issued. Optiq figures are raw here — Alpine is not filled in from SOS.")
     _sl = sos[sos["snapshot_date"] == sos["snapshot_date"].max()].set_index("county")
-    _sos_date = sos["snapshot_date"].max()
+    _sos_date = sos_latest_report
     if not cp_latest.empty:
         _ol = cp_latest.groupby("county").agg(o_reg=("registered", "sum"), o_ret=("returned", "sum"),
                                               o_last=("latest_return_date", "max"))

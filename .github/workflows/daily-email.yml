@@ -25,7 +25,12 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install pandas numpy
+        run: pip install pandas numpy openpyxl
+
+      - name: Pick up any SOS report the scheduled fetch hasn't saved yet
+        # Local only (not committed): the email reads ballot_returns.csv
+        continue-on-error: true
+        run: python3 fetch_ballot_returns.py --auto --days 3
 
       - name: Preview email
         if: ${{ inputs.preview_only }}
