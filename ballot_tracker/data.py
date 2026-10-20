@@ -101,6 +101,40 @@ def load_sos_returns(drop_stale: bool = True) -> pd.DataFrame:
     return df.sort_values(["snapshot_date", "county"]).reset_index(drop=True)
 
 
+def fetch_sos_live(days_back: int = 3) -> pd.DataFrame:
+    """Newest SOS report straight from the SOS site (dated files for the last few
+    days plus the undated one), in the ballot_returns.csv shape. Lets the app show a
+    new report as soon as SOS posts it, without waiting for the GitHub Action.
+    Empty frame if nothing can be fetched.
+    """
+    import datetime
+    import sys
+    if str(REPO_DIR) not in sys.path:
+        sys.path.insert(0, str(REPO_DIR))
+    try:
+        import fetch_ballot_returns as F
+        fractions = F.load_partial_fractions()
+    except Exception:
+        return pd.DataFrame()
+    today = pd.Timestamp.now(tz="America/Los_Angeles").date()
+    best = None
+    for i in range(days_back + 1):
+        d = today - datetime.timedelta(days=i)
+        try:
+            snap, rows = F.parse_xlsx(F.download_xlsx(F.dated_url(d)), fractions, fallback_date=d)
+        except Exception:
+            continue
+        if rows and (best is None or snap > best[0]):
+            best = (snap, rows)
+        if best is not None:
+            break                      # newest dated file found
+    if best is None:
+        return pd.DataFrame()
+    df = pd.DataFrame(best[1])
+    df["snapshot_date"] = pd.Timestamp(best[0])
+    return df
+
+
 def load_2022_baseline() -> pd.DataFrame:
     path = REPO_DIR / "vbm_2022_baseline.csv"
     if not path.exists():
