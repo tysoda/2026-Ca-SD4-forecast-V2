@@ -1606,6 +1606,73 @@ with tabs[6]:
 # METHOD & DATA
 # ══════════════════════════════════════════════════════════════════════════════
 with tabs[7]:
+    section("SOS vs Optiq — latest counts",
+            "Each source's most recent figures, side by side, to show where the totals differ. "
+            "Optiq's 'registered' is its VBM universe (SD4 voters sent a ballot); SOS 'issued' is ballots "
+            "issued. Optiq figures are raw here — Alpine is not filled in from SOS.")
+    _sl = sos[sos["snapshot_date"] == sos["snapshot_date"].max()].set_index("county")
+    _sos_date = sos["snapshot_date"].max()
+    if not cp_latest.empty:
+        _ol = cp_latest.groupby("county").agg(o_reg=("registered", "sum"), o_ret=("returned", "sum"),
+                                              o_last=("latest_return_date", "max"))
+    else:
+        _ol = pd.DataFrame(columns=["o_reg", "o_ret", "o_last"])
+    cmp_ = pd.DataFrame({"county": D.SD4_COUNTIES}).set_index("county")
+    cmp_["s_iss"] = _sl["vbm_issued"]
+    cmp_["s_ret"] = _sl["vbm_returned"]
+    cmp_ = cmp_.join(_ol)
+    cmp_ = cmp_.reset_index()
+    tot_ = cmp_[["s_iss", "s_ret", "o_reg", "o_ret"]].sum()
+    tot_row = {"county": "SD4 total", **tot_.to_dict(), "o_last": cmp_["o_last"].max()}
+    cmp_ = pd.concat([cmp_, pd.DataFrame([tot_row])], ignore_index=True)
+    cmp_["d_iss"] = cmp_["o_reg"] - cmp_["s_iss"]
+    cmp_["d_ret"] = cmp_["o_ret"] - cmp_["s_ret"]
+    cmp_["d_ret_pct"] = (cmp_["d_ret"] / cmp_["s_ret"].where(cmp_["s_ret"] > 0)) * 100
+    cmp_["s_rate"] = cmp_["s_ret"] / cmp_["s_iss"].where(cmp_["s_iss"] > 0) * 100
+    cmp_["o_rate"] = cmp_["o_ret"] / cmp_["o_reg"].where(cmp_["o_reg"] > 0) * 100
+
+    def _why(r):
+        notes = []
+        if r["county"] in D.PARTIAL_COUNTIES:
+            notes.append("split county: SOS is county total × SD4 share")
+        if r["county"] != "SD4 total":
+            if pd.notna(r["o_last"]) and r["o_last"] < _sos_date - pd.Timedelta(days=1):
+                notes.append(f"Optiq's last return {r['o_last']:%b %-d}")
+            if (r["o_ret"] or 0) == 0 and (r["s_ret"] or 0) > 0:
+                notes.append("Optiq shows no returns yet")
+            elif pd.notna(r["d_ret_pct"]) and r["d_ret_pct"] > 0:
+                notes.append("Optiq has newer returns" if _o_date > _sos_date else "Optiq ahead of SOS")
+        return "; ".join(notes)
+    _o_date = cp_latest["snapshot_date"].max() if not cp_latest.empty else _sos_date
+    cmp_["why"] = cmp_.apply(_why, axis=1)
+    _gap_days = (_o_date - _sos_date).days
+    if _gap_days > 0:
+        st.markdown(f"**Timing:** the latest SOS report is from {_sos_date:%b %-d}, {_gap_days} day"
+                    f"{'s' if _gap_days != 1 else ''} older than Optiq ({_o_date:%b %-d}), so part of every "
+                    "gap below is ballots Optiq has counted that SOS hasn't reported yet.")
+    st.dataframe(
+        cmp_[["county", "s_iss", "o_reg", "d_iss", "s_ret", "o_ret", "d_ret", "d_ret_pct", "s_rate", "o_rate",
+              "o_last", "why"]],
+        hide_index=True, width="stretch", height=38 + 35 * len(cmp_),
+        column_config={
+            "county": "County",
+            "s_iss": INT("SOS issued"), "o_reg": INT("Optiq registered"),
+            "d_iss": st.column_config.NumberColumn("Δ issued", format="%+d", help="Optiq − SOS"),
+            "s_ret": INT("SOS returned"), "o_ret": INT("Optiq returned"),
+            "d_ret": st.column_config.NumberColumn("Δ returned", format="%+d", help="Optiq − SOS"),
+            "d_ret_pct": st.column_config.NumberColumn("Δ returned %", format="%+.1f%%"),
+            "s_rate": pct_col("SOS rate"), "o_rate": pct_col("Optiq rate"),
+            "o_last": st.column_config.DateColumn("Optiq last return", format="MMM D"),
+            "why": st.column_config.TextColumn("Likely reason", width="large"),
+        })
+    _ct_note = ""
+    if not ct_latest.empty:
+        _ct_iss, _ct_ret = int(ct_latest["issued"].sum()), int(ct_latest["returned"].sum())
+        _ct_note = (f" Optiq crosstabs (the party × age × gender × ethnicity feed): {_ct_iss:,} issued, "
+                    f"{_ct_ret:,} returned — vs {int(tot_['o_reg']):,} / {int(tot_['o_ret']):,} in its county feed.")
+    st.caption(f"SOS report {_sos_date:%b %-d}; Optiq {'live' if cp_source == 'live' else 'saved snapshot'} "
+               f"{cp_latest['snapshot_date'].max():%b %-d}." + _ct_note + " " + SOURCE_GAP_NOTE)
+
     section("Sources")
     st.markdown(f"""
 - **SOS ballot status report** (`ballot_returns.csv`) — county VBM issued / returned / accepted, pulled every
