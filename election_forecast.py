@@ -814,12 +814,37 @@ with tab_turnout:
         "Total implied turnout from VBM calibration (2022 & 2024). "
         "Partisan split: live Optiq return counts blended with 2022 PDI district prior "
         "(D=38.4% / R=42.4%) — prior weight fades as returns accumulate. "
-        "Estimates stabilize once ≥5% of expected final VBM is in."
+        "In-person ballots (~6–10% of total) adjusted for county-specific Republican lean "
+        "vs mail, derived from 2026 primary SoVs (El Dorado +16.4pp, Amador +23.0pp, "
+        "Stanislaus +17.6pp; others default +18.0pp). "
+        "Estimates stabilize once ≥30% of expected 2022-pace early vote is in."
     )
 
     # 2022 PDI district-wide party split of pre-election VBM (used as prior)
     _PDI_D_SHARE = 0.384
     _PDI_R_SHARE = 0.424
+
+    # ── In-person Republican lean correction ──────────────────────────────────
+    # Derived from 2026 SD4 primary SoVs (Alvarado-Gil + Duarte = REP; Brandon = DEM).
+    # Each value is the pp difference in REP share: in-person minus mail.
+    # Positive = in-person more Republican than mail ballots.
+    #
+    # Source:
+    #   El Dorado  (+16.4pp): SoV XLSX Sheet13 — Mail 59.6% REP, In-Person 76.0% REP
+    #   Amador     (+23.0pp): County PDF       — Mail 65.5% REP, In-Person 88.5% REP
+    #   Stanislaus (+17.6pp): stanvote.gov PDF — Mail 54.5% REP, In-Person 72.1% REP
+    #   Others:  use weighted average of known counties (~18.1pp), rounded to 18pp.
+    #   (Tuolumne SoV has no per-contest vote-type split; Calaveras data unavailable)
+    #
+    # The correction shifts party share for the in-person slice only:
+    #   ip_share = vbm_share + county_ip_lean (REP); DEM adjusted symmetrically.
+    _IP_REP_LEAN = {
+        "El Dorado":  0.164,
+        "Amador":     0.230,
+        "Stanislaus": 0.176,
+    }
+    _IP_REP_LEAN_DEFAULT = 0.180   # weighted avg of three known counties
+    # vbm_pct_of_total is returned in each county's estimate dict (from COUNTY_PARAMS)
 
     try:
         _vbm_to_est = estimate_turnout(ballot_returns_path=DATA_DIR / "ballot_returns.csv", verbose=False)
@@ -865,9 +890,24 @@ with tab_turnout:
                 _d_share = (1 - _w) * _PDI_D_SHARE + _w * _live_d_share
                 _r_share = (1 - _w) * _PDI_R_SHARE + _w * _live_r_share
 
-                # Implied voters by party — shares of total implied turnout
-                _impl_D = _impl * _d_share
-                _impl_R = _impl * _r_share
+                # ── In-person lean correction ────────────────────────────────
+                # Split implied total into VBM and in-person buckets, apply
+                # a county-specific Republican in-person lean to the latter.
+                # vbm_pct_of_total is the calibrated fraction of final votes
+                # cast by mail; the remainder arrive in-person on or before E-Day.
+                _vbm_frac   = _e.get("vbm_pct_of_total", 0.90)  # from COUNTY_PARAMS
+                _impl_vbm   = _impl * _vbm_frac
+                _impl_ip    = _impl * (1.0 - _vbm_frac)
+                _ip_lean    = _IP_REP_LEAN.get(_cn, _IP_REP_LEAN_DEFAULT)
+
+                # VBM bucket: use the blended party share directly
+                # In-person bucket: shift REP up by ip_lean, DEM down by same
+                _ip_r_share = min(_r_share + _ip_lean, 1.0)
+                _ip_d_share = max(_d_share - _ip_lean, 0.0)
+
+                # Implied voters by party — sum across VBM + in-person buckets
+                _impl_D = _impl_vbm * _d_share + _impl_ip * _ip_d_share
+                _impl_R = _impl_vbm * _r_share + _impl_ip * _ip_r_share
                 _impl_D_to = _impl_D / _dem_reg if _dem_reg > 0 else float("nan")
                 _impl_R_to = _impl_R / _rep_reg if _rep_reg > 0 else float("nan")
                 import math as _math
