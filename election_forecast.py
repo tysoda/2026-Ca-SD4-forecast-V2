@@ -816,8 +816,8 @@ with tab_turnout:
         "(D=38.4% / R=42.4%) — prior weight fades as returns accumulate. "
         "In-person ballots (~6–10% of total) adjusted for county-specific Republican lean "
         "vs mail, derived from 2026 primary SoVs (El Dorado +16.4pp, Amador +23.0pp, "
-        "Stanislaus +17.6pp, Calaveras +14.7pp, Nevada +11.1pp, Madera +14.4pp; "
-        "Placer +8.7pp from 4 Dem Tahoe precincts; Mono −4.4pp outlier; others default +15.5pp). "
+        "Stanislaus +17.6pp, Calaveras +14.7pp, Nevada +11.1pp, Madera +14.4pp, Mono +21.5pp; "
+        "Placer +8.7pp from 4 Dem Tahoe precincts only; others default +15.9pp). "
         "Estimates stabilize once ≥30% of expected 2022-pace early vote is in."
     )
 
@@ -839,9 +839,8 @@ with tab_turnout:
     #   Madera     (+14.4pp): SoV XLSX Sheet20  — Mail 67.2% REP, In-Person 81.6% REP
     #   Placer     ( +8.7pp): SoV by precinct   — Mail 29.0% REP, In-Person 37.7% REP
     #                          (4 Dem Tahoe precincts only; not representative of SD4)
-    #   Mono       ( -4.4pp): Summary PDFs      — Mail 46.7% REP, In-Person 42.3% REP
-    #                          (Mammoth Lakes vote centers are Dem-dominant; outlier)
-    #   Default: weighted avg of 6 non-outlier counties (excl. Placer, Mono) ≈ +15.5pp
+    #   Mono       (+21.5pp): Official canvass PDF — Mail 41.3% REP, In-Person 62.8% REP
+    #   Default: weighted avg of 7 non-outlier counties (excl. Placer) ≈ +15.9pp
     #   (Tuolumne/Alpine/Mariposa/Inyo: SoVs lack per-contest vote-type split)
     #
     # The correction shifts party share for the in-person slice only:
@@ -853,10 +852,10 @@ with tab_turnout:
         "Calaveras":  0.147,
         "Nevada":     0.111,
         "Madera":     0.144,
+        "Mono":       0.215,
         "Placer":     0.087,  # 4 Dem-leaning Tahoe precincts only — not representative of SD4 broadly
-        "Mono":      -0.044,  # Mammoth Lakes vote centers are Dem-dominant; outlier
     }
-    _IP_REP_LEAN_DEFAULT = 0.155   # weighted avg of 6 non-outlier counties (excl. Placer, Mono)
+    _IP_REP_LEAN_DEFAULT = 0.159   # weighted avg of 7 non-outlier counties (excl. Placer)
     # vbm_pct_of_total is returned in each county's estimate dict (from COUNTY_PARAMS)
 
     try:
