@@ -812,12 +812,10 @@ with tab_turnout:
     st.markdown('<div class="section-label">VBM-Implied Turnout Estimates</div>', unsafe_allow_html=True)
     st.caption(
         "Total implied turnout from VBM calibration (2022 & 2024). "
-        "Partisan split: live Optiq return counts blended with 2022 PDI district prior "
-        "(D=38.4% / R=42.4%) — prior weight fades as returns accumulate. "
-        "In-person ballots (~6–10% of total) adjusted for county-specific Republican lean "
-        "vs mail, derived from 2026 primary SoVs (El Dorado +16.4pp, Amador +23.0pp, "
-        "Stanislaus +17.6pp, Calaveras +14.7pp, Nevada +11.1pp, Madera +14.4pp, Mono +21.5pp; "
-        "Placer +8.7pp from 4 Dem Tahoe precincts only; others default +15.9pp). "
+        "Dem/Rep turnout: registered-party Optiq returns extrapolated through the same "
+        "pipeline as total turnout (÷ window fraction ÷ return rate ÷ VBM share), then "
+        "divided by registered D/R voters. Early in the window, motivated early returners "
+        "can push estimates above 100% (flagged ⚠) — these converge as returns accumulate. "
         "Estimates stabilize once ≥30% of expected 2022-pace early vote is in."
     )
 
@@ -885,48 +883,32 @@ with tab_turnout:
                 _delta   = _impl_to - _base_to
                 _prog    = _e.get("vbm_pct_observed", 0)
 
-                # Blend live Optiq party split with 2022 PDI prior.
-                # Both shares are expressed as fraction of TOTAL ballots (incl. Others)
-                # so that implied_D + implied_R < implied_total (Others take the rest).
-                # Prior: 2022 PDI — D=38.4%, R=42.4% of total pre-eday VBM.
-                # Live: dem_ret / tot_ret, rep_ret / tot_ret (Optiq county totals).
-                # Weight blends 0→live as VBM progress grows; full live at ≥20%.
-                _tot_ret = _geo.get("tot_ret", 0) if _geo else 0
-                if _tot_ret > 0:
-                    _live_d_share = _dem_ret / _tot_ret
-                    _live_r_share = _rep_ret / _tot_ret
-                else:
-                    _live_d_share = _PDI_D_SHARE
-                    _live_r_share = _PDI_R_SHARE
-                _w = min(_prog * 5, 1.0)  # full weight at 20% VBM progress
-                _d_share = (1 - _w) * _PDI_D_SHARE + _w * _live_d_share
-                _r_share = (1 - _w) * _PDI_R_SHARE + _w * _live_r_share
-
-                # ── In-person lean correction ────────────────────────────────
-                # Split implied total into VBM and in-person buckets, apply
-                # a county-specific Republican in-person lean to the latter.
-                # vbm_pct_of_total is the calibrated fraction of final votes
-                # cast by mail; the remainder arrive in-person on or before E-Day.
-                _vbm_frac   = _e.get("vbm_pct_of_total", 0.90)  # from COUNTY_PARAMS
-                _impl_vbm   = _impl * _vbm_frac
-                _impl_ip    = _impl * (1.0 - _vbm_frac)
-                _ip_lean    = _IP_REP_LEAN.get(_cn, _IP_REP_LEAN_DEFAULT)
-
-                # VBM bucket: use the blended party share directly
-                # In-person bucket: shift REP up by ip_lean, DEM down by same
-                _ip_r_share = min(_r_share + _ip_lean, 1.0)
-                _ip_d_share = max(_d_share - _ip_lean, 0.0)
-
-                # Implied voters by party — sum across VBM + in-person buckets
-                _impl_D = _impl_vbm * _d_share + _impl_ip * _ip_d_share
-                _impl_R = _impl_vbm * _r_share + _impl_ip * _ip_r_share
-                _impl_D_to = _impl_D / _dem_reg if _dem_reg > 0 else float("nan")
-                _impl_R_to = _impl_R / _rep_reg if _rep_reg > 0 else float("nan")
+                # ── Party turnout: apply the same pipeline to D and R returns separately ──
+                # dem_ret / rep_ret are registered-affiliation returns from Optiq.
+                # We extrapolate each through the same window_fraction → return_rate →
+                # vbm_pct_of_total pipeline used for total turnout, then divide by
+                # party registration. This avoids conflating Dem-candidate votes with
+                # registered-Dem voters (the NPP problem in the old blended-share method).
+                # Assumption: D, R, and NPP voters return ballots at the same county pace.
+                # Early in the window this can produce >100% for motivated early returners;
+                # those are capped and flagged — they converge as the window fills.
                 import math as _math
+                _win_frac = _e.get("window_fraction", 1.0)
+                _rr       = _e.get("return_rate",       0.85)
+                _vbm_frac = _e.get("vbm_pct_of_total",  0.90)
+
+                if _win_frac > 0 and _rr > 0 and _vbm_frac > 0:
+                    _impl_D = (_dem_ret / _win_frac) / _rr / _vbm_frac
+                    _impl_R = (_rep_ret / _win_frac) / _rr / _vbm_frac
+                else:
+                    _impl_D = float("nan")
+                    _impl_R = float("nan")
+
+                _impl_D_to = _impl_D / _dem_reg if (_dem_reg > 0 and not _math.isnan(_impl_D)) else float("nan")
+                _impl_R_to = _impl_R / _rep_reg if (_rep_reg > 0 and not _math.isnan(_impl_R)) else float("nan")
                 _gap = _impl_D_to - _impl_R_to if (not _math.isnan(_impl_D_to) and not _math.isnan(_impl_R_to)) else float("nan")
 
-                # Cap display at 100%; >100% means the model is extrapolating aggressively
-                # early in the window — show the capped value with a ⚠ flag.
+                # Cap display at 100%; >100% means aggressive early-window extrapolation.
                 def _fmt_to(v):
                     if _math.isnan(v): return "—"
                     if v > 1.0: return "⚠ >100%"
@@ -952,10 +934,12 @@ with tab_turnout:
                 _dist_total_implied += _impl
                 _dist_total_reg     += _reg
                 _dist_base_votes    += _reg * _base_to
-                _dist_impl_D_voters += min(_impl_D, _dem_reg) if _dem_reg > 0 else _impl_D
-                _dist_impl_R_voters += min(_impl_R, _rep_reg) if _rep_reg > 0 else _impl_R
-                if _dem_reg > 0: _dist_dem_reg += _dem_reg
-                if _rep_reg > 0: _dist_rep_reg += _rep_reg
+                if _dem_reg > 0 and not _math.isnan(_impl_D):
+                    _dist_impl_D_voters += min(_impl_D, _dem_reg)
+                    _dist_dem_reg       += _dem_reg
+                if _rep_reg > 0 and not _math.isnan(_impl_R):
+                    _dist_impl_R_voters += min(_impl_R, _rep_reg)
+                    _dist_rep_reg       += _rep_reg
                 _n_ok += 1
             else:
                 _vbm_rows.append({
