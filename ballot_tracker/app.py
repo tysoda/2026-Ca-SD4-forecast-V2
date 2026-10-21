@@ -1274,10 +1274,14 @@ with tabs[5]:
                 "What the D−R vote margin among ballots already returned would be, for different party loyalty "
                 "and O/NPP splits. Loyalty = share of a party's voters backing its own candidate; the rest cross "
                 "over. Blue = Democrat ahead, red = Republican ahead.")
-        gc = st.columns(2)
+        gc = st.columns(3)
         base_loy = gc[0].slider("Party loyalty", 70, 100, 90, 1, format="%d%%", key="grid_loy") / 100
         loy_gap = gc[1].slider("Loyalty gap for the 'higher loyalty' columns", 1, 15, 5, 1,
                                format="%d pp", key="grid_gap") / 100
+        excl = gc[2].slider("Excluded (roll-off)", 3.0, 6.0, 5.0, 0.5, format="%.1f%%", key="grid_excl",
+                            help="Share of returned ballots that won't record a vote in this race (skipped, "
+                                 "blank or rejected). June 2026 primary: ~6.2% of SD4 ballots cast had no "
+                                 "SD4 vote; a two-candidate general usually runs lower.") / 100
         lo_ = base_loy - loy_gap
         grid_cols = [
             (f"{base_loy:.0%} D / {base_loy:.0%} R", "Equal loyalty", base_loy, base_loy),
@@ -1288,7 +1292,8 @@ with tabs[5]:
 
         def _margin(f_, l_, s_):
             # Dem votes − Rep votes: D·f + R·(1−l) + N·s − [R·l + D·(1−f) + N·(1−s)]
-            return _d * (2 * f_ - 1) - _r * (2 * l_ - 1) + _n * (2 * s_ - 1)
+            # Excluded ballots are taken equally from every party, as in the Nevada Independent's table
+            return (1 - excl) * (_d * (2 * f_ - 1) - _r * (2 * l_ - 1) + _n * (2 * s_ - 1))
 
         hdr_bg = ["#ececea", "#dbeafe", "#fde2e2"]
         html = ['<table style="width:100%;border-collapse:collapse;font-family:\'IBM Plex Sans\',sans-serif">',
@@ -1311,10 +1316,13 @@ with tabs[5]:
             html.append("</tr>")
         html.append("</table>")
         st.markdown("".join(html), unsafe_allow_html=True)
-        st.caption(f"Built from {_d:,} D, {_r:,} R and {_n:,} O/NPP ballots returned. Margin = "
-                   "D·(2·D loyalty − 1) − R·(2·R loyalty − 1) + O/NPP·(2·Dem share − 1). "
-                   "Each 5-point shift in the O/NPP split moves the margin by 5% of O/NPP ballots "
-                   f"({0.05 * _n:,.0f}); each point of loyalty is worth 2% of that party's ballots.")
+        st.caption(f"Built from {_d:,} D, {_r:,} R and {_n:,} O/NPP ballots returned, less {excl:.1%} "
+                   f"roll-off ({(1 - excl) * (_d + _r + _n):,.0f} modelled votes). Margin = (1 − excluded) × "
+                   "[D·(2·D loyalty − 1) − R·(2·R loyalty − 1) + O/NPP·(2·Dem share − 1)]. "
+                   "Each 5-point shift in the O/NPP split moves the margin by "
+                   f"{(1 - excl) * 0.05 * _n:,.0f} votes. Roll-off: in the June 2026 primary about 6.2% of SD4 "
+                   "ballots had no vote in this race (263,941 race votes of ~281,500 ballots); a two-candidate "
+                   "general usually runs lower, hence 3–6%.")
 
     if ct_latest.empty:
         st.info("No Optiq crosstab data available.")
