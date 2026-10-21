@@ -41,7 +41,6 @@ REPO_DIR   = pathlib.Path(__file__).parent
 DATA_DIR   = REPO_DIR                          # CSVs live at repo root
 OUTPUT_CSV = DATA_DIR / "ballot_returns.csv"
 PARTIAL_CSV = DATA_DIR / "partial_county_fractions.csv"
-TIMES_CSV  = DATA_DIR / "sos_report_times.csv"     # report date → timestamp from the file's cell A1
 
 SOS_URL = (
     "https://elections.cdn.sos.ca.gov/"
@@ -172,39 +171,6 @@ def parse_xlsx(data: bytes, fractions: dict,
     return snapshot_date, rows_out
 
 
-def report_datetime(data: bytes) -> Optional[datetime.datetime]:
-    """The report's timestamp from cell A1 (None if A1 isn't a date/time)."""
-    try:
-        ws = openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=True)["VBM Ballot Statistics"]
-        v = next(ws.iter_rows(min_row=1, max_row=1, max_col=1, values_only=True))[0]
-    except Exception:
-        return None
-    if isinstance(v, datetime.datetime):
-        return v
-    if isinstance(v, datetime.date):
-        return datetime.datetime(v.year, v.month, v.day)
-    return None
-
-
-def save_report_time(snapshot_date: datetime.date, ts: Optional[datetime.datetime], dry_run: bool = False) -> None:
-    """Record the report's A1 timestamp in sos_report_times.csv (one row per report date)."""
-    if ts is None or dry_run:
-        return
-    rows = {}
-    if TIMES_CSV.exists():
-        with open(TIMES_CSV, newline="") as f:
-            rows = {r["snapshot_date"]: r["report_time"] for r in csv.DictReader(f)}
-    key, val = snapshot_date.isoformat(), ts.isoformat(timespec="minutes")
-    if rows.get(key) == val:
-        return
-    rows[key] = val
-    with open(TIMES_CSV, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["snapshot_date", "report_time"])
-        for k in sorted(rows):
-            w.writerow([k, rows[k]])
-
-
 def load_existing_keys() -> set:
     """Return set of (county, snapshot_date) already in ballot_returns.csv."""
     if not OUTPUT_CSV.exists():
@@ -302,11 +268,7 @@ def fetch_recent(fractions: dict, days_back: int = 10, dry_run: bool = False) ->
             continue
         seen.add(snapshot_date)
         status = "already have" if snapshot_date.isoformat() in existing_dates else "NEW"
-        ts = report_datetime(data)
-        save_report_time(snapshot_date, ts, dry_run=dry_run)
-        print(f"  ✓ {name}: report {snapshot_date}"
-              + (f" ({ts:%H:%M})" if ts and (ts.hour or ts.minute) else "")
-              + f" · {len(rows)} SD4 counties · {status}")
+        print(f"  ✓ {name}: report {snapshot_date} · {len(rows)} SD4 counties · {status}")
         if status == "NEW":
             written += 1 if append_rows(snapshot_date, rows, dry_run=dry_run) else 0
     print(f"Done: {written} new report date(s).")
@@ -347,7 +309,6 @@ def main():
     print(f"  Snapshot date: {snapshot_date}  |  SD4 counties found: {len(rows)}")
 
     append_rows(snapshot_date, rows, dry_run=args.dry_run)
-    save_report_time(snapshot_date, report_datetime(data), dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

@@ -121,29 +121,18 @@ def fetch_sos_live(days_back: int = 3) -> pd.DataFrame:
     for i in range(days_back + 1):
         d = today - datetime.timedelta(days=i)
         try:
-            raw = F.download_xlsx(F.dated_url(d))
-            snap, rows = F.parse_xlsx(raw, fractions, fallback_date=d)
+            snap, rows = F.parse_xlsx(F.download_xlsx(F.dated_url(d)), fractions, fallback_date=d)
         except Exception:
             continue
         if rows and (best is None or snap > best[0]):
-            best = (snap, rows, F.report_datetime(raw))
+            best = (snap, rows)
         if best is not None:
             break                      # newest dated file found
     if best is None:
         return pd.DataFrame()
     df = pd.DataFrame(best[1])
     df["snapshot_date"] = pd.Timestamp(best[0])
-    df["report_time"] = pd.Timestamp(best[2]) if best[2] is not None else pd.NaT
     return df
-
-
-def load_sos_report_times() -> dict:
-    """{report date: report timestamp} from sos_report_times.csv (written by the SOS fetcher)."""
-    path = REPO_DIR / "sos_report_times.csv"
-    if not path.exists():
-        return {}
-    df = pd.read_csv(path, parse_dates=["snapshot_date", "report_time"])
-    return dict(zip(df["snapshot_date"], df["report_time"]))
 
 
 def load_2022_baseline() -> pd.DataFrame:
