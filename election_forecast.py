@@ -841,7 +841,7 @@ with tab_turnout:
     #                          (4 Dem Tahoe precincts only; not representative of SD4)
     #   Mono       (+21.5pp): Official canvass PDF — Mail 41.3% REP, In-Person 62.8% REP
     #   Default: weighted avg of 7 non-outlier counties (excl. Placer) ≈ +15.9pp
-    #   (Tuolumne/Alpine/Mariposa/Inyo: SoVs lack per-contest vote-type split)
+    #   (Merced/Tuolumne/Alpine/Mariposa/Inyo: SoVs lack per-contest vote-type split)
     #
     # The correction shifts party share for the in-person slice only:
     #   ip_share = vbm_share + county_ip_lean (REP); DEM adjusted symmetrically.
