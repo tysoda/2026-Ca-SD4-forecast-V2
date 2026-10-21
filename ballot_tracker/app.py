@@ -145,6 +145,7 @@ def load_all():
         "ct": D.load_optiq_crosstabs(),
         "cp": D.load_optiq_county_party(),
         "pre": D.load_optiq_precincts(),
+        "saved_at": D.load_last_saved(),
         "pre_cov": D.load_precinct_coverage(),
     }
 
@@ -377,9 +378,13 @@ with tabs[0]:
                 + (" (couldn't reach Optiq — using saved data)" if cp_source != "live" else ""))
     else:
         _chk = "live checks are off — showing the data saved by the GitHub Actions"
+    _sv = data.get("saved_at", {})
+    _saved = (f"SOS {_when(_sv.get('sos'))} &nbsp;·&nbsp; Optiq {_when(_sv.get('optiq'))}"
+              if any(_sv.values()) else "—")
     st.markdown(
         f'<div style="font-size:0.85rem;color:#555;margin:0.2rem 0 0.4rem 0">'
-        f'<b>Last checked</b> &nbsp;·&nbsp; {_chk}</div>', unsafe_allow_html=True)
+        f'<b>Last checked by the app</b> &nbsp;·&nbsp; {_chk}<br>'
+        f'<b>Last saved by GitHub Actions</b> &nbsp;·&nbsp; {_saved}</div>', unsafe_allow_html=True)
 
     if use_optiq:
         dm = ometa

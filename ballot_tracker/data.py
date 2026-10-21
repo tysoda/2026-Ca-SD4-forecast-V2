@@ -333,3 +333,17 @@ def load_sd4_boundary() -> list | None:
         return None
     with open(path) as f:
         return json.load(f)["coordinates"][0]
+
+
+def load_last_saved() -> dict:
+    """When each GitHub Action last committed new data (UTC → Pacific), from
+    last_saved_sos.txt / last_saved_optiq.txt. Missing until the Action next saves."""
+    out = {}
+    for key in ("sos", "optiq"):
+        path = REPO_DIR / f"last_saved_{key}.txt"
+        try:
+            ts = pd.Timestamp(path.read_text().strip())
+            out[key] = ts.tz_convert("America/Los_Angeles").tz_localize(None)
+        except Exception:
+            out[key] = None
+    return out
