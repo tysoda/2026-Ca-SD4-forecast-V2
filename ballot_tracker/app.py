@@ -373,18 +373,17 @@ with tabs[0]:
         return (f"{pd.Timestamp(ts):%a %b %-d, %-I:%M %p}".replace("AM", "am").replace("PM", "pm")
                 if ts is not None else "—")
 
-    if use_live:
-        _chk = (f"SOS {_when(sos_checked)} &nbsp;·&nbsp; Optiq {_when(optiq_fetched)}"
-                + (" (couldn't reach Optiq — using saved data)" if cp_source != "live" else ""))
-    else:
-        _chk = "live checks are off — showing the data saved by the GitHub Actions"
+    # Latest check of each source, whether by the app's live pull or a GitHub Action save
     _sv = data.get("saved_at", {})
-    _saved = (f"SOS {_when(_sv.get('sos'))} &nbsp;·&nbsp; Optiq {_when(_sv.get('optiq'))}"
-              if any(_sv.values()) else "—")
+    def _latest(*ts):
+        ts = [t for t in ts if t is not None and pd.notna(t)]
+        return max(ts) if ts else None
+    _sos_chk = _latest(sos_checked if use_live else None, _sv.get("sos"))
+    _opt_chk = _latest(optiq_fetched if (use_live and cp_source == "live") else None, _sv.get("optiq"))
     st.markdown(
         f'<div style="font-size:0.85rem;color:#555;margin:0.2rem 0 0.4rem 0">'
-        f'<b>Last checked by the app</b> &nbsp;·&nbsp; {_chk}<br>'
-        f'<b>Last saved by GitHub Actions</b> &nbsp;·&nbsp; {_saved}</div>', unsafe_allow_html=True)
+        f'<b>Last checked</b> &nbsp;·&nbsp; SOS {_when(_sos_chk)} &nbsp;·&nbsp; Optiq {_when(_opt_chk)}</div>',
+        unsafe_allow_html=True)
 
     if use_optiq:
         dm = ometa
