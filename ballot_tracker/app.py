@@ -156,7 +156,8 @@ def load_precinct_geo():
 
 @st.cache_data(ttl=3600, show_spinner="Fetching live Optiq data…")
 def load_live():
-    return D.fetch_optiq_live(), D.fetch_optiq_county_party_live()
+    fetched = pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None)
+    return D.fetch_optiq_live(), D.fetch_optiq_county_party_live(), fetched
 
 
 @st.cache_data(ttl=1800, show_spinner="Checking SOS for a new report…")
@@ -278,9 +279,9 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-live_cells, live_cp = (pd.DataFrame(), pd.DataFrame())
+live_cells, live_cp, optiq_fetched = (pd.DataFrame(), pd.DataFrame(), None)
 if use_live:
-    live_cells, live_cp = load_live()
+    live_cells, live_cp, optiq_fetched = load_live()
 
 # California date (the server runs on UTC, which would roll over at 5pm Pacific)
 today = pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None).normalize()
@@ -314,10 +315,14 @@ reg_total = sum(reg_counts.values())
 st.markdown("# 📬 SD4 Ballot Return Tracker")
 # SOS: saved reports plus, if SOS has posted a newer one than the Action has saved, that report
 sos_source = "saved"
+sos_times = D.load_sos_report_times()
 if use_live and not sos.empty:
     _sl_live = load_sos_live()
+    if not _sl_live.empty and "report_time" in _sl_live and pd.notna(_sl_live["report_time"].iloc[0]):
+        sos_times[_sl_live["snapshot_date"].iloc[0]] = _sl_live["report_time"].iloc[0]
     if not _sl_live.empty and _sl_live["snapshot_date"].max() > sos["snapshot_date"].max():
-        sos = pd.concat([sos, _sl_live[[c for c in sos.columns if c in _sl_live]]], ignore_index=True)
+        sos = pd.concat([sos, _sl_live[[c for c in sos.columns if c in _sl_live and c != "report_time"]]],
+                        ignore_index=True)
         sos_source = "live"
 sos_latest_report = sos["snapshot_date"].max() if not sos.empty else None
 # Repeated reports (weekends: counties don't report, so SOS re-posts the same numbers) are dropped
@@ -364,6 +369,40 @@ tabs = st.tabs(["Overview", "Counties", "Precincts", "Crosstabs", "Trends", "Out
 # OVERVIEW
 # ══════════════════════════════════════════════════════════════════════════════
 with tabs[0]:
+    # ── Last update from each source ─────────────────────────────────────────
+    def _when(ts, with_time=True):
+        if ts is None or pd.isna(ts):
+            return "—"
+        ts = pd.Timestamp(ts)
+        out = f"{ts:%a %b %-d}"
+        if with_time and (ts.hour or ts.minute):
+            out += f", {ts:%-I:%M %p}".replace("AM", "am").replace("PM", "pm")
+        return out
+
+    _sos_ts = sos_times.get(sos_latest_report) if sos_latest_report is not None else None
+    sos_txt = (f"report of {_when(_sos_ts)}" if _sos_ts is not None and pd.notna(_sos_ts)
+               else f"report of {_when(sos_latest_report, False)}")
+    if sos_latest_report is not None and sos_latest_report > meta["snapshot"]:
+        sos_txt += f" (no change since {meta['snapshot']:%b %-d})"
+    if not live_cells.empty and live_cells["return_date"].notna().any():
+        _opt_latest = live_cells["return_date"].max()
+    elif not cp_latest.empty and "latest_return_date" in cp_latest:
+        _opt_latest = cp_latest["latest_return_date"].max()
+    else:
+        _opt_latest = None
+    if cp_source == "live" and optiq_fetched is not None:
+        optiq_txt = f"fetched {_when(optiq_fetched)}"
+    elif not cp_latest.empty:
+        optiq_txt = f"saved snapshot of {_when(cp_latest['snapshot_date'].max(), False)}"
+    else:
+        optiq_txt = "no data"
+    if _opt_latest is not None and pd.notna(_opt_latest):
+        optiq_txt += f" · latest ballot returned {_when(_opt_latest, False)}"
+    st.markdown(
+        f'<div style="font-size:0.85rem;color:#555;margin:0.2rem 0 0.4rem 0">'
+        f'<b>Last updated</b> &nbsp;·&nbsp; SOS: {sos_txt} &nbsp;·&nbsp; Optiq: {optiq_txt}</div>',
+        unsafe_allow_html=True)
+
     if use_optiq:
         dm = ometa
         section("District",
