@@ -870,7 +870,7 @@ with tab_turnout:
         "Mono":       0.628,   # In-Person 62.8% REP
         "Placer":     0.377,   # In-Person 37.7% REP (4 Dem Tahoe precincts only)
     }
-    _IP_REP_SHARE_DEFAULT = 0.740  # weighted avg of 7 non-outlier counties (excl. Placer)
+    _IP_REP_SHARE_DEFAULT = 0.749  # weighted avg of 6 counties excl. Placer & Nevada (Dem-leaning partial counties)
     # vbm_pct_of_total is returned in each county's estimate dict (from COUNTY_PARAMS)
 
     try:
