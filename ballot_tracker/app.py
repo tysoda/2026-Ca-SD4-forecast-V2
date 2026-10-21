@@ -156,12 +156,14 @@ def load_precinct_geo():
 
 @st.cache_data(ttl=3600, show_spinner="Fetching live Optiq data…")
 def load_live():
-    return D.fetch_optiq_live(), D.fetch_optiq_county_party_live()
+    fetched = pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None)
+    return D.fetch_optiq_live(), D.fetch_optiq_county_party_live(), fetched
 
 
 @st.cache_data(ttl=1800, show_spinner="Checking SOS for a new report…")
 def load_sos_live():
-    return D.fetch_sos_live()
+    checked = pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None)
+    return D.fetch_sos_live(), checked
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -278,9 +280,9 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-live_cells, live_cp = (pd.DataFrame(), pd.DataFrame())
+live_cells, live_cp, optiq_fetched = (pd.DataFrame(), pd.DataFrame(), None)
 if use_live:
-    live_cells, live_cp = load_live()
+    live_cells, live_cp, optiq_fetched = load_live()
 
 # California date (the server runs on UTC, which would roll over at 5pm Pacific)
 today = pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None).normalize()
@@ -314,8 +316,9 @@ reg_total = sum(reg_counts.values())
 st.markdown("# 📬 SD4 Ballot Return Tracker")
 # SOS: saved reports plus, if SOS has posted a newer one than the Action has saved, that report
 sos_source = "saved"
+sos_checked = None
 if use_live and not sos.empty:
-    _sl_live = load_sos_live()
+    _sl_live, sos_checked = load_sos_live()
     if not _sl_live.empty and _sl_live["snapshot_date"].max() > sos["snapshot_date"].max():
         sos = pd.concat([sos, _sl_live[[c for c in sos.columns if c in _sl_live]]], ignore_index=True)
         sos_source = "live"
@@ -364,6 +367,20 @@ tabs = st.tabs(["Overview", "Counties", "Precincts", "Crosstabs", "Trends", "Out
 # OVERVIEW
 # ══════════════════════════════════════════════════════════════════════════════
 with tabs[0]:
+    # ── When the app last checked each source ────────────────────────────────
+    def _when(ts):
+        return (f"{pd.Timestamp(ts):%a %b %-d, %-I:%M %p}".replace("AM", "am").replace("PM", "pm")
+                if ts is not None else "—")
+
+    if use_live:
+        _chk = (f"SOS {_when(sos_checked)} &nbsp;·&nbsp; Optiq {_when(optiq_fetched)}"
+                + (" (couldn't reach Optiq — using saved data)" if cp_source != "live" else ""))
+    else:
+        _chk = "live checks are off — showing the data saved by the GitHub Actions"
+    st.markdown(
+        f'<div style="font-size:0.85rem;color:#555;margin:0.2rem 0 0.4rem 0">'
+        f'<b>Last checked</b> &nbsp;·&nbsp; {_chk}</div>', unsafe_allow_html=True)
+
     if use_optiq:
         dm = ometa
         section("District",
