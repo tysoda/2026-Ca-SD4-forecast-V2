@@ -816,7 +816,8 @@ with tab_turnout:
         "(D=38.4% / R=42.4%) — prior weight fades as returns accumulate. "
         "In-person ballots (~6–10% of total) adjusted for county-specific Republican lean "
         "vs mail, derived from 2026 primary SoVs (El Dorado +16.4pp, Amador +23.0pp, "
-        "Stanislaus +17.6pp, Calaveras +14.7pp; others default +17.0pp). "
+        "Stanislaus +17.6pp, Calaveras +14.7pp, Nevada +11.1pp, Madera +14.4pp; "
+        "Placer +8.7pp from 4 Dem Tahoe precincts; Mono −4.4pp outlier; others default +15.5pp). "
         "Estimates stabilize once ≥30% of expected 2022-pace early vote is in."
     )
 
@@ -829,15 +830,19 @@ with tab_turnout:
     # Each value is the pp difference in REP share: in-person minus mail.
     # Positive = in-person more Republican than mail ballots.
     #
-    # Source:
+    # Source (all 2026 primary):
     #   El Dorado  (+16.4pp): SoV XLSX Sheet13 — Mail 59.6% REP, In-Person 76.0% REP
-    #   Amador     (+23.0pp): County PDF       — Mail 65.5% REP, In-Person 88.5% REP
-    #   Stanislaus (+17.6pp): stanvote.gov PDF — Mail 54.5% REP, In-Person 72.1% REP
+    #   Amador     (+23.0pp): County PDF        — Mail 65.5% REP, In-Person 88.5% REP
+    #   Stanislaus (+17.6pp): stanvote.gov PDF  — Mail 54.5% REP, In-Person 72.1% REP
     #   Calaveras  (+14.7pp): County results    — Mail 65.0% REP, In-Person 79.7% REP
-    #   Placer     ( +8.7pp): SoV by precinct  — Mail 29.0% REP, In-Person 37.7% REP
-    #                         (4 Dem Tahoe precincts only; not representative of SD4)
-    #   Others:  use weighted average of known non-outlier counties (~17pp default).
-    #   (Tuolumne SoV has no per-contest vote-type split)
+    #   Nevada     (+11.1pp): County screenshot — Mail 27.1% REP, In-Person 38.1% REP
+    #   Madera     (+14.4pp): SoV XLSX Sheet20  — Mail 67.2% REP, In-Person 81.6% REP
+    #   Placer     ( +8.7pp): SoV by precinct   — Mail 29.0% REP, In-Person 37.7% REP
+    #                          (4 Dem Tahoe precincts only; not representative of SD4)
+    #   Mono       ( -4.4pp): Summary PDFs      — Mail 46.7% REP, In-Person 42.3% REP
+    #                          (Mammoth Lakes vote centers are Dem-dominant; outlier)
+    #   Default: weighted avg of 6 non-outlier counties (excl. Placer, Mono) ≈ +15.5pp
+    #   (Tuolumne/Alpine/Mariposa/Inyo: SoVs lack per-contest vote-type split)
     #
     # The correction shifts party share for the in-person slice only:
     #   ip_share = vbm_share + county_ip_lean (REP); DEM adjusted symmetrically.
@@ -846,9 +851,12 @@ with tab_turnout:
         "Amador":     0.230,
         "Stanislaus": 0.176,
         "Calaveras":  0.147,
+        "Nevada":     0.111,
+        "Madera":     0.144,
         "Placer":     0.087,  # 4 Dem-leaning Tahoe precincts only — not representative of SD4 broadly
+        "Mono":      -0.044,  # Mammoth Lakes vote centers are Dem-dominant; outlier
     }
-    _IP_REP_LEAN_DEFAULT = 0.170   # weighted avg of known non-outlier counties
+    _IP_REP_LEAN_DEFAULT = 0.155   # weighted avg of 6 non-outlier counties (excl. Placer, Mono)
     # vbm_pct_of_total is returned in each county's estimate dict (from COUNTY_PARAMS)
 
     try:
