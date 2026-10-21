@@ -816,7 +816,7 @@ with tab_turnout:
         "(D=38.4% / R=42.4%) — prior weight fades as returns accumulate. "
         "In-person ballots (~6–10% of total) adjusted for county-specific Republican lean "
         "vs mail, derived from 2026 primary SoVs (El Dorado +16.4pp, Amador +23.0pp, "
-        "Stanislaus +17.6pp; others default +18.0pp). "
+        "Stanislaus +17.6pp, Calaveras +14.7pp; others default +17.0pp). "
         "Estimates stabilize once ≥30% of expected 2022-pace early vote is in."
     )
 
@@ -833,8 +833,11 @@ with tab_turnout:
     #   El Dorado  (+16.4pp): SoV XLSX Sheet13 — Mail 59.6% REP, In-Person 76.0% REP
     #   Amador     (+23.0pp): County PDF       — Mail 65.5% REP, In-Person 88.5% REP
     #   Stanislaus (+17.6pp): stanvote.gov PDF — Mail 54.5% REP, In-Person 72.1% REP
-    #   Others:  use weighted average of known counties (~18.1pp), rounded to 18pp.
-    #   (Tuolumne SoV has no per-contest vote-type split; Calaveras data unavailable)
+    #   Calaveras  (+14.7pp): County results    — Mail 65.0% REP, In-Person 79.7% REP
+    #   Placer     ( +8.7pp): SoV by precinct  — Mail 29.0% REP, In-Person 37.7% REP
+    #                         (4 Dem Tahoe precincts only; not representative of SD4)
+    #   Others:  use weighted average of known non-outlier counties (~17pp default).
+    #   (Tuolumne SoV has no per-contest vote-type split)
     #
     # The correction shifts party share for the in-person slice only:
     #   ip_share = vbm_share + county_ip_lean (REP); DEM adjusted symmetrically.
@@ -842,8 +845,10 @@ with tab_turnout:
         "El Dorado":  0.164,
         "Amador":     0.230,
         "Stanislaus": 0.176,
+        "Calaveras":  0.147,
+        "Placer":     0.087,  # 4 Dem-leaning Tahoe precincts only — not representative of SD4 broadly
     }
-    _IP_REP_LEAN_DEFAULT = 0.180   # weighted avg of three known counties
+    _IP_REP_LEAN_DEFAULT = 0.170   # weighted avg of known non-outlier counties
     # vbm_pct_of_total is returned in each county's estimate dict (from COUNTY_PARAMS)
 
     try:
