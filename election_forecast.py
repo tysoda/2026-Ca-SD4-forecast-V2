@@ -854,6 +854,23 @@ with tab_turnout:
         "Placer":     0.087,  # 4 Dem-leaning Tahoe precincts only — not representative of SD4 broadly
     }
     _IP_REP_LEAN_DEFAULT = 0.159   # weighted avg of 7 non-outlier counties (excl. Placer)
+
+    # ── Raw in-person REP/DEM shares (2026 primary, same source as _IP_REP_LEAN) ──
+    # Used to estimate in-person D/R voters directly rather than via lean adjustment.
+    # Counties without SoV vote-type splits use the weighted-average default.
+    # NOTE: these are shares of the two-candidate (REP+DEM) total in the SD4 Senate
+    # race, so REP + DEM = 1.0 here (NPP crossovers are embedded in both shares).
+    _IP_REP_SHARE = {
+        "El Dorado":  0.760,   # In-Person 76.0% REP (2026 primary SoV)
+        "Amador":     0.885,   # In-Person 88.5% REP
+        "Stanislaus": 0.721,   # In-Person 72.1% REP
+        "Calaveras":  0.797,   # In-Person 79.7% REP
+        "Nevada":     0.381,   # In-Person 38.1% REP
+        "Madera":     0.816,   # In-Person 81.6% REP
+        "Mono":       0.628,   # In-Person 62.8% REP
+        "Placer":     0.377,   # In-Person 37.7% REP (4 Dem Tahoe precincts only)
+    }
+    _IP_REP_SHARE_DEFAULT = 0.740  # weighted avg of 7 non-outlier counties (excl. Placer)
     # vbm_pct_of_total is returned in each county's estimate dict (from COUNTY_PARAMS)
 
     try:
@@ -883,23 +900,36 @@ with tab_turnout:
                 _delta   = _impl_to - _base_to
                 _prog    = _e.get("vbm_pct_observed", 0)
 
-                # ── Party turnout: apply the same pipeline to D and R returns separately ──
-                # dem_ret / rep_ret are registered-affiliation returns from Optiq.
-                # We extrapolate each through the same window_fraction → return_rate →
-                # vbm_pct_of_total pipeline used for total turnout, then divide by
-                # party registration. This avoids conflating Dem-candidate votes with
-                # registered-Dem voters (the NPP problem in the old blended-share method).
-                # Assumption: D, R, and NPP voters return ballots at the same county pace.
-                # Early in the window this can produce >100% for motivated early returners;
-                # those are capped and flagged — they converge as the window fills.
+                # ── Party turnout: VBM pipeline + in-person correction ───────────────
+                # Step 1 — Extrapolate registered-party VBM returns to final VBM total.
+                #   dem_ret and rep_ret are registered-affiliation Optiq counts (VBM only).
+                #   Apply window_fraction and return_rate (same as total turnout pipeline).
+                # Step 2 — Estimate in-person D/R voters using the historical raw IP share
+                #   from the 2026 primary SoV (_IP_REP_SHARE). This treats VBM and IP as
+                #   distinct vote streams with different partisan compositions.
+                #   Caveats: assumes NPP crossovers are proportional to the primary split,
+                #   and doesn't account for straight-ticket vs crossover differences.
+                # Dividing by party registration gives implied turnout for each party.
+                # Early in the window VBM extrapolation can exceed registration (flagged ⚠).
                 import math as _math
                 _win_frac = _e.get("window_fraction", 1.0)
                 _rr       = _e.get("return_rate",       0.85)
                 _vbm_frac = _e.get("vbm_pct_of_total",  0.90)
 
+                _ip_rep_share = _IP_REP_SHARE.get(_cn, _IP_REP_SHARE_DEFAULT)
+                _ip_dem_share = 1.0 - _ip_rep_share
+
                 if _win_frac > 0 and _rr > 0 and _vbm_frac > 0:
-                    _impl_D = (_dem_ret / _win_frac) / _rr / _vbm_frac
-                    _impl_R = (_rep_ret / _win_frac) / _rr / _vbm_frac
+                    # VBM component: extrapolate each party's returns to final VBM
+                    _impl_D_vbm = (_dem_ret / _win_frac) / _rr
+                    _impl_R_vbm = (_rep_ret / _win_frac) / _rr
+                    # In-person component: apply historical IP share to implied IP total
+                    _impl_ip    = _impl * (1.0 - _vbm_frac)
+                    _impl_D_ip  = _impl_ip * _ip_dem_share
+                    _impl_R_ip  = _impl_ip * _ip_rep_share
+                    # Total implied D/R voters
+                    _impl_D = _impl_D_vbm + _impl_D_ip
+                    _impl_R = _impl_R_vbm + _impl_R_ip
                 else:
                     _impl_D = float("nan")
                     _impl_R = float("nan")
