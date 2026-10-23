@@ -16,14 +16,17 @@ import os
 import ssl
 import sys
 import urllib.request
-from datetime import date
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 DISTRICT_SLUG = "STATE%20SENATE%204"
 API_URL = f"https://abev.civiq.vote/api/ballot-returns/{DISTRICT_SLUG}"
 OUTPUT_CSV = os.path.join(os.path.dirname(__file__), "optiq_crosstabs.csv")
-SNAPSHOT_DATE = date.today().isoformat()  # e.g. "2026-10-07"
+# California date: the Action runs on UTC, which would stamp evening runs with tomorrow's date
+SNAPSHOT_DATE = datetime.now(ZoneInfo("America/Los_Angeles")).date().isoformat()
+LATEST_UPDATE = None   # Optiq's last data-load time (UTC ISO), from the ballot-returns response
 
 # SD4 party registration as of 60-day general election report (September 4, 2026).
 SD4_PARTY_REG = {
@@ -51,6 +54,8 @@ def fetch_rows(url: str) -> list[dict]:
               f"First bytes: {body[:120]!r}. If the site has moved, update API_URL/GEO_URL.",
               file=sys.stderr)
         sys.exit(1)
+    global LATEST_UPDATE
+    LATEST_UPDATE = data.get("latestUpdate")
     return data.get("ballotReturns", [])
 
 
@@ -86,6 +91,34 @@ def load_existing(path: str) -> pd.DataFrame:
 
 GEO_URL = f"https://abev.civiq.vote/api/geography-breakdown/{DISTRICT_SLUG}?level=county_name"
 COUNTY_CSV = os.path.join(os.path.dirname(__file__), "optiq_county_party.csv")
+DROPS_CSV = os.path.join(os.path.dirname(__file__), "optiq_county_drops.csv")
+
+
+def log_county_drops(totals: dict) -> None:
+    """Append (county, returned, loaded_at) whenever a county's returned count changes.
+
+    loaded_at is Optiq's latestUpdate — the time of the Optiq data load that first
+    showed the new count (to within this Action's run interval). A county's first
+    entry has a blank time: we don't know when its existing ballots were loaded.
+    """
+    last = {}
+    if os.path.exists(DROPS_CSV):
+        prev = pd.read_csv(DROPS_CSV, dtype=str)
+        for _, r in prev.iterrows():
+            last[r["county"]] = int(r["returned"])
+    new = []
+    for county, ret in sorted(totals.items()):
+        if county not in last:
+            new.append({"county": county, "returned": ret, "loaded_at": ""})
+        elif ret != last[county]:
+            when = LATEST_UPDATE or datetime.now(timezone.utc).isoformat()
+            ts = pd.Timestamp(when)
+            ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+            new.append({"county": county, "returned": ret, "loaded_at": ts.strftime("%Y-%m-%dT%H:%M:%SZ")})
+    if not new:
+        return
+    pd.DataFrame(new).to_csv(DROPS_CSV, mode="a", header=not os.path.exists(DROPS_CSV), index=False)
+    print(f"  Logged {len(new)} county drop(s) to {DROPS_CSV}")
 SD4_COUNTIES = {
     "Alpine", "Amador", "Calaveras", "El Dorado", "Inyo", "Madera", "Mariposa",
     "Merced", "Mono", "Nevada", "Placer", "Stanislaus", "Tuolumne",
@@ -127,6 +160,7 @@ def save_county_party_snapshot() -> None:
         return
 
     today_df = pd.DataFrame(recs)
+    log_county_drops(today_df.groupby("county")["returned"].sum().astype(int).to_dict())
     if os.path.exists(COUNTY_CSV):
         existing = pd.read_csv(COUNTY_CSV, dtype=str)
         existing = existing[existing["snapshot_date"] != SNAPSHOT_DATE]

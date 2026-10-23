@@ -146,6 +146,7 @@ def load_all():
         "cp": D.load_optiq_county_party(),
         "pre": D.load_optiq_precincts(),
         "saved_at": D.load_last_saved(),
+        "drops": D.load_optiq_drops(),
         "pre_cov": D.load_precinct_coverage(),
     }
 
@@ -158,7 +159,8 @@ def load_precinct_geo():
 @st.cache_data(ttl=3600, show_spinner="Fetching live Optiq data…")
 def load_live():
     fetched = pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None)
-    return D.fetch_optiq_live(), D.fetch_optiq_county_party_live(), fetched
+    cells, optiq_loaded = D.fetch_optiq_live()
+    return cells, D.fetch_optiq_county_party_live(), fetched, optiq_loaded
 
 
 @st.cache_data(ttl=1800, show_spinner="Checking SOS for a new report…")
@@ -281,9 +283,9 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-live_cells, live_cp, optiq_fetched = (pd.DataFrame(), pd.DataFrame(), None)
+live_cells, live_cp, optiq_fetched, optiq_loaded = (pd.DataFrame(), pd.DataFrame(), None, None)
 if use_live:
-    live_cells, live_cp, optiq_fetched = load_live()
+    live_cells, live_cp, optiq_fetched, optiq_loaded = load_live()
 
 # California date (the server runs on UTC, which would roll over at 5pm Pacific)
 today = pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None).normalize()
@@ -610,17 +612,46 @@ with tabs[1]:
         show = pct_cols(A.with_total_row(tab, base, "tot_reg", "tot_ret",
                                          ["share_of_district_returns", "share_of_district_reg"]),
                         ["rate", "rate_2022_equiv", "share_of_district_returns", "share_of_district_reg"])
+        # Last update: time of the Optiq data load that brought each county's latest ballots
+        # (logged by the Optiq Action from Optiq's latestUpdate; the live pull covers any change
+        # since the last logged one). Falls back to the latest return date where no time is known.
+        _drops = data["drops"]
+        _now_ret = cp_latest.groupby("county")["returned"].sum() if not cp_latest.empty else pd.Series(dtype=int)
+        _upd = {}
+        for c_ in tab["county"]:
+            dl = _drops[_drops["county"] == c_]
+            ts_ = None
+            if len(dl):
+                last_ret, last_ts = dl["returned"].iloc[-1], dl["loaded_at"].iloc[-1]
+                if (cp_source == "live" and optiq_loaded is not None and c_ in _now_ret
+                        and _now_ret[c_] != last_ret):
+                    ts_ = optiq_loaded
+                elif last_ts is not None and pd.notna(last_ts):
+                    ts_ = last_ts
+            _upd[c_] = ts_
+        def _upd_txt(c_, fallback):
+            ts_ = _upd.get(c_)
+            if ts_ is not None:
+                return f"{ts_:%b %-d, %-I:%M %p}".replace("AM", "am").replace("PM", "pm")
+            return f"{fallback:%b %-d}" if fallback is not None and pd.notna(fallback) else "—"
+        _times = [t for t in _upd.values() if t is not None]
+        _upd["SD4 total"] = max(_times) if _times else None   # most recent update in any county
+        show["last_update"] = [_upd_txt(c_, d_) for c_, d_ in zip(show["county"], show["last_drop_date"])]
         _filled = show["county"].isin(tab.loc[tab["sos_filled"], "county"])
         show.loc[_filled, "county"] = show.loc[_filled, "county"] + "*"
         show["pace_ratio"] = show["pace_ratio"] * 100
         st.dataframe(
-            show[["county", "tot_reg", "tot_ret", "rate", "last_drop", "last_drop_date", "rate_2022_equiv",
+            show[["county", "tot_reg", "tot_ret", "rate", "last_drop", "last_update", "rate_2022_equiv",
                   "pace_ratio", "pace", "share_of_district_returns", "share_of_district_reg", "outstanding"]],
             hide_index=True, width="stretch", height=38 + 35 * len(show),
             column_config={
                 "county": "County", "tot_reg": INT("Registered"), "tot_ret": INT("Returned"),
                 "rate": pct_col("Rate"),
                 **DROP_COLS("Optiq snapshot"),
+                "last_update": st.column_config.TextColumn(
+                    "Last update",
+                    help="When Optiq loaded the county's latest new ballots (Pacific time). Where that "
+                         "isn't known yet, the date of the county's most recent ballot return."),
                 "rate_2022_equiv": pct_col(f"2022 est. ({pace_short})"),
                 "pace_ratio": st.column_config.NumberColumn(f"vs 2022 ({pace_short})", format="%.0f%%"),
                 "pace": f"Pace ({pace_short})",
@@ -628,7 +659,9 @@ with tabs[1]:
                 "share_of_district_reg": pct_col("Share of reg."), "outstanding": INT("Not yet returned"),
             },
         )
-        _cap = ("Drop date is Optiq's most recent ballot return date for the county. "
+        _cap = ("Last update is when Optiq loaded the county's latest new ballots, to within a few hours "
+                "(dates without a time are the county's most recent ballot return date, shown until a "
+                "change has been logged). "
                 "Registered is Optiq's VBM universe (sums to the same total as the crosstab 'issued'). ")
         if tab["sos_filled"].any():
             _cap += ("* Optiq shows 0 returned for this county, so its returned count and date come from "
