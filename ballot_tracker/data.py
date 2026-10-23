@@ -183,24 +183,50 @@ def load_optiq_crosstabs(drop_stale: bool = True) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def fetch_optiq_live() -> pd.DataFrame:
+def fetch_optiq_live() -> tuple[pd.DataFrame, pd.Timestamp | None]:
     """Live row-level Optiq pull, aggregated to cells with a return date.
 
-    Returns columns: party, age, gender, ethnicity, return_date (NaT if not
-    returned), voters. Empty frame if the API is unreachable.
+    Returns (frame, latest_update). Frame columns: party, age, gender, ethnicity,
+    return_date (NaT if not returned), voters; empty if the API is unreachable.
+    latest_update is Optiq's last data-load time (Pacific), or None.
     """
     try:
-        rows = _get_json(f"{OPTIQ_BASE}/ballot-returns/{OPTIQ_SLUG}").get("ballotReturns", [])
+        payload = _get_json(f"{OPTIQ_BASE}/ballot-returns/{OPTIQ_SLUG}")
     except Exception:
-        return pd.DataFrame()
+        return pd.DataFrame(), None
+    rows = payload.get("ballotReturns", [])
+    latest = _to_pacific(payload.get("latestUpdate"))
     if not rows:
-        return pd.DataFrame()
+        return pd.DataFrame(), latest
     df = pd.DataFrame(rows)
     df["voters"] = pd.to_numeric(df["voters"], errors="coerce").fillna(0).astype(int)
     df["return_date"] = pd.to_datetime(df["returnDate"], errors="coerce").dt.tz_localize(None).dt.normalize()
     for c in ("party", "age", "gender", "ethnicity"):
         df[c] = df[c].astype(str)
-    return df[["party", "age", "gender", "ethnicity", "return_date", "voters"]]
+    return df[["party", "age", "gender", "ethnicity", "return_date", "voters"]], latest
+
+
+def _to_pacific(ts) -> pd.Timestamp | None:
+    if not ts:
+        return None
+    try:
+        t = pd.Timestamp(ts)
+    except Exception:
+        return None
+    t = t.tz_localize("UTC") if t.tzinfo is None else t
+    return t.tz_convert("America/Los_Angeles").tz_localize(None)
+
+
+def load_optiq_drops() -> pd.DataFrame:
+    """optiq_county_drops.csv: one row per change in a county's returned count, with the
+    Optiq load time (Pacific) that first showed it. First rows per county have no time."""
+    path = REPO_DIR / "optiq_county_drops.csv"
+    if not path.exists():
+        return pd.DataFrame(columns=["county", "returned", "loaded_at"])
+    df = pd.read_csv(path, dtype={"county": str})
+    df["returned"] = pd.to_numeric(df["returned"], errors="coerce")
+    df["loaded_at"] = df["loaded_at"].map(_to_pacific)
+    return df
 
 
 def live_to_snapshot(live: pd.DataFrame, snapshot_date: pd.Timestamp) -> pd.DataFrame:
@@ -333,3 +359,17 @@ def load_sd4_boundary() -> list | None:
         return None
     with open(path) as f:
         return json.load(f)["coordinates"][0]
+
+
+def load_last_saved() -> dict:
+    """When each GitHub Action last committed new data (UTC → Pacific), from
+    last_saved_sos.txt / last_saved_optiq.txt. Missing until the Action next saves."""
+    out = {}
+    for key in ("sos", "optiq"):
+        path = REPO_DIR / f"last_saved_{key}.txt"
+        try:
+            ts = pd.Timestamp(path.read_text().strip())
+            out[key] = ts.tz_convert("America/Los_Angeles").tz_localize(None)
+        except Exception:
+            out[key] = None
+    return out

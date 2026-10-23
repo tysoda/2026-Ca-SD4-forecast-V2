@@ -2,9 +2,10 @@ name: Update Optiq Crosstabs
 
 on:
   schedule:
-    # Every 4 hours at :47 — off the top of the hour, when GitHub most often
-    # delays or drops scheduled runs.
-    - cron: '47 */4 * * *'
+    # Hourly at :47 (off the top of the hour, when GitHub most often delays or drops
+    # runs). Commits only when Optiq has new data. Hourly runs also time-stamp each
+    # county's new ballots (optiq_county_drops.csv) to within the hour.
+    - cron: '47 * * * *'
   workflow_dispatch:   # allow manual trigger
 
 jobs:
@@ -38,13 +39,16 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add optiq_crosstabs.csv
-          for f in optiq_county_party.csv optiq_precincts.csv optiq_precincts_coverage.csv sd4_precincts.geojson; do
+          for f in optiq_county_party.csv optiq_county_drops.csv optiq_precincts.csv optiq_precincts_coverage.csv sd4_precincts.geojson; do
             [ -f "$f" ] && git add "$f"
           done
           # Only commit if there are changes
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
+            # Time of this save, shown in the tracker's "Last saved" line
+            date -u +%Y-%m-%dT%H:%M:%SZ > last_saved_optiq.txt
+            git add last_saved_optiq.txt
             git commit -m "chore: update Optiq crosstab snapshot $(date -u +%Y-%m-%d)"
             git pull --rebase --autostash origin main
             git push
