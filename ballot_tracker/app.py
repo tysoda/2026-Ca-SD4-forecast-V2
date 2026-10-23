@@ -126,6 +126,102 @@ def pct_col(label, signed=False):
 INT = lambda label: st.column_config.NumberColumn(label, format="localized")
 
 
+# ── Table styling ────────────────────────────────────────────────────────────
+ZEBRA_BG = "#f3f3ef"
+TOTAL_BG = "#e3e9f2"
+PACE_COLORS = {"Above": "#1a6b3c", "Near": "#666666", "Below": "#b26a00"}
+
+
+def _fmt_value(v, fmt: str | None, kind: str) -> str:
+    """Format one value the way the column's NumberColumn/DateColumn format would."""
+    if v is None or (not isinstance(v, str) and pd.isna(v)):
+        return "—"
+    if kind == "date":
+        return f"{pd.Timestamp(v):%b %-d}"
+    if fmt in (None, "localized"):
+        return f"{v:,.0f}" if float(v).is_integer() else f"{v:,.1f}"
+    try:
+        return fmt % v
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def show_df(df: pd.DataFrame, column_config: dict | None = None, signed: list[str] | None = None,
+            pace: str | None = None, **kwargs):
+    """st.dataframe with the app's table styling.
+
+    - alternating row shading; the "SD4 total" / "Total" row bold on a blue-grey band
+    - `signed` columns (D−R margins and shifts only) tinted blue (+, Democratic) / red (−,
+      Republican), stronger for bigger values (scaled within the column, total row excluded)
+    - optional pace column coloured Above / Near / Below
+    - first column pinned so it stays visible when the table scrolls sideways
+    - empty cells show "—" (Streamlit would print "None"): columns with gaps are shown as
+      formatted text, the rest stay numeric so sorting works
+    """
+    df = df.reset_index(drop=True).copy()
+    cfg = dict(column_config or {})
+    raw = df.copy()
+    first = df.columns[0]
+    is_total = df[first].astype(str).str.rstrip("*").isin(["SD4 total", "Total", "All"])
+
+    def _conf(col):
+        c = cfg.get(col)
+        return c if isinstance(c, dict) else None
+
+    signed_cols = set(signed or [])
+    for col in df.columns:
+        c = _conf(col)
+        fmt = (c or {}).get("type_config", {}).get("format") if c else None
+        kind = (c or {}).get("type_config", {}).get("type") if c else None
+        numeric = pd.api.types.is_numeric_dtype(df[col]) or pd.api.types.is_datetime64_any_dtype(df[col])
+        if numeric and df[col].isna().any() and col != first:
+            df[col] = [_fmt_value(v, fmt, "date" if kind == "date" or
+                                  pd.api.types.is_datetime64_any_dtype(raw[col]) else "number")
+                       for v in raw[col]]
+            label = (c or {}).get("label") or (cfg.get(col) if isinstance(cfg.get(col), str) else col)
+            cfg[col] = st.column_config.Column(label, help=(c or {}).get("help"), alignment="right")
+        elif (c or {}).get("type_config", {}).get("type") == "text" and df[col].isna().any():
+            df[col] = df[col].fillna("—")
+    if first in cfg and isinstance(cfg[first], dict):
+        cfg[first] = {**cfg[first], "pinned": True}
+    else:
+        cfg[first] = st.column_config.Column(cfg.get(first, first) if isinstance(cfg.get(first), str)
+                                             else first, pinned=True)
+
+    def _row_styles(row):
+        i = row.name
+        if is_total.iloc[i]:
+            return [f"background-color:{TOTAL_BG};font-weight:700"] * len(row)
+        return [f"background-color:{ZEBRA_BG}" if i % 2 else ""] * len(row)
+
+    styler = df.style.apply(_row_styles, axis=1)
+
+    for col in signed_cols & set(df.columns):
+        vals = pd.to_numeric(raw[col], errors="coerce")
+        scale = vals[~is_total].abs().max()
+        scale = scale if scale and np.isfinite(scale) else 1.0
+
+        def _tint(_, vals=vals, scale=scale):
+            out = []
+            for i, v in enumerate(vals):
+                if pd.isna(v) or v == 0:
+                    out.append("")
+                    continue
+                a = 0.06 + 0.30 * min(abs(v) / scale, 1.0)
+                rgb, txt = ((21, 101, 192), "#0d47a1") if v > 0 else ((183, 28, 28), "#8e1b1b")
+                w = ";font-weight:700" if is_total.iloc[i] else ""
+                out.append(f"background-color:rgba({rgb[0]},{rgb[1]},{rgb[2]},{a:.2f});color:{txt}{w}")
+            return out
+        styler = styler.apply(_tint, subset=[col], axis=0)
+
+    if pace and pace in df.columns:
+        styler = styler.map(lambda v: f"color:{PACE_COLORS[v]};font-weight:600" if v in PACE_COLORS else "",
+                            subset=[pace])
+    kwargs.setdefault("hide_index", True)
+    kwargs.setdefault("width", "stretch")
+    return st.dataframe(styler, column_config=cfg, **kwargs)
+
+
 def dim_color(dim: str, code: str, i: int) -> str:
     if dim == "party":
         return D.PARTY_COLORS.get(code, "#666")
@@ -531,8 +627,8 @@ with tabs[0]:
                 {"": "2022 registration (Oct 24)", "D": reg_m22["D"], "R": reg_m22["R"], "O": reg_m22["O"],
                  "dr": reg_m22["dr"]},
             ])
-            st.dataframe(pct_cols(cmp, ["D", "R", "O", "dr"]), hide_index=True, width="stretch",
-                         column_config={"D": pct_col("Dem"), "R": pct_col("Rep"), "O": pct_col("O/NPP"),
+            show_df(pct_cols(cmp, ["D", "R", "O", "dr"]), hide_index=True, width="stretch",
+                         signed=['dr'], column_config={"D": pct_col("Dem"), "R": pct_col("Rep"), "O": pct_col("O/NPP"),
                                         "dr": pct_col("D−R", True)})
             st.caption(f"2022 returns are estimates read from PDI's chart (about ±0.5pp on these shares); "
                        f"{r22['frac_of_final']:.0%} of 2022's early vote was in by this point. "
@@ -597,6 +693,9 @@ with tabs[0]:
 # COUNTIES
 # ══════════════════════════════════════════════════════════════════════════════
 with tabs[1]:
+    cty_more = st.toggle("Show more columns", key="cty_more",
+                         help="Adds the 2022 same-day rate, shares of returns and registration, ballots "
+                              "not yet returned, and party ballot counts.")
     if use_optiq:
         cp_tab = A.county_party_table(cp_latest)
         src_txt = ("live API" if cp_source == "live" else f"saved snapshot {ometa['snapshot']:%b %-d}")
@@ -640,10 +739,11 @@ with tabs[1]:
         _filled = show["county"].isin(tab.loc[tab["sos_filled"], "county"])
         show.loc[_filled, "county"] = show.loc[_filled, "county"] + "*"
         show["pace_ratio"] = show["pace_ratio"] * 100
-        st.dataframe(
-            show[["county", "tot_reg", "tot_ret", "rate", "last_drop", "last_update", "rate_2022_equiv",
-                  "pace_ratio", "pace", "share_of_district_returns", "share_of_district_reg", "outstanding"]],
-            hide_index=True, width="stretch", height=38 + 35 * len(show),
+        _cols1 = ["county", "tot_reg", "tot_ret", "rate", "last_drop", "last_update", "pace_ratio", "pace"]
+        if cty_more:
+            _cols1 += ["rate_2022_equiv", "share_of_district_returns", "share_of_district_reg", "outstanding"]
+        show_df(
+            show[_cols1], pace="pace", height=38 + 35 * len(show),
             column_config={
                 "county": "County", "tot_reg": INT("Registered"), "tot_ret": INT("Returned"),
                 "rate": pct_col("Rate"),
@@ -652,9 +752,13 @@ with tabs[1]:
                     "Last update",
                     help="When Optiq loaded the county's latest new ballots (Pacific time). Where that "
                          "isn't known yet, the date of the county's most recent ballot return."),
-                "rate_2022_equiv": pct_col(f"2022 est. ({pace_short})"),
-                "pace_ratio": st.column_config.NumberColumn(f"vs 2022 ({pace_short})", format="%.0f%%"),
-                "pace": f"Pace ({pace_short})",
+                "rate_2022_equiv": st.column_config.NumberColumn(
+                    "2022 same day", format="%.1f%%",
+                    help=f"The county's estimated 2022 return rate at today's point in the window ({pace_name})."),
+                "pace_ratio": st.column_config.NumberColumn(
+                    "vs 2022", format="%.0f%%",
+                    help=f"This year's rate as a share of the 2022 same-day rate ({pace_name}). 100% = level."),
+                "pace": st.column_config.TextColumn("Pace", help=f"Compared with 2022 at the same point ({pace_name})."),
                 "share_of_district_returns": pct_col("Share of returns"),
                 "share_of_district_reg": pct_col("Share of reg."), "outstanding": INT("Not yet returned"),
             },
@@ -688,8 +792,10 @@ with tabs[1]:
         v["dr_margin_reg"] = v["dr_margin_reg"] * 100
         v["margin_shift"] = v["margin_shift"] * 100
         cols2 = (["county"]
-                 + [c for p_ in D.PARTIES for c in (f"{p_}_ret", f"{p_}_share_ret")]
-                 + ["raw_dr", "dr_margin_ret", "dr_margin_reg", "margin_shift"])
+                 + ([f"{p_}_ret" for p_ in D.PARTIES] if cty_more else [])
+                 + [f"{p_}_share_ret" for p_ in D.PARTIES]
+                 + (["raw_dr"] if cty_more else [])
+                 + ["dr_margin_ret", "dr_margin_reg", "margin_shift"])
         cfg2 = {"county": "County",
                 "raw_dr": st.column_config.NumberColumn("D−R returned", format="%+d",
                                                         help="Democratic minus Republican ballots returned."),
@@ -698,10 +804,11 @@ with tabs[1]:
                 "margin_shift": pct_col("Shift vs reg", True)}
         short = {"D": "D", "R": "R", "O": "O/NPP"}
         for p_ in D.PARTIES:
-            cfg2[f"{p_}_ret"] = INT(f"{short[p_]} ret")
-            cfg2[f"{p_}_share_ret"] = pct_col(f"{short[p_]} ret %")
-        st.dataframe(v[cols2], hide_index=True, width="stretch", height=38 + 35 * len(v),
-                     column_config=cfg2)
+            cfg2[f"{p_}_ret"] = INT(f"{short[p_]} returned")
+            cfg2[f"{p_}_share_ret"] = st.column_config.NumberColumn(
+                f"{short[p_]} %", format="%.1f%%", help=f"{D.PARTY_LABELS[p_]} share of the county's returned ballots.")
+        show_df(v[cols2], height=38 + 35 * len(v), column_config=cfg2,
+                signed=["raw_dr", "dr_margin_ret", "dr_margin_reg", "margin_shift"])
 
         section("Returns margin vs registration margin — counties",
                 "Each county, sized by ballots returned. Above the diagonal, the county's returns so far are "
@@ -754,17 +861,23 @@ with tabs[1]:
                                          ["share_of_district_returns", "share_of_district_issued"]),
                         ["rate", "rate_2022_equiv", "share_of_district_returns", "share_of_district_issued"])
         show["pace_ratio"] = show["pace_ratio"] * 100
-        st.dataframe(
-            show[["county", "issued", "returned", "rate", "last_drop", "last_drop_date", "rate_2022_equiv",
-                  "pace_ratio", "pace", "share_of_district_returns", "share_of_district_issued", "outstanding"]],
-            hide_index=True, width="stretch", height=38 + 35 * len(show),
+        _cols1 = ["county", "issued", "returned", "rate", "last_drop", "last_drop_date", "pace_ratio", "pace"]
+        if cty_more:
+            _cols1 += ["rate_2022_equiv", "share_of_district_returns", "share_of_district_issued", "outstanding"]
+        show_df(
+            show[_cols1], pace="pace", height=38 + 35 * len(show),
             column_config={
                 "county": "County", "issued": INT("Issued"), "returned": INT("Returned"),
                 "rate": pct_col("Rate"),
                 **DROP_COLS("SOS report"),
-                "rate_2022_equiv": pct_col(f"2022 est. ({pace_short})"),
-                "pace_ratio": st.column_config.NumberColumn(f"vs 2022 ({pace_short})", format="%.0f%%"),
-                "pace": f"Pace ({pace_short})", "share_of_district_returns": pct_col("Share of returns"),
+                "rate_2022_equiv": st.column_config.NumberColumn(
+                    "2022 same day", format="%.1f%%",
+                    help=f"The county's estimated 2022 return rate at today's point in the window ({pace_name})."),
+                "pace_ratio": st.column_config.NumberColumn(
+                    "vs 2022", format="%.0f%%",
+                    help=f"This year's rate as a share of the 2022 same-day rate ({pace_name}). 100% = level."),
+                "pace": st.column_config.TextColumn("Pace", help=f"Compared with 2022 at the same point ({pace_name})."),
+                "share_of_district_returns": pct_col("Share of returns"),
                 "share_of_district_issued": pct_col("Share of issued"), "outstanding": INT("Outstanding"),
             },
         )
@@ -879,7 +992,7 @@ with tabs[1]:
         st.markdown("**Biggest last drops**")
         top = vel.sort_values("last_drop", ascending=False).head(6)
         if top["last_drop"].notna().any():
-            st.dataframe(top, hide_index=True, width="stretch",
+            show_df(top, hide_index=True, width="stretch",
                          column_config={"county": "County", **DROP_COLS("snapshot"),
                                         "returned": INT("Total returned")})
         else:
@@ -1073,7 +1186,7 @@ with tabs[2]:
         cols = ["county", "precinct", "registered", "returned", "rate"] + (["new"] if new_lbl else []) + \
                ["D", "R", "O", "d_share", "r_share", "o_share", "dr_ret", "dr_reg", "shift"]
         tbl = pct_cols(view[cols], ["rate", "d_share", "r_share", "o_share", "dr_ret", "dr_reg", "shift"])
-        st.dataframe(tbl, hide_index=True, width="stretch", height=560, column_config={
+        show_df(tbl, hide_index=True, width="stretch", height=560, signed=['dr_ret', 'dr_reg', 'shift'], column_config={
             "county": "County", "precinct": "Precinct",
             "registered": INT("Registered"), "returned": INT("Returned"), "rate": pct_col("Rate"),
             "new": INT(new_lbl or "New"),
@@ -1123,7 +1236,7 @@ with tabs[3]:
             s = pct_cols(s, ["rate", "share_issued", "share_returned", "representation"])
             with one_cols[i % 2]:
                 st.markdown(f"**{D.DIM_NAMES[dim]}**")
-                st.dataframe(
+                show_df(
                     s[[dim, "issued", "returned", "rate", "share_issued", "share_returned", "representation"]],
                     hide_index=True, width="stretch",
                     column_config={dim: D.DIM_NAMES[dim], "issued": INT("Issued"), "returned": INT("Ret."),
@@ -1185,7 +1298,7 @@ with tabs[3]:
         gdf = pd.DataFrame(gap_rows)
         gdf["shift"] = gdf["margin_ret"] - gdf["margin_iss"]
         gdf = pct_cols(gdf, ["D rate", "R rate", "O rate", "rate_gap", "margin_ret", "margin_iss", "shift"])
-        st.dataframe(gdf, hide_index=True, width="stretch", height=38 + 35 * len(gdf), column_config={
+        show_df(gdf, hide_index=True, width="stretch", height=38 + 35 * len(gdf), signed=['rate_gap', 'margin_ret', 'margin_iss', 'shift'], column_config={
             "D rate": pct_col("D rate"), "R rate": pct_col("R rate"), "O rate": pct_col("O/NPP rate"),
             "rate_gap": pct_col("D−R rate gap", True), "margin_ret": pct_col("D−R (returns)", True),
             "margin_iss": pct_col("D−R (issued)", True), "shift": pct_col("Shift", True)})
@@ -1196,7 +1309,7 @@ with tabs[3]:
         min_n = st.slider("Minimum ballots issued", 0, 5000, 500, 100)
         cells = cells[cells["issued"] >= min_n].sort_values("representation", ascending=False)
         cells = pct_cols(cells, ["rate", "share_issued", "share_returned", "representation"])
-        st.dataframe(cells[["party", "age", "gender", "ethnicity", "issued", "returned", "rate",
+        show_df(cells[["party", "age", "gender", "ethnicity", "issued", "returned", "rate",
                             "share_returned", "representation"]],
                      hide_index=True, width="stretch", height=360,
                      column_config={"party": "Party", "age": "Age", "gender": "Gender",
@@ -1391,7 +1504,7 @@ with tabs[5]:
             s["gap"] = s["share_outstanding"] - s["share_returned"]
             s = pct_cols(s, ["rate", "share_returned", "share_outstanding", "gap"])
             st.markdown(f"**{D.DIM_NAMES[dim]}**")
-            st.dataframe(s[[dim, "issued", "returned", "rate", "outstanding",
+            show_df(s[[dim, "issued", "returned", "rate", "outstanding",
                             "share_returned", "share_outstanding", "gap"]],
                          hide_index=True, width="stretch",
                          column_config={dim: D.DIM_NAMES[dim], "issued": INT("Issued"),
@@ -1463,7 +1576,7 @@ with tabs[5]:
                 bc = bc.join(ratesfc["by_county"][["pre", "final", "pre_vbm"]].rename(
                     columns={"pre": "prefc", "final": "finalfc", "pre_vbm": "prefc_n"}))
             bc = pct_cols(bc.reset_index(), [c for c in ("prefc", "finalfc", "pre22", "final22") if c in bc])
-            st.dataframe(bc, hide_index=True, width="stretch", column_config={
+            show_df(bc, hide_index=True, width="stretch", column_config={
                 "county": "County",
                 "prefc_n": st.column_config.NumberColumn("Forecast early vote", format="localized"),
                 "prefc": pct_col("Forecast pre-election"), "finalfc": pct_col("Forecast final"),
@@ -1506,7 +1619,7 @@ with tabs[5]:
             oc = county_t[["county", "issued", "returned", "outstanding", "rate"]].copy()
         oc["share_outstanding"] = oc["outstanding"] / oc["outstanding"].sum()
         oc = pct_cols(oc, ["rate", "share_outstanding"]).sort_values("outstanding", ascending=False)
-        st.dataframe(oc, hide_index=True, width="stretch",
+        show_df(oc, hide_index=True, width="stretch",
                      column_config={"county": "County",
                                     "issued": INT("Registered" if use_optiq else "Issued"),
                                     "returned": INT("Returned"),
@@ -1673,9 +1786,9 @@ with tabs[6]:
                 ck[c] = np.nan
             ck[c] = pd.to_numeric(ck[c], errors="coerce").astype(float)
         ck = pct_cols(ck, ["share_in", "dr22", "net22", "dr26", "net26"])
-        st.dataframe(ck[["days", "share_in", "ret22", "dr22", "net22", "ret26", "dr26", "net26"]],
+        show_df(ck[["days", "share_in", "ret22", "dr22", "net22", "ret26", "dr26", "net26"]],
                      hide_index=True, width="stretch",
-                     column_config={"days": st.column_config.NumberColumn("Days out", format="%d"),
+                     signed=['dr22', 'net22', 'dr26', 'net26'], column_config={"days": st.column_config.NumberColumn("Days out", format="%d"),
                                     "share_in": pct_col("2022: share of early vote in"),
                                     "ret22": INT("2022 returned"), "dr22": pct_col("2022 D−R", True),
                                     "net22": pct_col("2022 vs reg", True), "ret26": INT("2026 returned"),
@@ -1712,8 +1825,8 @@ with tabs[6]:
                 rg.loc[split, "chg"] = np.nan   # 2022 party mix was borrowed from 2026, so change isn't measured
             rg.loc[split, "county"] = rg.loc[split, "county"] + " (est.)"
             rgv = pct_cols(rg, [c for c in ("D22", "R22", "dr22", "D26", "R26", "dr26", "chg") if c in rg])
-            st.dataframe(rgv[cols], hide_index=True, width="stretch", height=38 + 35 * len(rgv),
-                         column_config={"county": "County", "registered": INT("2022 reg"),
+            show_df(rgv[cols], hide_index=True, width="stretch", height=38 + 35 * len(rgv),
+                         signed=['dr22', 'dr26', 'chg'], column_config={"county": "County", "registered": INT("2022 reg"),
                                         "D22": pct_col("2022 D"), "R22": pct_col("2022 R"),
                                         "dr22": pct_col("2022 D−R", True), "reg26": INT("2026 reg"),
                                         "D26": pct_col("2026 D"), "R26": pct_col("2026 R"),
@@ -1724,8 +1837,8 @@ with tabs[6]:
             dd = cum22[["days_before_eday", "date_2022", "D", "R", "O", "total", "cum_total", "frac_of_final",
                         "dr_margin"]].copy()
             dd = pct_cols(dd, ["frac_of_final", "dr_margin"])
-            st.dataframe(dd, hide_index=True, width="stretch",
-                         column_config={"days_before_eday": st.column_config.NumberColumn("Days out", format="%d"),
+            show_df(dd, hide_index=True, width="stretch",
+                         signed=['dr_margin'], column_config={"days_before_eday": st.column_config.NumberColumn("Days out", format="%d"),
                                         "date_2022": "2022 date", "D": INT("Dem"), "R": INT("Rep"),
                                         "O": INT("O/NPP"), "total": INT("Total"), "cum_total": INT("Running total"),
                                         "frac_of_final": pct_col("Share in"), "dr_margin": pct_col("Running D−R", True)})
@@ -1778,7 +1891,7 @@ with tabs[7]:
         st.markdown(f"**Timing:** the latest SOS report is from {_sos_date:%b %-d}, {_gap_days} day"
                     f"{'s' if _gap_days != 1 else ''} older than Optiq ({_o_date:%b %-d}), so part of every "
                     "gap below is ballots Optiq has counted that SOS hasn't reported yet.")
-    st.dataframe(
+    show_df(
         cmp_[["county", "s_iss", "o_reg", "d_iss", "s_ret", "o_ret", "d_ret", "d_ret_pct", "s_rate", "o_rate",
               "o_last", "why"]],
         hide_index=True, width="stretch", height=38 + 35 * len(cmp_),
