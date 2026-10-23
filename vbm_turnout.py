@@ -22,11 +22,14 @@ Where:
 
 Uncertainty
 -----------
-A mid-window snapshot is first extrapolated to the last pre-election report
-using SD4's 2022 daily return curve (pdi_2022_daily_sd4.csv; linear in time if
-the file is missing). That assumes 2026 returns arrive on the same schedule as
-2022's. No estimate is produced until at least 25% of a
-2022-sized early vote (by issued ballots) is in.
+A mid-window snapshot is extrapolated to the final pre-election total using
+each county's own pace relative to 2022: window_fraction = vbm_accepted_2026 /
+vbm_accepted_2022_final (from vbm_2022_baseline.csv).  This avoids the error
+of applying the district-level 2022 return schedule uniformly — counties mail
+out on different dates and voters return at different rates.  The district-level
+curve (pdi_2022_daily_sd4.csv) is kept as a fallback when the baseline is
+unavailable.  No estimate is produced until at least 30% of a 2022-sized early
+vote (by issued ballots) is in.
 """
 
 from pathlib import Path
@@ -194,17 +197,36 @@ def estimate_turnout(
         vbm_iss = _int(row.get("vbm_issued", 0))
         snapshot_date = row.get("snapshot_date", None)
 
-        frac = window_fraction(snapshot_date) if snapshot_date is not None else 0.0
+        # ── County-specific window fraction ───────────────────────────────────
+        # Instead of using the district-level 2022 return curve (the same for
+        # every county), we compute each county's own pace: how much of its
+        # 2022 final pre-election VBM has come in so far this cycle.
+        #
+        #   county_wf = vbm_accepted_2026 / vbm_accepted_2022_final
+        #
+        # This captures real county-level variation in mailing schedules and
+        # voter behaviour.  The district-level curve is kept as a fallback when
+        # the 2022 baseline is unavailable.
+        b_acc_22 = 0
+        b_iss = 0
+        b_ret = 0
+        pre_rate_22 = None
+        if base is not None and county in base.index:
+            b_acc_22    = _int(base.loc[county, "vbm_accepted_sd4"])
+            b_iss       = _int(base.loc[county, "vbm_issued_sd4"])
+            b_ret       = _int(base.loc[county, "vbm_returned_sd4"])
+            pre_rate_22 = b_ret / b_iss if b_iss > 0 else None
+
+        if b_acc_22 > 0:
+            frac = vbm_acc / b_acc_22  # county-level pace
+        else:
+            frac = window_fraction(snapshot_date) if snapshot_date is not None else 0.0
+
         expected_pre = vbm_acc / frac if frac > 0 else 0
         expected_final_vbm = expected_pre / return_rate if return_rate > 0 else 0
         implied_total = expected_final_vbm / vbm_pct if vbm_pct > 0 else 0
 
-        # Progress vs a 2022-sized early vote
-        pre_rate_22 = None
-        if base is not None and county in base.index:
-            b_iss = _int(base.loc[county, "vbm_issued_sd4"])
-            b_ret = _int(base.loc[county, "vbm_returned_sd4"])
-            pre_rate_22 = b_ret / b_iss if b_iss > 0 else None
+        # Progress vs a 2022-sized early vote (unchanged — used for status gate)
         expected_early = vbm_iss * pre_rate_22 if pre_rate_22 else 0
         observed_fraction = vbm_ret / expected_early if expected_early > 0 else 0
 
