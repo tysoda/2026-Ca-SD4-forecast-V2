@@ -1042,6 +1042,106 @@ with tab_turnout:
 with tab_returns:
     st.markdown("## 📬 Ballot Returns")
 
+    # ── PDI Historical Curve Refresh ──────────────────────────────────────────
+    with st.expander("🔄 Refresh PDI Historical Data", expanded=False):
+        st.caption(
+            "PDI's early-vote tracker embeds daily cumulative VBM totals for all past "
+            "elections (2022G, 2024G, etc.) in the page HTML. As we get closer to "
+            "Election Day, more historical data becomes visible (PDI shows a rolling "
+            "30-day window anchored to today). Paste the raw page source here to "
+            "update pdi_statewide_daily.csv with the latest historical curves."
+        )
+        st.markdown(
+            "**How to get the page source:** open "
+            "[politicaldata.com/early-vote-counts](https://politicaldata.com/early-vote-counts) "
+            "while logged in, then press **Cmd+U** (Mac) or **Ctrl+U** (Windows) to open "
+            "View Source, select all (Cmd+A / Ctrl+A), copy, and paste below."
+        )
+        _pdi_html = st.text_area(
+            "Paste page HTML here",
+            height=120,
+            placeholder="<html>...<script>window.__remixContext = {...}</script>...</html>",
+            key="pdi_html_input",
+        )
+        if st.button("💾 Parse & Save PDI Data", key="pdi_parse_btn"):
+            import re as _re, json as _json
+
+            def _parse_pdi_html(html: str):
+                match = _re.search(r"window\.__remixContext\s*=\s*(.*)", html)
+                if not match:
+                    return None, "window.__remixContext not found — make sure you pasted the full page source."
+                raw = match.group(1)
+                try:
+                    unescaped = raw.encode().decode("unicode_escape")
+                except Exception:
+                    unescaped = raw
+                depth, end = 0, 0
+                for i, c in enumerate(unescaped):
+                    if c == "{": depth += 1
+                    elif c == "}":
+                        depth -= 1
+                        if depth == 0: end = i + 1; break
+                try:
+                    data = _json.loads(unescaped[:end])
+                except Exception as ex:
+                    return None, f"JSON parse error: {ex}"
+                try:
+                    edata = data["state"]["loaderData"]["routes/early-vote-counts._index"]["ellectionData"]
+                except (KeyError, TypeError):
+                    return None, "Election data not found — page may require login or structure has changed."
+                if not edata:
+                    return None, "ellectionData is empty — are you logged in to PDI?"
+                rows = []
+                for e in edata:
+                    for c in e["cumulativeCounts"]:
+                        rows.append({
+                            "election":         e["electionName"],
+                            "code":             e["electionCode"],
+                            "days_before_eday": c["DayUntilElection"],
+                            "date":             c["ElectionDate"],
+                            "total":            c["Total"] or 0,
+                            "D":                c["Dems"] or 0,
+                            "R":                c["Reps"] or 0,
+                            "O":                c["Others"] or 0,
+                        })
+                return rows, None
+
+            if not _pdi_html.strip():
+                st.warning("Paste the page source first.")
+            else:
+                _fresh_rows, _err = _parse_pdi_html(_pdi_html)
+                if _err:
+                    st.error(_err)
+                else:
+                    import csv as _csv
+                    _pdi_path = DATA_DIR / "pdi_statewide_daily.csv"
+                    _FIELDS   = ["election", "code", "days_before_eday", "date", "total", "D", "R", "O"]
+                    # Merge: keep existing rows, overwrite with fresh non-zero values
+                    _existing = {}
+                    if _pdi_path.exists():
+                        for _r in _csv.DictReader(open(_pdi_path)):
+                            _existing[(_r["code"], _r["days_before_eday"])] = _r
+                    for _r in _fresh_rows:
+                        _key = (_r["code"], str(_r["days_before_eday"]))
+                        if _key not in _existing or int(_r["total"]) > 0:
+                            _existing[_key] = {k: str(v) for k, v in _r.items()}
+                    _merged = sorted(_existing.values(),
+                                     key=lambda r: (r["code"], -int(r["days_before_eday"])))
+                    with open(_pdi_path, "w", newline="") as _f:
+                        _w = _csv.DictWriter(_f, fieldnames=_FIELDS)
+                        _w.writeheader()
+                        _w.writerows(_merged)
+                    # Clear the curve cache so vbm_turnout picks up new data
+                    from vbm_turnout import _CURVE_CACHE
+                    _CURVE_CACHE.clear()
+                    _nz = sum(1 for r in _merged if int(r["total"]) > 0)
+                    _codes = sorted({r["code"] for r in _merged if int(r["total"]) > 0})
+                    st.success(
+                        f"Saved {len(_merged)} rows ({_nz} non-zero) to pdi_statewide_daily.csv. "
+                        f"Elections with data: {', '.join(_codes)}"
+                    )
+                    st.rerun()
+
     # ── Ballot Return Tracker ─────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-label">VBM Ballot Return Tracker</div>', unsafe_allow_html=True)
