@@ -842,7 +842,7 @@ with tabs[1]:
                                 hovertemplate="<b>SD4</b><br>Reg %{x:+.1f}% · Returns %{y:+.1f}%<extra></extra>")
             lo = float(min(cs_["dr_margin_reg"].min(), cs_["dr_margin_ret"].min())) - 5
             hi = float(max(cs_["dr_margin_reg"].max(), cs_["dr_margin_ret"].max())) + 5
-            fig.add_scatter(x=[lo, hi], y=[lo, hi], mode="lines", line=dict(color="#999", dash="dot"),
+            fig.add_scatter(x=[lo, hi], y=[lo, hi], mode="lines", line=dict(color="#1f1f1f", width=2.5, dash="dash"),
                             showlegend=False, hoverinfo="skip")
             fig.update_layout(**{**PLOT_LAYOUT, "hovermode": "closest"}, height=480)
             fig.update_xaxes(title="D−R margin of registration", ticksuffix="%", tickformat="+.0f")
@@ -1172,7 +1172,7 @@ with tabs[2]:
                                               + cty + "</extra>")
             lo = float(min(sc["dr_reg"].min(), sc["dr_ret"].min())) - 0.05
             hi = float(max(sc["dr_reg"].max(), sc["dr_ret"].max())) + 0.05
-            fig.add_scatter(x=[lo, hi], y=[lo, hi], mode="lines", line=dict(color="#999", dash="dot"),
+            fig.add_scatter(x=[lo, hi], y=[lo, hi], mode="lines", line=dict(color="#1f1f1f", width=2.5, dash="dash"),
                             showlegend=False, hoverinfo="skip")
             fig.update_layout(**{**PLOT_LAYOUT, "hovermode": "closest"}, height=480)
             fig.update_xaxes(title="D−R margin of registration", tickformat="+.0%")
