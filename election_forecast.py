@@ -234,10 +234,14 @@ def _fill_optiq_zeros_from_sos(optiq: dict, sos_latest: pd.DataFrame, sos_date) 
     return out
 
 
-def _fill_optiq_from_pdi(optiq: dict, eday: pd.Timestamp) -> dict:
-    """Where PDI has a higher return count than Optiq for a county, use PDI's
-    total. This handles counties (e.g. Alpine) where Optiq lags or undercounts.
-    PDI total replaces Optiq returned; registered stays the same."""
+def _fill_optiq_from_pdi(optiq: dict, eday: pd.Timestamp,
+                         counties: set[str] | None = None) -> dict:
+    """Replace Optiq's returned count with the PDI 26G total for specific
+    counties where Optiq is known to undercount (e.g. Alpine).
+    Only substitutes when PDI has a higher figure than Optiq.
+    `counties` defaults to {"Alpine"}."""
+    if counties is None:
+        counties = {"Alpine"}
     try:
         pdi = pd.read_csv(DATA_DIR / "pdi_county_daily.csv")
         for col in ["total", "D", "R", "O"]:
@@ -249,16 +253,17 @@ def _fill_optiq_from_pdi(optiq: dict, eday: pd.Timestamp) -> dict:
     out = {}
     for cn, e in optiq.items():
         e = dict(e)
-        sub = pdi[
-            (pdi["county"] == cn) &
-            (pdi["code"] == "26G") &
-            (pdi["days_before_eday"] <= days_out) &
-            (pdi["total"] > 0)
-        ].sort_values("days_before_eday")
-        if not sub.empty:
-            pdi_total = int(sub.iloc[-1]["total"])
-            if pdi_total > e.get("returned", 0):
-                e.update(returned=pdi_total, pdi_filled=True)
+        if cn in counties:
+            sub = pdi[
+                (pdi["county"] == cn) &
+                (pdi["code"] == "26G") &
+                (pdi["days_before_eday"] <= days_out) &
+                (pdi["total"] > 0)
+            ].sort_values("days_before_eday")
+            if not sub.empty:
+                pdi_total = int(sub.iloc[-1]["total"])
+                if pdi_total > e.get("returned", 0):
+                    e.update(returned=pdi_total, pdi_filled=True)
         out[cn] = e
     return out
 
