@@ -1295,6 +1295,88 @@ with tab_returns:
             "(marked * in Latest Return). Above ≥ 110% · Near 85–110% · Below < 85%"
         )
 
+    # ── PDI Partisan Pace Tracker ─────────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-label">VBM Partisan Pace (PDI Counties)</div>', unsafe_allow_html=True)
+    st.caption(
+        "D/R/O share of returned VBM for the 9 PDI-tracked counties (wholly within SD4), "
+        "compared to the same day in the 2022 and 2024 generals. "
+        "Does not cover Madera, Merced, Nevada, or Placer (split counties). "
+        "Source: PDI county-level daily data."
+    )
+    try:
+        _pdi_pace_df = pd.read_csv(DATA_DIR / "pdi_county_daily.csv")
+        for _col in ["total", "D", "R", "O"]:
+            _pdi_pace_df[_col] = pd.to_numeric(_pdi_pace_df[_col], errors="coerce").fillna(0).astype(int)
+
+        _pdi_days_out = int((pd.Timestamp("2026-11-03") - _today_ca()).days)
+
+        _PDI_COUNTY_LIST = sorted([
+            "Alpine","Amador","Calaveras","El Dorado","Inyo",
+            "Mariposa","Mono","Stanislaus","Tuolumne",
+        ])
+
+        def _pdi_snap(county, code, days_out):
+            """Return (d_pct, r_pct, o_pct, total) at the nearest available day <= days_out."""
+            _av = _pdi_pace_df[
+                (_pdi_pace_df["county"] == county) &
+                (_pdi_pace_df["code"] == code) &
+                (_pdi_pace_df["total"] > 0)
+            ].sort_values("days_before_eday")
+            if _av.empty:
+                return None, None, None, None
+            # days_before_eday counts up from 1 (E-day) to 30 (furthest out)
+            # We want the most recent snapshot at or before days_out
+            _at = _av[_av["days_before_eday"] <= days_out]
+            _r = _at.iloc[-1] if not _at.empty else _av.iloc[0]
+            _t = int(_r["total"])
+            if _t == 0:
+                return None, None, None, None
+            return int(_r["D"])/_t, int(_r["R"])/_t, int(_r["O"])/_t, _t
+
+        _pdi_rows = []
+        for _c in _PDI_COUNTY_LIST:
+            _row = {"County": _c}
+            for _code in ("26G", "24G", "22G"):
+                _d, _r, _o, _t = _pdi_snap(_c, _code, _pdi_days_out)
+                _row[f"{_code} D%"] = _d
+                _row[f"{_code} R%"] = _r
+                _row[f"{_code} Total"] = _t
+            _pdi_rows.append(_row)
+
+        # District aggregate
+        _agg = {"County": "DISTRICT TOTAL"}
+        for _code in ("26G", "24G", "22G"):
+            _sub = _pdi_pace_df[(_pdi_pace_df["code"] == _code) & (_pdi_pace_df["total"] > 0)]
+            _at = _sub[_sub["days_before_eday"] <= _pdi_days_out]
+            _snap = (_at if not _at.empty else _sub).sort_values("days_before_eday").groupby("county").last()
+            _t = int(_snap["total"].sum())
+            _agg[f"{_code} D%"]    = int(_snap["D"].sum()) / _t if _t > 0 else None
+            _agg[f"{_code} R%"]    = int(_snap["R"].sum()) / _t if _t > 0 else None
+            _agg[f"{_code} Total"] = _t
+        _pdi_rows.append(_agg)
+
+        def _pp(v): return f"{v:.1%}" if v is not None else "—"
+        def _pt(v): return f"{int(v):,}" if v is not None else "—"
+
+        st.dataframe(
+            pd.DataFrame([{
+                "County":       _r["County"],
+                "26G D% / R%":  f"{_pp(_r.get('26G D%'))} / {_pp(_r.get('26G R%'))}",
+                "24G D% / R%":  f"{_pp(_r.get('24G D%'))} / {_pp(_r.get('24G R%'))}",
+                "22G D% / R%":  f"{_pp(_r.get('22G D%'))} / {_pp(_r.get('22G R%'))}",
+                "26G Returns":  _pt(_r.get("26G Total")),
+            } for _r in _pdi_rows]),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            f"D-{_pdi_days_out} snapshot. '26G Returns' is PDI's running count (~50% of SoS scale — "
+            "useful for within-election comparisons, not absolute totals)."
+        )
+    except Exception as _pdi_pace_ex:
+        st.info(f"PDI partisan pace data unavailable: {_pdi_pace_ex}")
+
     # ── Optiq Crosstab Data ───────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-label">VBM Crosstab Breakdown (via Optiq Data)</div>', unsafe_allow_html=True)
