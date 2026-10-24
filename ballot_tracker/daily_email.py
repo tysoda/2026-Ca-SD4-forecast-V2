@@ -47,11 +47,12 @@ def optiq_history(today: pd.Timestamp) -> tuple[pd.DataFrame, str]:
     snapshot from today. Returns (history, source label)."""
     saved = D.load_optiq_county_party()
     live = D.fetch_optiq_county_party_live()
+    pdi = D.fetch_pdi_overrides()          # counties whose Optiq feed has stalled (Alpine)
     if not live.empty:
         live = live.assign(snapshot_date=today)
         keep = saved[saved["snapshot_date"] != today] if not saved.empty else saved
-        return pd.concat([keep, live], ignore_index=True), "live"
-    return saved, "saved"
+        return D.apply_pdi_overrides(pd.concat([keep, live], ignore_index=True), pdi), "live"
+    return D.apply_pdi_overrides(saved, pdi), "saved"
 
 
 def party_block(cp_snap: pd.DataFrame) -> dict:
@@ -243,7 +244,8 @@ def build_html(f: dict, tracker_url: str | None) -> tuple[str, str]:
             return f'<td style="{st}">{v}</td>'
 
         for _, r in t.iterrows():
-            name = r["county"] + ("*" if r.get("sos_filled") else "")
+            name = (r["county"] + ("*" if r.get("sos_filled") else "")
+                    + ("†" if r["county"] in D.PDI_OVERRIDE_IDS else ""))
             lr = r["latest_return_date"]
             rows.append("<tr>" + cell(escape(name), left=True) + cell(f"{int(r['tot_ret']):,}")
                         + cell(pct(r["rate"])) + cell(pct(r["rate_2022_equiv"]))
@@ -255,6 +257,8 @@ def build_html(f: dict, tracker_url: str | None) -> tuple[str, str]:
                     + cell(pct(om["pace_ratio"], 0), color=pace_color(om["pace_ratio"]), bold=True)
                     + cell(pp(f["party"]["dr_ret"]), bold=True) + cell("") + "</tr>")
         h.append('<table style="width:100%;border-collapse:collapse">' + "".join(rows) + "</table>")
+        h.append('<div style="font-size:12px;color:#888;margin-top:4px">† Optiq\'s feed for '
+                 + ", ".join(D.PDI_OVERRIDE_IDS) + ' has stalled, so its returned ballots come from PDI.</div>')
         if t["sos_filled"].any():
             h.append('<div style="font-size:12px;color:#888;margin-top:4px">* Optiq shows 0 returned for this '
                      'county, so its count and date come from the latest SOS report.</div>')
