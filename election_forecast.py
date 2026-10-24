@@ -1356,23 +1356,87 @@ with tab_returns:
             _agg[f"{_code} Total"] = _t
         _pdi_rows.append(_agg)
 
-        def _pp(v): return f"{v:.1%}" if v is not None else "—"
-        def _pt(v): return f"{int(v):,}" if v is not None else "—"
-
-        st.dataframe(
-            pd.DataFrame([{
-                "County":       _r["County"],
-                "26G D% / R%":  f"{_pp(_r.get('26G D%'))} / {_pp(_r.get('26G R%'))}",
-                "24G D% / R%":  f"{_pp(_r.get('24G D%'))} / {_pp(_r.get('24G R%'))}",
-                "22G D% / R%":  f"{_pp(_r.get('22G D%'))} / {_pp(_r.get('22G R%'))}",
-                "26G Returns":  _pt(_r.get("26G Total")),
-            } for _r in _pdi_rows]),
-            use_container_width=True,
-            hide_index=True,
+        _sel_county = st.selectbox(
+            "County", ["District Total"] + _PDI_COUNTY_LIST, key="pdi_pace_county"
         )
+
+        # Build series for selected county (or district aggregate)
+        def _county_series(county, code):
+            """Return a DataFrame of days_before_eday, D%, R% for a county+election."""
+            if county == "District Total":
+                _sub = _pdi_pace_df[(_pdi_pace_df["code"] == code) & (_pdi_pace_df["total"] > 0)]
+                _grp = _sub.groupby("days_before_eday")[["total","D","R"]].sum().reset_index()
+                _grp = _grp[_grp["total"] > 0]
+                _grp["D%"] = _grp["D"] / _grp["total"]
+                _grp["R%"] = _grp["R"] / _grp["total"]
+                return _grp[["days_before_eday","D%","R%"]]
+            else:
+                _sub = _pdi_pace_df[
+                    (_pdi_pace_df["county"] == county) &
+                    (_pdi_pace_df["code"] == code) &
+                    (_pdi_pace_df["total"] > 50)  # suppress noisy early days
+                ][["days_before_eday","total","D","R"]].copy()
+                _sub["D%"] = _sub["D"] / _sub["total"]
+                _sub["R%"] = _sub["R"] / _sub["total"]
+                return _sub[["days_before_eday","D%","R%"]]
+
+        _election_styles = {
+            "22G": {"color_d": "#90b8e0", "color_r": "#e8a89a", "width": 1.5, "dash": "dot"},
+            "24G": {"color_d": "#5b9bd5", "color_r": "#d9735f", "width": 1.5, "dash": "dash"},
+            "26G": {"color_d": "#1a5fa8", "color_r": "#b82a13", "width": 3,   "dash": "solid"},
+        }
+
+        _fig = go.Figure()
+        for _code, _sty in _election_styles.items():
+            _s = _county_series(_sel_county, _code)
+            if _s.empty:
+                continue
+            _s = _s.sort_values("days_before_eday", ascending=False)
+            _label_suffix = " (current)" if _code == "26G" else ""
+            _fig.add_trace(go.Scatter(
+                x=_s["days_before_eday"], y=_s["D%"],
+                name=f"Dem {_code}{_label_suffix}",
+                line=dict(color=_sty["color_d"], width=_sty["width"], dash=_sty["dash"]),
+                mode="lines",
+            ))
+            _fig.add_trace(go.Scatter(
+                x=_s["days_before_eday"], y=_s["R%"],
+                name=f"Rep {_code}{_label_suffix}",
+                line=dict(color=_sty["color_r"], width=_sty["width"], dash=_sty["dash"]),
+                mode="lines",
+            ))
+
+        # Vertical line at today
+        _fig.add_vline(
+            x=_pdi_days_out, line_width=1.5, line_dash="solid", line_color="#888",
+            annotation_text=f"Today (D-{_pdi_days_out})", annotation_position="top right",
+            annotation_font_size=11,
+        )
+
+        _fig.update_layout(
+            height=380,
+            margin=dict(l=40, r=20, t=30, b=40),
+            xaxis=dict(
+                title="Days before Election Day",
+                autorange="reversed",
+                tickmode="linear", dtick=5,
+                gridcolor="#e8e8e8",
+            ),
+            yaxis=dict(
+                title="Share of returned VBM",
+                tickformat=".0%",
+                range=[0.1, 0.7],
+                gridcolor="#e8e8e8",
+            ),
+            legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+        )
+        st.plotly_chart(_fig, use_container_width=True)
         st.caption(
-            f"D-{_pdi_days_out} snapshot. '26G Returns' is PDI's running count (~50% of SoS scale — "
-            "useful for within-election comparisons, not absolute totals)."
+            "Solid = 26G (current) · Dashed = 24G · Dotted = 22G. "
+            "District Total aggregates all 9 PDI-tracked counties. "
+            "Days with fewer than 50 PDI returns are suppressed."
         )
     except Exception as _pdi_pace_ex:
         st.info(f"PDI partisan pace data unavailable: {_pdi_pace_ex}")
