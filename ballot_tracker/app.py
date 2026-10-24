@@ -259,6 +259,11 @@ def load_live():
     return cells, D.fetch_optiq_county_party_live(), fetched, optiq_loaded
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_pdi_overrides():
+    return D.fetch_pdi_overrides()
+
+
 @st.cache_data(ttl=1800, show_spinner="Checking SOS for a new report…")
 def load_sos_live():
     checked = pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None)
@@ -407,6 +412,13 @@ cp_hist = cp_saved
 if cp_source == "live":
     cp_hist = pd.concat([cp_saved[cp_saved["snapshot_date"] != today] if not cp_saved.empty else cp_saved,
                          cp_latest], ignore_index=True)
+
+# Counties whose Optiq feed has stalled (Alpine): returned ballots from PDI instead
+pdi_over = load_pdi_overrides()
+cp_latest = D.apply_pdi_overrides(cp_latest, pdi_over)
+cp_hist = D.apply_pdi_overrides(cp_hist, pdi_over)
+PDI_MARK = "†"
+pdi_counties = sorted(pdi_over)
 
 reg_counts = reg.get("counts", {})
 reg_total = sum(reg_counts.values())
@@ -733,11 +745,14 @@ with tabs[1]:
             if ts_ is not None:
                 return f"{ts_:%b %-d, %-I:%M %p}".replace("AM", "am").replace("PM", "pm")
             return f"{fallback:%b %-d}" if fallback is not None and pd.notna(fallback) else "—"
+        for c_ in pdi_counties:
+            _upd[c_] = None          # PDI gives dates only: fall back to its latest return date
         _times = [t for t in _upd.values() if t is not None]
         _upd["SD4 total"] = max(_times) if _times else None   # most recent update in any county
         show["last_update"] = [_upd_txt(c_, d_) for c_, d_ in zip(show["county"], show["last_drop_date"])]
         _filled = show["county"].isin(tab.loc[tab["sos_filled"], "county"])
         show.loc[_filled, "county"] = show.loc[_filled, "county"] + "*"
+        show.loc[show["county"].isin(pdi_counties), "county"] += PDI_MARK
         show["pace_ratio"] = show["pace_ratio"] * 100
         _cols1 = ["county", "tot_reg", "tot_ret", "rate", "last_drop", "last_update", "pace_ratio", "pace"]
         if cty_more:
@@ -767,6 +782,9 @@ with tabs[1]:
                 "(dates without a time are the county's most recent ballot return date, shown until a "
                 "change has been logged). "
                 "Registered is Optiq's VBM universe (sums to the same total as the crosstab 'issued'). ")
+        if pdi_counties:
+            _cap += (f"{PDI_MARK} Optiq's feed for {', '.join(pdi_counties)} has stalled, so its returned ballots "
+                     "(and party split) come from PDI's early-vote counts; registration is still Optiq's. ")
         if tab["sos_filled"].any():
             _cap += ("* Optiq shows 0 returned for this county, so its returned count and date come from "
                      "the latest SOS report; its party split isn't available. ")
@@ -785,6 +803,7 @@ with tabs[1]:
                 "shift vs reg = the difference (positive = Democrats banking a bigger share than their "
                 "registration).")
         v = A.county_party_with_total(cp_latest)
+        v.loc[v["county"].isin(pdi_counties), "county"] += PDI_MARK
         for p_ in D.PARTIES:
             v[f"{p_}_share_ret"] = v[f"{p_}_share_ret"] * 100
             v[f"{p_}_share_reg"] = v[f"{p_}_share_reg"] * 100
@@ -1912,7 +1931,8 @@ with tabs[7]:
     section("SOS vs Optiq — latest counts",
             "Each source's most recent figures, side by side, to show where the totals differ. "
             "Optiq's 'registered' is its VBM universe (SD4 voters sent a ballot); SOS 'issued' is ballots "
-            "issued. Optiq figures are raw here — Alpine is not filled in from SOS.")
+            "issued. Optiq figures are not filled in from SOS here; counties marked † use PDI's returned "
+            "count because Optiq's feed for them has stalled.")
     _sl = sos[sos["snapshot_date"] == sos["snapshot_date"].max()].set_index("county")
     _sos_date = sos_latest_report
     if not cp_latest.empty:
@@ -1948,6 +1968,8 @@ with tabs[7]:
         return "; ".join(notes)
     _o_date = cp_latest["snapshot_date"].max() if not cp_latest.empty else _sos_date
     cmp_["why"] = cmp_.apply(_why, axis=1)
+    cmp_.loc[cmp_["county"].isin(pdi_counties), "why"] = "Optiq stalled — PDI count shown"
+    cmp_.loc[cmp_["county"].isin(pdi_counties), "county"] += PDI_MARK
     _gap_days = (_o_date - _sos_date).days
     if _gap_days > 0:
         st.markdown(f"**Timing:** the latest SOS report is from {_sos_date:%b %-d}, {_gap_days} day"

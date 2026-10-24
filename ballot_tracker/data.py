@@ -373,3 +373,78 @@ def load_last_saved() -> dict:
         except Exception:
             out[key] = None
     return out
+
+
+# ── PDI overrides for counties whose Optiq feed has stalled ──────────────────
+# PDI district ids (from scripts/fetch_pdi_county.py). Returned ballots for these
+# counties come from PDI's 2026 General early-vote counts instead of Optiq.
+PDI_OVERRIDE_IDS = {"Alpine": 10566}
+PDI_URL = "https://politicaldata.com/early-vote-counts?districtId={id}&_data=routes/early-vote-counts._index"
+
+
+def _pdi_frame(rows: list[dict]) -> pd.DataFrame:
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    for c in ("days_before_eday", "total", "D", "R", "O"):
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+    df = df[df["total"] > 0]           # zeros are days PDI hasn't released, not zero ballots
+    df["date"] = EDAY_2026 - pd.to_timedelta(df["days_before_eday"], unit="D")
+    return df.sort_values("days_before_eday", ascending=False).reset_index(drop=True)
+
+
+def fetch_pdi_overrides() -> dict:
+    """{county: cumulative 2026 General returns by day (date, total, D, R, O)} for the
+    override counties — live from PDI, falling back to pdi_county_daily.csv."""
+    out = {}
+    saved = None
+    for county, did in PDI_OVERRIDE_IDS.items():
+        df = pd.DataFrame()
+        try:
+            req = urllib.request.Request(PDI_URL.format(id=did),
+                                         headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=20, context=_ssl_ctx()) as r:
+                payload = json.loads(r.read())
+            rows = [{"days_before_eday": c["DayUntilElection"], "total": c["Total"] or 0,
+                     "D": c["Dems"] or 0, "R": c["Reps"] or 0, "O": c["Others"] or 0}
+                    for e in payload.get("ellectionData", []) if e.get("electionCode") == "26G"
+                    for c in e.get("cumulativeCounts", [])]
+            df = _pdi_frame(rows)
+            df.attrs["source"] = "live"
+        except Exception:
+            pass
+        if df.empty:
+            if saved is None:
+                path = REPO_DIR / "pdi_county_daily.csv"
+                saved = pd.read_csv(path) if path.exists() else pd.DataFrame()
+            if not saved.empty:
+                df = _pdi_frame(saved[(saved["county"] == county) & (saved["code"] == "26G")]
+                                .to_dict("records"))
+                df.attrs["source"] = "saved"
+        if not df.empty:
+            out[county] = df
+    return out
+
+
+def apply_pdi_overrides(cp: pd.DataFrame, pdi: dict) -> pd.DataFrame:
+    """Replace override counties' returned (by party) in Optiq county × party rows with PDI's
+    cumulative count as of each row's snapshot date. Registered stays Optiq's."""
+    if cp.empty or not pdi:
+        return cp
+    cp = cp.copy()
+    if "source" not in cp:
+        cp["source"] = "Optiq"
+    for county, s in pdi.items():
+        for d in cp.loc[cp["county"] == county, "snapshot_date"].unique():
+            upto = s[s["date"] <= pd.Timestamp(d)]
+            if upto.empty:
+                continue
+            last = upto.iloc[-1]
+            rose_on = upto[upto["total"] == last["total"]]["date"].min()   # day the count last rose
+            for p in ("D", "R", "O"):
+                m = (cp["county"] == county) & (cp["snapshot_date"] == d) & (cp["party"] == p)
+                cp.loc[m, "returned"] = int(last[p])
+                if "latest_return_date" in cp:
+                    cp.loc[m, "latest_return_date"] = rose_on
+                cp.loc[m, "source"] = "PDI"
+    return cp
