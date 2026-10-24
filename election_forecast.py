@@ -1194,7 +1194,7 @@ with tab_returns:
 
         _use_optiq = bool(fetch_optiq_county_totals())
         _optiq = _fill_optiq_zeros_from_sos(fetch_optiq_county_totals(), _latest, _latest_date)
-        _optiq = _fill_optiq_from_pdi(_optiq, _EDAY_2026)
+        _optiq = _fill_optiq_from_pdi(_optiq, _EDAY_2026_TS)
         st.caption(f"SOS latest report: **{_latest_date.strftime('%B %-d, %Y')}**"
                    + (" · Optiq: live county feed" if _use_optiq else " · Optiq unavailable — using SOS"))
 
