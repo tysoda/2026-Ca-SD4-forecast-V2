@@ -912,6 +912,27 @@ with tab_turnout:
         _vbm_to_est = estimate_turnout(ballot_returns_path=DATA_DIR / "ballot_returns.csv", verbose=False)
         _geo_data   = fetch_geo_breakdown("STATE%20SENATE%204")
 
+        # ── Patch Alpine D/R returns from PDI (Optiq only shows ~6 for Alpine) ──
+        try:
+            _pdi_patch = pd.read_csv(DATA_DIR / "pdi_county_daily.csv")
+            for _c in ["total","D","R","O"]:
+                _pdi_patch[_c] = pd.to_numeric(_pdi_patch[_c], errors="coerce").fillna(0).astype(int)
+            _patch_days = int((_EDAY_2026_TS - _today_ca()).days)
+            for _patch_cn in {"Alpine"}:
+                _ps = _pdi_patch[
+                    (_pdi_patch["county"] == _patch_cn) & (_pdi_patch["code"] == "26G") &
+                    (_pdi_patch["days_before_eday"] <= _patch_days) & (_pdi_patch["total"] > 0)
+                ].sort_values("days_before_eday")
+                if not _ps.empty and _patch_cn in _geo_data:
+                    _pr = _ps.iloc[-1]
+                    _pt = int(_pr["total"])
+                    _geo_data[_patch_cn] = dict(_geo_data[_patch_cn])
+                    _geo_data[_patch_cn]["dem_ret"] = int(_pr["D"])
+                    _geo_data[_patch_cn]["rep_ret"] = int(_pr["R"])
+                    _geo_data[_patch_cn]["tot_ret"] = _pt
+        except Exception:
+            pass
+
         _vbm_rows = []
         _dist_impl_D_voters = 0; _dist_impl_R_voters = 0
         _dist_dem_reg = 0;       _dist_rep_reg = 0
