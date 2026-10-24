@@ -1336,6 +1336,68 @@ with tabs[4]:
     fig.update_layout(**PLOT_LAYOUT, barmode="stack", height=360)
     st.plotly_chart(fig, width="stretch")
 
+    # ── Shift vs registration over time, by county ──────────────────────────
+    if not cp_hist.empty and cp_hist["snapshot_date"].nunique() >= 2:
+        section("Shift vs registration over time — by county",
+                "D−R margin among returned ballots minus the D−R margin in registration, for each Optiq "
+                "snapshot. Above zero, Democrats are banking a bigger share than their registration. "
+                "The dashed line is SD4 as a whole; the grey lines are the other counties, for context.")
+        _p = (cp_hist.groupby(["snapshot_date", "county", "party"])[["registered", "returned"]].sum()
+                     .unstack("party").fillna(0))
+        def _shift_frame(p):
+            ret, reg = p["returned"], p["registered"]
+            n_ret, n_reg = ret.sum(axis=1), reg.sum(axis=1)
+            out = pd.DataFrame({
+                "returned": n_ret,
+                "dr_ret": (ret.get("D", 0) - ret.get("R", 0)) / n_ret.where(n_ret > 0),
+                "dr_reg": (reg.get("D", 0) - reg.get("R", 0)) / n_reg.where(n_reg > 0),
+            })
+            out["shift"] = out["dr_ret"] - out["dr_reg"]
+            return out
+        _cs = _shift_frame(_p).reset_index()
+        _ds = _shift_frame(_p.groupby(level="snapshot_date").sum()).reset_index()
+        MIN_RET_SHIFT = 25
+        _cs = _cs[_cs["returned"] >= MIN_RET_SHIFT]          # margins on a handful of ballots are noise
+        _by_size = (cp_latest.groupby("county")["registered"].sum().sort_values(ascending=False).index.tolist()
+                    if not cp_latest.empty else sorted(_cs["county"].unique()))
+        _opts = ["SD4 total"] + [c_ for c_ in _by_size if c_ in set(_cs["county"])]
+        sc1, sc2 = st.columns([2, 1])
+        _pick = sc1.selectbox("County", _opts, key="shift_county")
+        _ctx = sc2.toggle("Show other counties", value=True, key="shift_ctx")
+
+        fig = go.Figure()
+        if _ctx:
+            for c_ in _opts[1:]:
+                if c_ == _pick:
+                    continue
+                g = _cs[_cs["county"] == c_]
+                fig.add_scatter(x=g["snapshot_date"], y=g["shift"] * 100, mode="lines", name=c_,
+                                line=dict(color="#c9c9c4", width=1), showlegend=False,
+                                hovertemplate=f"{c_}: %{{y:+.1f}} pp<extra></extra>")
+        fig.add_hline(y=0, line=dict(color="#888", width=1))
+        if _pick != "SD4 total":
+            g = _cs[_cs["county"] == _pick]
+            fig.add_scatter(x=g["snapshot_date"], y=g["shift"] * 100, mode="lines+markers", name=_pick,
+                            line=dict(color="#1a6b3c", width=3),   # neutral: red/blue would read as party
+                            customdata=np.c_[g["returned"], g["dr_ret"] * 100, g["dr_reg"] * 100],
+                            hovertemplate=(f"<b>{_pick}</b> %{{x|%b %-d}}<br>Shift %{{y:+.1f}} pp<br>"
+                                           "D−R returns %{customdata[1]:+.1f}% · reg %{customdata[2]:+.1f}%<br>"
+                                           "%{customdata[0]:,} returned<extra></extra>"))
+        fig.add_scatter(x=_ds["snapshot_date"], y=_ds["shift"] * 100, mode="lines+markers", name="SD4 total",
+                        line=dict(color="#111", width=2.5 if _pick == "SD4 total" else 2,
+                                  dash="solid" if _pick == "SD4 total" else "dash"),
+                        customdata=np.c_[_ds["returned"], _ds["dr_ret"] * 100, _ds["dr_reg"] * 100],
+                        hovertemplate=("<b>SD4</b> %{x|%b %-d}<br>Shift %{y:+.1f} pp<br>"
+                                       "D−R returns %{customdata[1]:+.1f}% · reg %{customdata[2]:+.1f}%<br>"
+                                       "%{customdata[0]:,} returned<extra></extra>"))
+        fig.update_layout(**{**PLOT_LAYOUT, "hovermode": "closest"}, height=420)
+        fig.update_yaxes(title="Shift vs registration (pp)", ticksuffix=" pp", tickformat="+.0f",
+                         zeroline=False)
+        st.plotly_chart(fig, width="stretch")
+        st.caption(f"Source: Optiq county feed, one point per saved snapshot (plus today's live pull). "
+                   f"Counties are left off until they have {MIN_RET_SHIFT}+ ballots back. Early points swing "
+                   "a lot because they rest on few ballots, and jumps often mark a big drop from one county.")
+
     if ct_hist.empty or ct_hist["snapshot_date"].nunique() < 2:
         st.info("Optiq trend charts need at least two distinct snapshots.")
     else:
