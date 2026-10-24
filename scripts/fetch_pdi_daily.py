@@ -2,9 +2,11 @@
 """
 fetch_pdi_daily.py
 ==================
-Fetches the PDI early vote tracker page, extracts the window.__remixContext
-JSON, and overwrites pdi_statewide_daily.csv with the latest cumulative
-daily VBM return totals for all available elections (2022G, 2024G, etc.).
+Fetches SD4 district-level data from the PDI early vote tracker via the
+unauthenticated JSON API and merges it into pdi_statewide_daily.csv.
+
+  GET https://politicaldata.com/early-vote-counts
+      ?districtId=10320&_data=routes/early-vote-counts._index
 
 Run daily — as the election approaches, PDI's 30-day window shifts forward
 and exposes more historical data for past elections, which we use to
@@ -13,47 +15,30 @@ calibrate per-county window fractions.
 
 import csv
 import json
-import re
 import sys
 import urllib.request
 from pathlib import Path
 
-URL = "https://politicaldata.com/early-vote-counts"
+SD4_ID = 10320
+URL = (
+    f"https://politicaldata.com/early-vote-counts"
+    f"?districtId={SD4_ID}&_data=routes/early-vote-counts._index"
+)
+HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 OUT = Path(__file__).parent.parent / "pdi_statewide_daily.csv"
 FIELDS = ["election", "code", "days_before_eday", "date", "total", "D", "R", "O"]
 
 
-def fetch_remix_context(url: str) -> dict:
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+def fetch_election_data(url: str) -> list:
+    req = urllib.request.Request(url, headers=HEADERS)
     with urllib.request.urlopen(req, timeout=30) as r:
-        html = r.read().decode("utf-8")
-
-    match = re.search(r"window\.__remixContext\s*=\s*(.*)", html)
-    if not match:
-        raise RuntimeError("window.__remixContext not found in page")
-
-    raw = match.group(1)
-    # PDI server-renders escaped JSON into the page
-    unescaped = raw.encode().decode("unicode_escape")
-
-    # Find the balanced JSON object
-    depth, end = 0, 0
-    for i, c in enumerate(unescaped):
-        if c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                end = i + 1
-                break
-
-    return json.loads(unescaped[:end])
+        data = json.loads(r.read())
+    if not data.get("success"):
+        raise RuntimeError(f"API returned success=false for {url}")
+    return data["ellectionData"]
 
 
-def extract_rows(data: dict) -> list[dict]:
-    election_data = (
-        data["state"]["loaderData"]["routes/early-vote-counts._index"]["ellectionData"]
-    )
+def extract_rows(election_data: list) -> list[dict]:
     rows = []
     for e in election_data:
         for c in e["cumulativeCounts"]:
@@ -100,20 +85,20 @@ def write_csv(path: Path, rows: list[dict]) -> None:
 
 
 def main():
-    print(f"Fetching {URL} ...")
+    print(f"Fetching SD4 (districtId={SD4_ID}) ...")
     try:
-        data = fetch_remix_context(URL)
+        election_data = fetch_election_data(URL)
     except Exception as e:
-        print(f"ERROR fetching page: {e}", file=sys.stderr)
+        print(f"ERROR fetching data: {e}", file=sys.stderr)
         sys.exit(1)
 
-    fresh = extract_rows(data)
+    fresh = extract_rows(election_data)
     existing = load_existing(OUT)
     merged = merge_rows(existing, fresh)
     write_csv(OUT, merged)
 
-    non_zero = sum(1 for r in merged if int(r["total"]) > 0)
-    elections = sorted({r["code"] for r in merged if int(r["total"]) > 0})
+    non_zero = sum(1 for r in merged if int(r["total"] or 0) > 0)
+    elections = sorted({r["code"] for r in merged if int(r["total"] or 0) > 0})
     print(f"Wrote {len(merged)} rows ({non_zero} non-zero) to {OUT.name}")
     print(f"Elections with data: {', '.join(elections)}")
 
