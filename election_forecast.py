@@ -234,6 +234,35 @@ def _fill_optiq_zeros_from_sos(optiq: dict, sos_latest: pd.DataFrame, sos_date) 
     return out
 
 
+def _fill_optiq_from_pdi(optiq: dict, eday: pd.Timestamp) -> dict:
+    """Where PDI has a higher return count than Optiq for a county, use PDI's
+    total. This handles counties (e.g. Alpine) where Optiq lags or undercounts.
+    PDI total replaces Optiq returned; registered stays the same."""
+    try:
+        pdi = pd.read_csv(DATA_DIR / "pdi_county_daily.csv")
+        for col in ["total", "D", "R", "O"]:
+            pdi[col] = pd.to_numeric(pdi[col], errors="coerce").fillna(0).astype(int)
+    except Exception:
+        return optiq
+
+    days_out = int((eday - _today_ca()).days)
+    out = {}
+    for cn, e in optiq.items():
+        e = dict(e)
+        sub = pdi[
+            (pdi["county"] == cn) &
+            (pdi["code"] == "26G") &
+            (pdi["days_before_eday"] <= days_out) &
+            (pdi["total"] > 0)
+        ].sort_values("days_before_eday")
+        if not sub.empty:
+            pdi_total = int(sub.iloc[-1]["total"])
+            if pdi_total > e.get("returned", 0):
+                e.update(returned=pdi_total, pdi_filled=True)
+        out[cn] = e
+    return out
+
+
 # ── Forecast model integration ────────────────────────────────────────────────
 def load_forecast_params():
     """Load the most recent forecast_params.json if it exists."""
@@ -602,6 +631,7 @@ def _compute_vbm_pace_adj(bsr_path: str, base_path: str, optiq: dict | None = No
     # Compare with 2022 at today's E-number
     _frac_22 = early_vote_fraction_2022(int((_EDAY_2026_TS - _today_ca()).days))
     optiq = _fill_optiq_zeros_from_sos(optiq, latest, _snap)
+    optiq = _fill_optiq_from_pdi(optiq, _EDAY_2026_TS)
     adj = {}
     all_rates: list[float] = []
     for cn, cd in COUNTIES.items():
@@ -1164,6 +1194,7 @@ with tab_returns:
 
         _use_optiq = bool(fetch_optiq_county_totals())
         _optiq = _fill_optiq_zeros_from_sos(fetch_optiq_county_totals(), _latest, _latest_date)
+        _optiq = _fill_optiq_from_pdi(_optiq, _EDAY_2026)
         st.caption(f"SOS latest report: **{_latest_date.strftime('%B %-d, %Y')}**"
                    + (" · Optiq: live county feed" if _use_optiq else " · Optiq unavailable — using SOS"))
 
