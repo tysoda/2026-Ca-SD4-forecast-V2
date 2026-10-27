@@ -82,10 +82,22 @@ def load_partial_fractions() -> dict:
     return fractions
 
 
+def dated_urls(d: datetime.date) -> list[str]:
+    """SOS also publishes each report under a dated name. The year format has varied:
+    bsr-statistics-10-14-2026.xlsx early on, bsr-statistics-10-25-26.xlsx from Oct 25.
+    Both are tried. The undated file can lag behind these."""
+    return [SOS_URL.replace("bsr-statistics.xlsx", f"bsr-statistics-{d.strftime(fmt)}.xlsx")
+            for fmt in ("%m-%d-%y", "%m-%d-%Y")]
+
+
 def dated_url(d: datetime.date) -> str:
-    """SOS also publishes each report under a dated name, e.g.
-    bsr-statistics-10-14-2026.xlsx. The undated file can lag behind these."""
-    return SOS_URL.replace("bsr-statistics.xlsx", f"bsr-statistics-{d:%m-%d-%Y}.xlsx")
+    """Four-digit-year dated name (kept for older callers; prefer dated_urls)."""
+    return dated_urls(d)[1]
+
+
+def is_missing(e: Exception) -> bool:
+    """The SOS file server answers 403 (not 404) for a file that doesn't exist."""
+    return getattr(e, "code", None) in (403, 404)
 
 
 def download_xlsx(url: str = SOS_URL) -> bytes:
@@ -243,8 +255,9 @@ def fetch_recent(fractions: dict, days_back: int = 10, dry_run: bool = False) ->
     """
     today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=-8))).date()  # ≈ California
     candidates = [(SOS_URL, None)] + [
-        (dated_url(today - datetime.timedelta(days=i)), today - datetime.timedelta(days=i))
+        (url, today - datetime.timedelta(days=i))
         for i in range(days_back + 1)
+        for url in dated_urls(today - datetime.timedelta(days=i))
     ]
     existing_dates = {d for _, d in load_existing_keys()}
     seen, written = set(), 0
@@ -252,8 +265,7 @@ def fetch_recent(fractions: dict, days_back: int = 10, dry_run: bool = False) ->
         try:
             data = download_xlsx(url)
         except Exception as e:
-            code = getattr(e, "code", None)
-            if code != 404:
+            if not is_missing(e):
                 print(f"  · {url.rsplit('/', 1)[-1]}: {e}")
             continue
         try:

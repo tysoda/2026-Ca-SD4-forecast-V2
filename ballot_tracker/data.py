@@ -120,9 +120,14 @@ def fetch_sos_live(days_back: int = 3) -> pd.DataFrame:
     best = None
     for i in range(days_back + 1):
         d = today - datetime.timedelta(days=i)
-        try:
-            snap, rows = F.parse_xlsx(F.download_xlsx(F.dated_url(d)), fractions, fallback_date=d)
-        except Exception:
+        snap = rows = None
+        for url in F.dated_urls(d):        # two-digit and four-digit year file names
+            try:
+                snap, rows = F.parse_xlsx(F.download_xlsx(url), fractions, fallback_date=d)
+                break
+            except Exception:
+                continue
+        if rows is None:
             continue
         if rows and (best is None or snap > best[0]):
             best = (snap, rows)
