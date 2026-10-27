@@ -94,31 +94,39 @@ COUNTY_CSV = os.path.join(os.path.dirname(__file__), "optiq_county_party.csv")
 DROPS_CSV = os.path.join(os.path.dirname(__file__), "optiq_county_drops.csv")
 
 
-def log_county_drops(totals: dict) -> None:
-    """Append (county, returned, loaded_at) whenever a county's returned count changes.
+def log_county_drops(by_party: dict) -> None:
+    """Append (county, returned, D, R, O, loaded_at) whenever a county's returned count changes.
 
+    by_party: {county: {"D": n, "R": n, "O": n}} returned ballots.
     loaded_at is Optiq's latestUpdate — the time of the Optiq data load that first
     showed the new count (to within this Action's run interval). A county's first
     entry has a blank time: we don't know when its existing ballots were loaded.
+    D/R/O let the tracker split each drop by party (blank on rows logged before they
+    were added).
     """
-    last = {}
-    if os.path.exists(DROPS_CSV):
-        prev = pd.read_csv(DROPS_CSV, dtype=str)
-        for _, r in prev.iterrows():
-            last[r["county"]] = int(r["returned"])
+    cols = ["county", "returned", "loaded_at", "D", "R", "O"]
+    prev = pd.read_csv(DROPS_CSV, dtype=str) if os.path.exists(DROPS_CSV) else pd.DataFrame(columns=cols)
+    last = {r["county"]: int(r["returned"]) for _, r in prev.iterrows()}
     new = []
-    for county, ret in sorted(totals.items()):
+    for county, parts in sorted(by_party.items()):
+        ret = int(sum(parts.values()))
+        row = {"county": county, "returned": ret, "D": int(parts.get("D", 0)),
+               "R": int(parts.get("R", 0)), "O": int(parts.get("O", 0))}
         if county not in last:
-            new.append({"county": county, "returned": ret, "loaded_at": ""})
+            new.append({**row, "loaded_at": ""})
         elif ret != last[county]:
             when = LATEST_UPDATE or datetime.now(timezone.utc).isoformat()
             ts = pd.Timestamp(when)
             ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
-            new.append({"county": county, "returned": ret, "loaded_at": ts.strftime("%Y-%m-%dT%H:%M:%SZ")})
+            new.append({**row, "loaded_at": ts.strftime("%Y-%m-%dT%H:%M:%SZ")})
     if not new:
         return
-    pd.DataFrame(new).to_csv(DROPS_CSV, mode="a", header=not os.path.exists(DROPS_CSV), index=False)
+    # Rewrite the whole file so older rows gain the D/R/O columns (blank)
+    out = pd.concat([prev, pd.DataFrame(new).astype(str)], ignore_index=True).reindex(columns=cols)
+    out.to_csv(DROPS_CSV, index=False)
     print(f"  Logged {len(new)} county drop(s) to {DROPS_CSV}")
+
+
 SD4_COUNTIES = {
     "Alpine", "Amador", "Calaveras", "El Dorado", "Inyo", "Madera", "Mariposa",
     "Merced", "Mono", "Nevada", "Placer", "Stanislaus", "Tuolumne",
@@ -160,7 +168,8 @@ def save_county_party_snapshot() -> None:
         return
 
     today_df = pd.DataFrame(recs)
-    log_county_drops(today_df.groupby("county")["returned"].sum().astype(int).to_dict())
+    log_county_drops({c: g.set_index("party")["returned"].astype(int).to_dict()
+                      for c, g in today_df.groupby("county")})
     if os.path.exists(COUNTY_CSV):
         existing = pd.read_csv(COUNTY_CSV, dtype=str)
         existing = existing[existing["snapshot_date"] != SNAPSHOT_DATE]

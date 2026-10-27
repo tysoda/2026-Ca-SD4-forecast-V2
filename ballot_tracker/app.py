@@ -471,7 +471,7 @@ badges = (
 )
 st.markdown(badges, unsafe_allow_html=True)
 
-tabs = st.tabs(["Overview", "Counties", "Precincts", "Crosstabs", "Trends", "Outstanding",
+tabs = st.tabs(["Overview", "Counties", "Latest drop", "Precincts", "Crosstabs", "Trends", "Outstanding",
                 "2022 comparison", "Method & data"])
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1055,9 +1055,126 @@ with tabs[1]:
         st.plotly_chart(fig, width="stretch")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PRECINCTS
+# LATEST DROP
 # ══════════════════════════════════════════════════════════════════════════════
 with tabs[2]:
+    def _t(ts, exact=True):
+        if ts is None or pd.isna(ts):
+            return "—"
+        ts = pd.Timestamp(ts)
+        return (f"{ts:%a %b %-d, %-I:%M %p}".replace("AM", "am").replace("PM", "pm") if exact
+                else f"{ts:%a %b %-d}")
+
+    if not use_optiq:
+        st.info("Drop breakdowns need Optiq's county × party data, which isn't available right now.")
+    else:
+        _saved_pdi = D.apply_pdi_overrides(cp_saved, pdi_over)
+        _live = cp_latest if cp_source == "live" else None
+        _obs = A.drop_observations(_saved_pdi, _live, optiq_loaded if cp_source == "live" else None,
+                                   data["drops"], skip_log_counties=pdi_counties)
+        ld = A.latest_drops(_obs, cp_latest, data["drops"], skip_log_counties=pdi_counties)
+        if ld.empty:
+            st.info("Not enough snapshots yet to work out each county's latest drop.")
+        else:
+            # ── The most recent Optiq update ─────────────────────────────────
+            top = ld[ld["when"] == ld["when"].max()]
+            eff = A.district_effect(top, cp_latest)
+            section(f"Latest update — {_t(top['when'].iloc[0], bool(top['exact'].iloc[0]))}",
+                    f"New ballots in the most recent update: {', '.join(top['county'])}. "
+                    "District figures are before → after these ballots.")
+            n_top = int(top["drop"].sum())
+            k = st.columns(4)
+            with k[0]:
+                card("Ballots in this update", f"{n_top:,}",
+                     f"{len(top)} count{'y' if len(top) == 1 else 'ies'}")
+            with k[1]:
+                tD, tR, tO = (int(top[f"drop_{p_}"].sum()) for p_ in D.PARTIES)
+                card("Party split · D / R / O", f"{tD / n_top * 100:.0f} / {tR / n_top * 100:.0f} / {tO / n_top * 100:.0f}"
+                     if n_top else "—",
+                     f"D {tD:,} · R {tR:,} · O/NPP {tO:,} (D−R {pp((tD - tR) / n_top) if n_top else '—'})")
+            with k[2]:
+                card("District D−R margin", pp(eff["dr_after"]),
+                     f"was {pp(eff['dr_before'])} ({pp(eff['dr_after'] - eff['dr_before'])}) · "
+                     f"raw {int(eff['gap_before']):+,} → {int(eff['gap_after']):+,}",
+                     color=D.PARTY_COLORS["D"] if eff["dr_after"] - eff["dr_before"] >= 0 else D.PARTY_COLORS["R"])
+            with k[3]:
+                card("District shift vs registration", pp(eff["shift_after"]),
+                     f"was {pp(eff['shift_before'])} ({pp(eff['shift_after'] - eff['shift_before'])})",
+                     color=D.PARTY_COLORS["D"] if eff["shift_after"] - eff["shift_before"] >= 0
+                     else D.PARTY_COLORS["R"])
+
+            # ── Composition of each county's latest drop ─────────────────────
+            section("Each county's latest drop — party mix",
+                    "Share of each county's most recent batch of new ballots by party. Counties are listed "
+                    "newest drop first.")
+            lab = [f"{r_.county} · {_t(r_.when, r_.exact)} · {int(r_.drop):,}" for r_ in ld.itertuples()]
+            fig = go.Figure()
+            for p_ in D.PARTIES:
+                fig.add_bar(y=lab, x=ld[f"share_{p_}"] * 100, name=D.PARTY_LABELS[p_], orientation="h",
+                            marker_color=D.PARTY_COLORS[p_],
+                            customdata=ld[f"drop_{p_}"],
+                            text=[f"{v:.0f}%" if v >= 7 else "" for v in ld[f"share_{p_}"] * 100],
+                            textposition="inside", insidetextanchor="middle",
+                            hovertemplate="%{y}<br>" + D.PARTY_LABELS[p_] + ": %{customdata:,} (%{x:.1f}%)<extra></extra>")
+            fig.update_layout(**{**PLOT_LAYOUT, "hovermode": "closest"}, barmode="stack",
+                              height=60 + 32 * len(ld), legend_traceorder="normal")
+            fig.update_xaxes(range=[0, 100], ticksuffix="%")
+            fig.update_yaxes(autorange="reversed")
+            st.plotly_chart(fig, width="stretch")
+
+            # ── Table: drop and before → after ───────────────────────────────
+            section("What each drop changed",
+                    "The drop's own D−R margin and its shift against the county's registration, then the "
+                    "county's figures before and after it.")
+            drop_more = st.toggle("Show more columns", key="drop_more",
+                                  help="Adds the party counts, return rates and shift before the drop.")
+            tbl = ld.copy()
+            tbl["when_txt"] = [_t(w, e) for w, e in zip(tbl["when"], tbl["exact"])]
+            tbl.loc[tbl["county"].isin(pdi_counties), "county"] += PDI_MARK
+            for c_ in ["share_D", "share_R", "share_O", "dr_drop", "shift_drop", "dr_before", "dr_after",
+                       "dr_change", "shift_before", "shift_after", "rate_before", "rate_after"]:
+                tbl[c_] = tbl[c_] * 100
+            cols = ["county", "when_txt", "drop"]
+            if drop_more:
+                cols += ["drop_D", "drop_R", "drop_O"]
+            cols += ["share_D", "share_R", "share_O", "dr_drop", "shift_drop", "dr_before", "dr_after", "dr_change"]
+            if drop_more:
+                cols += ["rate_before", "rate_after", "shift_before"]
+            cols += ["shift_after"]
+            show_df(tbl[cols], height=38 + 35 * len(tbl),
+                    signed=["dr_drop", "shift_drop", "dr_before", "dr_after", "dr_change", "shift_before",
+                            "shift_after"],
+                    column_config={
+                        "county": "County", "when_txt": st.column_config.TextColumn(
+                            "Drop", help="When Optiq loaded the drop (Pacific). Date only where the time "
+                                         "isn't known."),
+                        "drop": INT("Ballots"), "drop_D": INT("D"), "drop_R": INT("R"), "drop_O": INT("O/NPP"),
+                        "share_D": pct_col("D %"), "share_R": pct_col("R %"), "share_O": pct_col("O/NPP %"),
+                        "dr_drop": st.column_config.NumberColumn("Drop D−R", format="%+.1f pp",
+                                                                 help="(D − R) ÷ ballots in the drop."),
+                        "shift_drop": st.column_config.NumberColumn(
+                            "Drop vs reg", format="%+.1f pp",
+                            help="The drop's D−R minus the county's registration D−R."),
+                        "dr_before": pct_col("County D−R before", True), "dr_after": pct_col("After", True),
+                        "dr_change": st.column_config.NumberColumn("Change", format="%+.1f pp",
+                                                                   help="County D−R after − before."),
+                        "rate_before": pct_col("Rate before"), "rate_after": pct_col("Rate after"),
+                        "shift_before": pct_col("Shift before", True),
+                        "shift_after": st.column_config.NumberColumn(
+                            "Shift vs reg now", format="%+.1f pp",
+                            help="County D−R of all returns minus its registration D−R, after the drop."),
+                    })
+            st.caption(
+                "A drop is the change between the county's last two different totals Optiq has shown. If a county "
+                "updated more than once between checks, those updates are combined. Times come from Optiq's data "
+                "loads, logged hourly. "
+                + (f"{PDI_MARK} {', '.join(pdi_counties)} uses PDI's daily counts, so its drops are by day. "
+                   if pdi_counties else ""))
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PRECINCTS
+# ══════════════════════════════════════════════════════════════════════════════
+with tabs[3]:
     ptab, pmeta = A.precinct_table(data["pre"], data["pre_cov"])
     if ptab.empty:
         st.info("No precinct data yet. It's saved by the *Update Optiq Crosstabs* Action "
@@ -1226,7 +1343,7 @@ with tabs[2]:
 # ══════════════════════════════════════════════════════════════════════════════
 # CROSSTABS
 # ══════════════════════════════════════════════════════════════════════════════
-with tabs[3]:
+with tabs[4]:
     if ct_latest.empty:
         st.info("No Optiq crosstab data available.")
     else:
@@ -1348,7 +1465,7 @@ with tabs[3]:
 # ══════════════════════════════════════════════════════════════════════════════
 # TRENDS
 # ══════════════════════════════════════════════════════════════════════════════
-with tabs[4]:
+with tabs[5]:
     section("Daily returns — SOS", "New ballots per day between reports, by county (stacked).")
     ss = A.sos_series(sos)
     cty = ss[(ss["county"] != "SD4 total") & ss["per_day"].notna()]
@@ -1489,7 +1606,7 @@ with tabs[4]:
 # ══════════════════════════════════════════════════════════════════════════════
 # OUTSTANDING
 # ══════════════════════════════════════════════════════════════════════════════
-with tabs[5]:
+with tabs[6]:
     # ── O/NPP split needed to close the D−R gap among returned ballots ──────
     if use_optiq or not ct_latest.empty:
         _pt = (cp_latest.groupby("party")["returned"].sum() if use_optiq
@@ -1716,7 +1833,7 @@ with tabs[5]:
 # ══════════════════════════════════════════════════════════════════════════════
 # 2022 COMPARISON
 # ══════════════════════════════════════════════════════════════════════════════
-with tabs[6]:
+with tabs[7]:
     if pdi22 is None:
         st.info("2022 data not found (pdi_2022_daily_sd4.csv).")
     else:
@@ -1933,7 +2050,7 @@ with tabs[6]:
 # ══════════════════════════════════════════════════════════════════════════════
 # METHOD & DATA
 # ══════════════════════════════════════════════════════════════════════════════
-with tabs[7]:
+with tabs[8]:
     section("SOS vs Optiq — latest counts",
             "Each source's most recent figures, side by side, to show where the totals differ. "
             "Optiq's 'registered' is its VBM universe (SD4 voters sent a ballot); SOS 'issued' is ballots "
