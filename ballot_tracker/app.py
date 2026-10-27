@@ -560,7 +560,7 @@ with tabs[0]:
             ps = A.group_summary(ct_latest, ["party"]).set_index("party")
             party_reg_share = {p_: reg_counts.get(p_, 0) / reg_total if reg_total else np.nan for p_ in ps.index}
             party_src = None
-        cols = st.columns(3)
+        cols = st.columns(4)
         for i, p in enumerate(D.PARTIES):
             if p not in ps.index:
                 continue
@@ -574,6 +574,12 @@ with tabs[0]:
         d_ret, r_ret = ps.loc["D", "returned"], ps.loc["R", "returned"]
         tot = ps["returned"].sum()
         reg_margin = party_reg_share.get("D", np.nan) - party_reg_share.get("R", np.nan)
+        with cols[3]:
+            _gap = int(d_ret - r_ret)
+            card("D−R margin", f"{_gap:+,}",
+                 f"{pp((d_ret - r_ret) / tot)} of returns vs {pp(reg_margin)} in registration "
+                 f"({pp((d_ret - r_ret) / tot - reg_margin)} shift)",
+                 color=D.PARTY_COLORS["D"] if _gap >= 0 else D.PARTY_COLORS["R"])
         st.caption(f"D−R margin among returned ballots: **{pp((d_ret - r_ret) / tot)}** "
                    f"(registration: {pp(reg_margin)}) · raw D−R: **{int(d_ret - r_ret):+,}**")
         st.caption(
