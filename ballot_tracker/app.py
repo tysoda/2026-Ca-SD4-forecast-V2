@@ -229,8 +229,16 @@ def dim_color(dim: str, code: str, i: int) -> str:
 
 
 # ── Cached loaders ───────────────────────────────────────────────────────────
+def data_signature() -> tuple:
+    """Modification times of the repo's data files. Passed to the cached loaders so a new
+    commit from the Actions (pulled by Streamlit Cloud) is read at once, not after the TTL."""
+    files = sorted(list(D.REPO_DIR.glob("*.csv")) + list(D.REPO_DIR.glob("*.geojson"))
+                   + list(D.REPO_DIR.glob("last_saved_*.txt")))
+    return tuple((f.name, f.stat().st_mtime) for f in files)
+
+
 @st.cache_data(ttl=900)
-def load_all():
+def load_all(data_sig: tuple = ()):
     return {
         "sos": D.load_sos_returns(drop_stale=False),
         "base": D.load_2022_baseline(),
@@ -248,7 +256,7 @@ def load_all():
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def load_precinct_geo():
+def load_precinct_geo(data_sig: tuple = ()):
     return D.load_precinct_shapes(), D.load_sd4_boundary()
 
 
@@ -354,7 +362,8 @@ def county_map(values: dict, title: str, diverging: bool, fmt: str, colorscale=N
 
 
 # ── Load data ────────────────────────────────────────────────────────────────
-data = load_all()
+_data_sig = data_signature()
+data = load_all(_data_sig)
 sos, base, daily22, reg, ct_saved, cp_saved = (
     data["sos"], data["base"], data["daily22"], data["reg"], data["ct"], data["cp"])
 pdi22, reg22 = data["pdi22"], data["reg22"]
@@ -1057,7 +1066,7 @@ with tabs[2]:
         st.info("No precinct data yet. It's saved by the *Update Optiq Crosstabs* Action "
                 "(`fetch_optiq_precincts.py`) from Civiq's precinct map, and appears here after its next run.")
     else:
-        shapes, sd4_ring = load_precinct_geo()
+        shapes, sd4_ring = load_precinct_geo(_data_sig)
         new_lbl = f"New since {pmeta['prev']:%b %-d}" if pmeta["prev"] is not None else None
         section("Precincts",
                 f"Optiq precinct figures from Civiq's map, saved {pmeta['snapshot']:%b %-d} "
