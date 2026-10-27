@@ -125,61 +125,137 @@ def download_xlsx(url: str = SOS_URL) -> bytes:
         return resp.read()
 
 
+def _num(v) -> Optional[float]:
+    """Cell value → number (handles '1,234' strings); None if blank/non-numeric."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    try:
+        return float(str(v).replace(",", "").strip())
+    except ValueError:
+        return None
+
+
+def _find_layout(ws) -> Optional[dict]:
+    """Locate the header row and the county / issued / returned / accepted columns by
+    their header text (a header may span two rows). Returns {"row", "county", "issued",
+    "returned", "accepted"} (1-based row, 0-based columns) or None."""
+    rows = list(ws.iter_rows(min_row=1, max_row=25, values_only=True))
+    for r in range(len(rows)):
+        prev = rows[r - 1] if r else ()
+        width = max(len(rows[r]), len(prev))
+        heads = [" ".join(str(x) for x in ((prev[i] if i < len(prev) else None),
+                                            (rows[r][i] if i < len(rows[r]) else None)) if x is not None)
+                 .lower().replace("\n", " ") for i in range(width)]
+        def col(pred):
+            hits = [i for i, h in enumerate(heads) if pred(h)]
+            return hits
+        county = col(lambda h: h.strip().endswith("county") or h.strip() == "county")
+        issued = col(lambda h: "issued" in h and "%" not in h)
+        returned = col(lambda h: "returned" in h and "%" not in h and "percent" not in h)
+        accepted = col(lambda h: "accepted" in h and "%" not in h and "percent" not in h)
+        if county and issued and returned:
+            ret_total = [i for i in returned if "total" in heads[i]]
+            return {"row": r + 1, "county": county[0], "issued": issued[0],
+                    "returned": (ret_total or returned)[-1],
+                    "accepted": accepted[0] if accepted else None}
+    return None
+
+
+def _describe(wb) -> str:
+    """Sheet names and the first rows of each sheet, for the Action log when parsing fails."""
+    out = [f"sheets: {wb.sheetnames}"]
+    for ws in wb.worksheets[:3]:
+        out.append(f"--- {ws.title}")
+        for row in ws.iter_rows(min_row=1, max_row=8, max_col=12, values_only=True):
+            out.append("    " + " | ".join("" if v is None else str(v)[:25] for v in row))
+    return "\n".join(out)
+
+
 def parse_xlsx(data: bytes, fractions: dict,
                fallback_date: Optional[datetime.date] = None) -> tuple[datetime.date, list[dict]]:
     """
     Parse the SOS XLSX bytes.
 
+    The layout has changed during the 2026 general (sheet name from Oct 24), so the sheet
+    and columns are found by name rather than fixed positions:
+      sheet   — "VBM Ballot Statistics", else any sheet with "VBM" in its name, else the first
+      columns — header row containing County / …Issued… / …Returned… / …Accepted…
+      date    — a date/time in the first rows (cell A1 historically), else the file-name date
+
     Returns
     -------
-    snapshot_date : datetime.date  (from cell A1)
+    snapshot_date : datetime.date
     rows          : list of dicts, one per SD4 county, with keys:
                     county, vbm_issued, vbm_returned, vbm_accepted
                     Values for split counties are already scaled to the SD4 portion.
     """
     wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
-    ws = wb["VBM Ballot Statistics"]
-
-    # Cell A1 contains the snapshot datetime
-    raw_date = ws.cell(1, 1).value
-    if isinstance(raw_date, datetime.datetime):
-        snapshot_date = raw_date.date()
-    elif isinstance(raw_date, datetime.date):
-        snapshot_date = raw_date
+    if "VBM Ballot Statistics" in wb.sheetnames:
+        candidates = [wb["VBM Ballot Statistics"]]
     else:
-        # Cell A1 wasn't a date: use the date in the file name if we have one, else today
+        candidates = ([ws for ws in wb.worksheets if "vbm" in ws.title.lower()]
+                      + [ws for ws in wb.worksheets if "vbm" not in ws.title.lower()])
+    ws = layout = None
+    for cand in candidates:
+        layout = _find_layout(cand)
+        if layout:
+            ws = cand
+            break
+    if not layout:
+        raise ValueError("couldn't find the County / Issued / Returned columns\n" + _describe(wb))
+
+    # Report date: first date/time cell above the header row
+    snapshot_date = None
+    for row in ws.iter_rows(min_row=1, max_row=max(layout["row"] - 1, 1), max_col=12, values_only=True):
+        for v in row:
+            if isinstance(v, datetime.datetime):
+                snapshot_date = v.date()
+            elif isinstance(v, datetime.date):
+                snapshot_date = v
+            if snapshot_date:
+                break
+        if snapshot_date:
+            break
+    if snapshot_date is None:
         snapshot_date = fallback_date or datetime.date.today()
 
+    canon = {c.lower(): c for c in SD4_COUNTIES}
     rows_out = []
-    for row in ws.iter_rows(min_row=5, values_only=True):   # data starts row 5
-        county = row[COL_COUNTY]
-        if not county or county not in SD4_COUNTIES:
+    for row in ws.iter_rows(min_row=layout["row"] + 1, values_only=True):
+        if layout["county"] >= len(row) or row[layout["county"]] is None:
+            continue
+        county = canon.get(str(row[layout["county"]]).strip().lower())
+        if not county:
             continue
 
         fraction = fractions.get(county, 1.0)
-
-        def scale(val) -> int:
-            if val is None:
-                return 0
-            return round(float(val) * fraction)
-
         is_partial = fraction < 1.0
 
-        def raw(val) -> Optional[int]:
-            """Return raw county total for partial counties, else None."""
-            if not is_partial or val is None:
-                return None
-            return round(float(val))
+        def get(key):
+            i = layout.get(key)
+            return _num(row[i]) if i is not None and i < len(row) else None
 
+        def scale(val) -> int:
+            return 0 if val is None else round(val * fraction)
+
+        def raw(val) -> Optional[int]:
+            """Raw county total for partial counties, else None."""
+            return None if (not is_partial or val is None) else round(val)
+
+        iss, ret, acc = get("issued"), get("returned"), get("accepted")
         rows_out.append({
             "county":                county,
-            "vbm_issued":            scale(row[COL_ISSUED]),
-            "vbm_returned":          scale(row[COL_RETURNED]),
-            "vbm_accepted":          scale(row[COL_ACCEPTED]),
-            "county_total_issued":   raw(row[COL_ISSUED]),
-            "county_total_returned": raw(row[COL_RETURNED]),
+            "vbm_issued":            scale(iss),
+            "vbm_returned":          scale(ret),
+            "vbm_accepted":          scale(acc),
+            "county_total_issued":   raw(iss),
+            "county_total_returned": raw(ret),
         })
 
+    if not rows_out:
+        raise ValueError("found the columns but no SD4 county rows\n" + _describe(wb))
     return snapshot_date, rows_out
 
 
