@@ -112,7 +112,11 @@ def fetch_sos_live(days_back: int = 3) -> pd.DataFrame:
     if str(REPO_DIR) not in sys.path:
         sys.path.insert(0, str(REPO_DIR))
     try:
+        import importlib
         import fetch_ballot_returns as F
+        # Streamlit keeps imported modules between reruns; reload so a newer version on disk
+        # (after a git pull) is used rather than the copy loaded before the update
+        F = importlib.reload(F)
         fractions = F.load_partial_fractions()
     except Exception:
         return pd.DataFrame()
