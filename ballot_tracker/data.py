@@ -233,7 +233,8 @@ def load_optiq_drops() -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame(columns=["county", "returned", "loaded_at"])
     df = pd.read_csv(path, dtype={"county": str})
-    df["returned"] = pd.to_numeric(df["returned"], errors="coerce")
+    for c in ("returned", "D", "R", "O"):
+        df[c] = pd.to_numeric(df[c], errors="coerce") if c in df else np.nan
     df["loaded_at"] = df["loaded_at"].map(_to_pacific)
     return df
 

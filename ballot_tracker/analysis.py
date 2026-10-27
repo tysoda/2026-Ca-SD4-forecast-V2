@@ -701,3 +701,101 @@ def precinct_table(pre: pd.DataFrame, coverage: pd.DataFrame | None = None) -> t
     out["small"] = out["registered"] < PRECINCT_MIN_REG
     out = out.sort_values(["county", "unmapped", "precinct"]).reset_index(drop=True)
     return out, meta
+
+
+# ── Latest drops ─────────────────────────────────────────────────────────────
+def drop_observations(cp_saved: pd.DataFrame, cp_live: pd.DataFrame | None, live_time: pd.Timestamp | None,
+                      drops: pd.DataFrame | None, skip_log_counties=()) -> pd.DataFrame:
+    """Every observed state of each county's returned ballots by party.
+
+    Sources: saved daily snapshots (date only — each is the last save of its day), the
+    live pull (time of Optiq's load) and the drop log rows that carry D/R/O (exact Optiq
+    load time). Columns: county, ts, exact, D, R, O, total.
+    """
+    frames = []
+    def _pivot(cp):
+        return (cp.groupby(["snapshot_date", "county", "party"])["returned"].sum()
+                  .unstack("party").reindex(columns=PARTIES).fillna(0).reset_index())
+    if cp_saved is not None and not cp_saved.empty:
+        p = _pivot(cp_saved).assign(exact=False)
+        frames.append(p.rename(columns={"snapshot_date": "ts"})[["county", "ts", "exact"] + PARTIES])
+    if cp_live is not None and not cp_live.empty and live_time is not None:
+        p = _pivot(cp_live).assign(ts=live_time, exact=True)
+        frames.append(p[["county", "ts", "exact"] + PARTIES])
+    if drops is not None and not drops.empty and {"D", "R", "O"} <= set(drops.columns):
+        d = drops[drops[["D", "R", "O"]].notna().all(axis=1) & drops["loaded_at"].notna()
+                  & ~drops["county"].isin(list(skip_log_counties))]
+        if len(d):
+            frames.append(d.assign(ts=d["loaded_at"], exact=True)[["county", "ts", "exact"] + PARTIES])
+    if not frames:
+        return pd.DataFrame(columns=["county", "ts", "exact"] + PARTIES + ["total"])
+    obs = pd.concat(frames, ignore_index=True)
+    obs["ts"] = pd.to_datetime(obs["ts"])
+    obs["total"] = obs[PARTIES].sum(axis=1)
+    return obs
+
+
+def latest_drops(obs: pd.DataFrame, cp_latest: pd.DataFrame, drops: pd.DataFrame | None = None,
+                 skip_log_counties=()) -> pd.DataFrame:
+    """Each county's most recent increase in returned ballots, split by party, with the
+    county's figures before and after it.
+
+    Returned counts only go up, so a county's states are ordered by total: the drop is the
+    highest total minus the next-highest. Its time is the Optiq load that first showed the
+    new total (from the drop log when it has that total), else the first day it was seen.
+    """
+    reg = cp_latest.groupby(["county", "party"])["registered"].sum().unstack("party").reindex(columns=PARTIES)
+    rows = []
+    for county, g in obs.groupby("county"):
+        totals = sorted(g["total"].unique(), reverse=True)
+        if len(totals) < 2 or county not in reg.index:
+            continue
+        after = g[g["total"] == totals[0]]
+        before = g[g["total"] == totals[1]].iloc[-1]
+        when, exact = None, False
+        if drops is not None and not drops.empty and county not in skip_log_counties:
+            hit = drops[(drops["county"] == county) & (drops["returned"] == totals[0]) & drops["loaded_at"].notna()]
+            if len(hit):
+                when, exact = hit["loaded_at"].min(), True
+        if when is None:
+            # First day the new total was seen; an exact time only if one exists for that day
+            first_day = after["ts"].dt.normalize().min()
+            timed = after[after["exact"] & (after["ts"].dt.normalize() == first_day)]
+            when, exact = (timed["ts"].min(), True) if len(timed) else (first_day, False)
+        a = after.iloc[-1]
+        r = reg.loc[county]
+        n_reg = r.sum()
+        rec = {"county": county, "when": when, "exact": exact}
+        for p in PARTIES:
+            rec[f"drop_{p}"] = a[p] - before[p]
+        rec["drop"] = sum(rec[f"drop_{p}"] for p in PARTIES)
+        for tag, s in (("before", before), ("after", a)):
+            tot = s[PARTIES].sum()
+            rec[f"ret_{tag}"] = tot
+            rec[f"rate_{tag}"] = tot / n_reg if n_reg else np.nan
+            rec[f"dr_{tag}"] = (s["D"] - s["R"]) / tot if tot else np.nan
+        rec["dr_reg"] = (r["D"] - r["R"]) / n_reg if n_reg else np.nan
+        rec["dr_drop"] = (rec["drop_D"] - rec["drop_R"]) / rec["drop"] if rec["drop"] else np.nan
+        for p in PARTIES:
+            rec[f"share_{p}"] = rec[f"drop_{p}"] / rec["drop"] if rec["drop"] else np.nan
+        rec["shift_before"] = rec["dr_before"] - rec["dr_reg"]
+        rec["shift_after"] = rec["dr_after"] - rec["dr_reg"]
+        rec["shift_drop"] = rec["dr_drop"] - rec["dr_reg"]
+        rec["dr_change"] = rec["dr_after"] - rec["dr_before"]
+        rows.append(rec)
+    out = pd.DataFrame(rows)
+    return out.sort_values("when", ascending=False).reset_index(drop=True) if len(out) else out
+
+
+def district_effect(drops_df: pd.DataFrame, cp_latest: pd.DataFrame) -> dict:
+    """District D−R margin and shift before and after a set of drops (the rows given)."""
+    now = cp_latest.groupby("party")[["registered", "returned"]].sum().reindex(PARTIES).fillna(0)
+    after = now["returned"]
+    before = after - pd.Series({p: drops_df[f"drop_{p}"].sum() for p in PARTIES})
+    n_reg = now["registered"].sum()
+    reg_m = (now.loc["D", "registered"] - now.loc["R", "registered"]) / n_reg if n_reg else np.nan
+    def m(s):
+        return (s["D"] - s["R"]) / s.sum() if s.sum() else np.nan
+    return {"ret_before": before.sum(), "ret_after": after.sum(), "dr_before": m(before), "dr_after": m(after),
+            "dr_reg": reg_m, "shift_before": m(before) - reg_m, "shift_after": m(after) - reg_m,
+            "gap_before": before["D"] - before["R"], "gap_after": after["D"] - after["R"]}
