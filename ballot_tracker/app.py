@@ -1640,61 +1640,6 @@ with tabs[6]:
                    "differences will move the real figure. Source: "
                    + ("Optiq county feed." if use_optiq else "Optiq crosstabs."))
 
-        # ── Scenario grid: margin on returned ballots under crossover × O/NPP split ──
-        section("Margin on returned ballots: crossover × O/NPP split",
-                "What the D−R vote margin among ballots already returned would be, for different party loyalty "
-                "and O/NPP splits. Loyalty = share of a party's voters backing its own candidate; the rest cross "
-                "over. Blue = Democrat ahead, red = Republican ahead.")
-        gc = st.columns(3)
-        base_loy = gc[0].slider("Party loyalty", 70, 100, 90, 1, format="%d%%", key="grid_loy") / 100
-        loy_gap = gc[1].slider("Loyalty gap for the 'higher loyalty' columns", 1, 15, 5, 1,
-                               format="%d pp", key="grid_gap") / 100
-        excl = gc[2].slider("Excluded (roll-off)", 3.0, 6.0, 5.0, 0.5, format="%.1f%%", key="grid_excl",
-                            help="Share of returned ballots that won't record a vote in this race (skipped, "
-                                 "blank or rejected). June 2026 primary: ~6.2% of SD4 ballots cast had no "
-                                 "SD4 vote; a two-candidate general usually runs lower.") / 100
-        lo_ = base_loy - loy_gap
-        grid_cols = [
-            (f"{base_loy:.0%} D / {base_loy:.0%} R", "Equal loyalty", base_loy, base_loy),
-            (f"{base_loy:.0%} D / {lo_:.0%} R", "Higher Dem loyalty", base_loy, lo_),
-            (f"{lo_:.0%} D / {base_loy:.0%} R", "Higher Rep loyalty", lo_, base_loy),
-        ]
-        grid_rows = [("Dem +10", 0.55), ("Dem +5", 0.525), ("Even split", 0.50), ("Rep +5", 0.475), ("Rep +10", 0.45)]
-
-        def _margin(f_, l_, s_):
-            # Dem votes − Rep votes: D·f + R·(1−l) + N·s − [R·l + D·(1−f) + N·(1−s)]
-            # Excluded ballots are taken equally from every party, as in the Nevada Independent's table
-            return (1 - excl) * (_d * (2 * f_ - 1) - _r * (2 * l_ - 1) + _n * (2 * s_ - 1))
-
-        hdr_bg = ["#ececea", "#dbeafe", "#fde2e2"]
-        html = ['<table style="width:100%;border-collapse:collapse;font-family:\'IBM Plex Sans\',sans-serif">',
-                '<tr><th style="background:#14284b;color:white;text-align:left;padding:10px 12px">O/NPP split</th>']
-        for (h, sub_, _, _), bg in zip(grid_cols, hdr_bg):
-            html.append(f'<th style="background:{bg};text-align:left;padding:10px 12px">{h}'
-                        f'<div style="font-weight:400;font-size:0.75rem;color:#666">{sub_}</div></th>')
-        html.append("</tr>")
-        for k_, (lab, s_) in enumerate(grid_rows):
-            zebra = "#f7f7f5" if k_ % 2 else "white"
-            html.append(f'<tr style="background:{zebra}"><td style="padding:8px 12px;border-top:1px solid #e0e0e0">'
-                        f'<b>{lab}</b><div style="font-size:0.75rem;color:#666">{s_:.1%} / {1 - s_:.1%} (D / R)'
-                        f'</div></td>')
-            for _, _, f_, l_ in grid_cols:
-                m_ = _margin(f_, l_, s_)
-                colr = D.PARTY_COLORS["D"] if m_ >= 0 else D.PARTY_COLORS["R"]
-                html.append(f'<td style="padding:8px 12px;border-top:1px solid #e0e0e0;text-align:center;'
-                            f'font-family:\'IBM Plex Mono\',monospace;font-size:1.35rem;font-weight:600;'
-                            f'color:{colr}">{m_:+,.0f}</td>')
-            html.append("</tr>")
-        html.append("</table>")
-        st.markdown("".join(html), unsafe_allow_html=True)
-        st.caption(f"Built from {_d:,} D, {_r:,} R and {_n:,} O/NPP ballots returned, less {excl:.1%} "
-                   f"roll-off ({(1 - excl) * (_d + _r + _n):,.0f} modelled votes). Margin = (1 − excluded) × "
-                   "[D·(2·D loyalty − 1) − R·(2·R loyalty − 1) + O/NPP·(2·Dem share − 1)]. "
-                   "Each 5-point shift in the O/NPP split moves the margin by "
-                   f"{(1 - excl) * 0.05 * _n:,.0f} votes. Roll-off: in the June 2026 primary about 6.2% of SD4 "
-                   "ballots had no vote in this race (263,941 race votes of ~281,500 ballots); a two-candidate "
-                   "general usually runs lower, hence 3–6%.")
-
     if ct_latest.empty:
         st.info("No Optiq crosstab data available.")
     else:
@@ -1858,8 +1803,62 @@ with tabs[7]:
                 card(D.PARTY_LABELS[p_], f"{n_:,}", f"{n_ / E_N:.1%} of early ballots" if E_N else "",
                      color=D.PARTY_COLORS[p_])
 
-        # The O/NPP-needed grid is shown here, at the top; it's filled in once the assumptions below are read
-        grid_box = st.container()
+        # ── Scenario grid (moved from Outstanding): margin on returned ballots, crossover × O/NPP split ──
+        _d, _r, _n = E_D, E_R, E_O
+        section("Margin on returned ballots: crossover × O/NPP split",
+                "What the D−R vote margin among ballots already returned would be, for different party loyalty "
+                "and O/NPP splits. Loyalty = share of a party's voters backing its own candidate; the rest cross "
+                "over. Blue = Democrat ahead, red = Republican ahead.")
+        gc = st.columns(3)
+        base_loy = gc[0].slider("Party loyalty", 70, 100, 90, 1, format="%d%%", key="grid_loy") / 100
+        loy_gap = gc[1].slider("Loyalty gap for the 'higher loyalty' columns", 1, 15, 5, 1,
+                               format="%d pp", key="grid_gap") / 100
+        excl = gc[2].slider("Excluded (roll-off)", 3.0, 6.0, 5.0, 0.5, format="%.1f%%", key="grid_excl",
+                            help="Share of returned ballots that won't record a vote in this race (skipped, "
+                                 "blank or rejected). June 2026 primary: ~6.2% of SD4 ballots cast had no "
+                                 "SD4 vote; a two-candidate general usually runs lower.") / 100
+        lo_ = base_loy - loy_gap
+        grid_cols = [
+            (f"{base_loy:.0%} D / {base_loy:.0%} R", "Equal loyalty", base_loy, base_loy),
+            (f"{base_loy:.0%} D / {lo_:.0%} R", "Higher Dem loyalty", base_loy, lo_),
+            (f"{lo_:.0%} D / {base_loy:.0%} R", "Higher Rep loyalty", lo_, base_loy),
+        ]
+        grid_rows = [("Dem +10", 0.55), ("Dem +5", 0.525), ("Even split", 0.50), ("Rep +5", 0.475), ("Rep +10", 0.45)]
+
+        def _margin(f_, l_, s_):
+            # Dem votes − Rep votes: D·f + R·(1−l) + N·s − [R·l + D·(1−f) + N·(1−s)]
+            # Excluded ballots are taken equally from every party, as in the Nevada Independent's table
+            return (1 - excl) * (_d * (2 * f_ - 1) - _r * (2 * l_ - 1) + _n * (2 * s_ - 1))
+
+        hdr_bg = ["#ececea", "#dbeafe", "#fde2e2"]
+        html = ['<table style="width:100%;border-collapse:collapse;font-family:\'IBM Plex Sans\',sans-serif">',
+                '<tr><th style="background:#14284b;color:white;text-align:left;padding:10px 12px">O/NPP split</th>']
+        for (h, sub_, _, _), bg in zip(grid_cols, hdr_bg):
+            html.append(f'<th style="background:{bg};text-align:left;padding:10px 12px">{h}'
+                        f'<div style="font-weight:400;font-size:0.75rem;color:#666">{sub_}</div></th>')
+        html.append("</tr>")
+        for k_, (lab, s_) in enumerate(grid_rows):
+            zebra = "#f7f7f5" if k_ % 2 else "white"
+            html.append(f'<tr style="background:{zebra}"><td style="padding:8px 12px;border-top:1px solid #e0e0e0">'
+                        f'<b>{lab}</b><div style="font-size:0.75rem;color:#666">{s_:.1%} / {1 - s_:.1%} (D / R)'
+                        f'</div></td>')
+            for _, _, f_, l_ in grid_cols:
+                m_ = _margin(f_, l_, s_)
+                colr = D.PARTY_COLORS["D"] if m_ >= 0 else D.PARTY_COLORS["R"]
+                html.append(f'<td style="padding:8px 12px;border-top:1px solid #e0e0e0;text-align:center;'
+                            f'font-family:\'IBM Plex Mono\',monospace;font-size:1.35rem;font-weight:600;'
+                            f'color:{colr}">{m_:+,.0f}</td>')
+            html.append("</tr>")
+        html.append("</table>")
+        st.markdown("".join(html), unsafe_allow_html=True)
+        st.caption(f"Built from {_d:,} D, {_r:,} R and {_n:,} O/NPP ballots returned, less {excl:.1%} "
+                   f"roll-off ({(1 - excl) * (_d + _r + _n):,.0f} modelled votes). Margin = (1 − excluded) × "
+                   "[D·(2·D loyalty − 1) − R·(2·R loyalty − 1) + O/NPP·(2·Dem share − 1)]. "
+                   "Each 5-point shift in the O/NPP split moves the margin by "
+                   f"{(1 - excl) * 0.05 * _n:,.0f} votes. Roll-off: in the June 2026 primary about 6.2% of SD4 "
+                   "ballots had no vote in this race (263,941 race votes of ~281,500 ballots); a two-candidate "
+                   "general usually runs lower, hence 3–6%.")
+
 
         # ── Inputs ──────────────────────────────────────────────────────────
         section("Assumptions")
@@ -1933,25 +1932,6 @@ with tabs[7]:
             return None if abs(mb - ma) < 1e-9 else a_ + (target - ma) * (b_ - a_) / (mb - ma)
 
         res = _model(P)
-        target = st.session_state.get("calc_target", 0)
-
-        # ── Top: O/NPP share needed, by crossover ───────────────────────────
-        with grid_box:
-            section(f"O/NPP share the Democrat needs for a margin of {target:+,}",
-                    "By Democratic and Republican loyalty among mail voters, with everything else as set in the "
-                    "assumptions below (turnout, in-person vote, remaining mail ballots, roll-off). Over 100% means "
-                    "the target can't be reached through the O/NPP vote alone. Change the target under "
-                    "“What would it take?”.")
-            grid, lv = [], (0.85, 0.875, 0.90, 0.925, 0.95)
-            for dl in lv:
-                row = {"Democratic loyalty": f"{dl:.1%}"}
-                for rl in lv:
-                    need_o = _solve("o_dem", target, {**P, "d_loy": dl, "r_loy": rl})
-                    row[f"R loyalty {rl:.1%}"] = need_o * 100 if need_o is not None else np.nan
-                grid.append(row)
-            gdf = pd.DataFrame(grid)
-            show_df(gdf, column_config={c_: st.column_config.NumberColumn(c_, format="%.1f%%")
-                                        for c_ in gdf.columns if c_ != "Democratic loyalty"})
 
         if res["d_sh"] < 0 or res["r_sh"] < 0:
             st.warning("That lean and O/NPP share imply a negative party share for the remaining mail ballots — "
@@ -2018,8 +1998,8 @@ with tabs[7]:
             "Final ballots cast": ("final_n", float(E_N), 2_000_000.0, lambda v: f"{v:,.0f}"),
         }
         s1, s2 = st.columns([1, 2])
-        s1.number_input("Target margin (Dem − Rep)", value=0, step=1_000, key="calc_target",
-                        help="0 = a tie. Positive = Democrat ahead. Also sets the O/NPP table at the top.")
+        target = s1.number_input("Target margin (Dem − Rep)", value=0, step=1_000, key="calc_target",
+                                 help="0 = a tie. Positive = Democrat ahead.")
         which = s2.selectbox("Solve for", list(SOLVE), key="calc_solve")
         key_, lo_, hi_, fmt_ = SOLVE[which]
         x = _solve(key_, target)
@@ -2033,6 +2013,19 @@ with tabs[7]:
                            f"*{which}* alone.")
             elif key_ == "rest_lean" and min((1 - P["rest_o"] + x) / 2, (1 - P["rest_o"] - x) / 2) < 0:
                 st.warning("That lean isn't possible with the O/NPP share set above.")
+            # For the O/NPP split, also show what's needed across a range of party loyalties
+            if key_ == "o_dem":
+                grid, lv = [], (0.85, 0.875, 0.90, 0.925, 0.95)
+                for dl in lv:
+                    row = {"Democratic loyalty": f"{dl:.1%}"}
+                    for rl in lv:
+                        need_o = _solve("o_dem", target, {**P, "d_loy": dl, "r_loy": rl})
+                        row[f"R loyalty {rl:.1%}"] = need_o * 100 if need_o is not None else np.nan
+                    grid.append(row)
+                st.markdown("**O/NPP share the Democrat needs**, by party loyalty among mail voters:")
+                gdf = pd.DataFrame(grid)
+                show_df(gdf, column_config={c_: st.column_config.NumberColumn(c_, format="%.1f%%")
+                                            for c_ in gdf.columns if c_ != "Democratic loyalty"})
         st.caption("Registration ≠ vote: loyalty and the O/NPP split stand in for candidate appeal among mail voters; "
                    "the in-person vote is modelled directly as a candidate margin. Early ballots are Optiq's live "
                    "party counts (Alpine from PDI) and are all mail/early.")
