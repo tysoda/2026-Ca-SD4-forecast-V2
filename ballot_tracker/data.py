@@ -9,7 +9,7 @@ Sources (all at repo root, refreshed by GitHub Actions):
   optiq_crosstabs.csv       Optiq party × age × gender × ethnicity snapshots
   optiq_county_party.csv    Optiq county × party snapshots (written by fetch_optiq_crosstabs.py)
   vbm_2022_baseline.csv     2022 SOS BSR baseline, SD4 portion
-  sd4_party_registration.csv  SOS 60-day report party registration
+  sd4_party_registration.csv  SOS 15-day report party registration
   vbm_2022_daily.csv        OPTIONAL — real 2022 return curve; replaces the linear pace baseline
 """
 

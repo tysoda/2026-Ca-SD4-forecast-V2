@@ -337,21 +337,21 @@ BG_COUNTY_LEANS = load_bg_county_leans()
 
 # ── Hardcoded fallback defaults (used only if forecast_params.json absent) ───
 FALLBACK_COUNTIES = {
-    # Registration figures from SOS 60-day General Election report, Sep 4, 2026.
+    # Registration figures from SOS 15-day General Election report, Oct 19, 2026.
     # (Used only if forecast_params.json is absent.)
-    "Alpine":     {"registration":922,   "turnout":0.7074,"lean_avg":0.0388,"lean_lin":0.0995,"lean_sd":0.0293,"hist_avg":0.6221},
-    "Amador":     {"registration":27073, "turnout":0.7110,"lean_avg":-0.2465,"lean_lin":-0.2444,"lean_sd":0.0143,"hist_avg":0.3481},
-    "Calaveras":  {"registration":32716, "turnout":0.6702,"lean_avg":-0.2404,"lean_lin":-0.2538,"lean_sd":0.0162,"hist_avg":0.3581},
-    "El Dorado":  {"registration":137303,"turnout":0.6630,"lean_avg":-0.1784,"lean_lin":-0.1531,"lean_sd":0.0140,"hist_avg":0.4079},
-    "Inyo":       {"registration":10889, "turnout":0.6890,"lean_avg":-0.1280,"lean_lin":-0.0973,"lean_sd":0.0122,"hist_avg":0.4570},
-    "Madera":     {"registration":36317, "turnout":0.5690,"lean_avg":-0.2700,"lean_lin":-0.2325,"lean_sd":0.0182,"hist_avg":0.3155},
-    "Mariposa":   {"registration":11780, "turnout":0.6941,"lean_avg":-0.2083,"lean_lin":-0.2038,"lean_sd":0.0065,"hist_avg":0.3772},
-    "Merced":     {"registration":12835, "turnout":0.4989,"lean_avg":-0.2673,"lean_lin":-0.2239,"lean_sd":0.0231,"hist_avg":0.3182},
-    "Mono":       {"registration":7945,  "turnout":0.6654,"lean_avg":-0.0251,"lean_lin":-0.0033,"lean_sd":0.0173,"hist_avg":0.5628},
-    "Nevada":     {"registration":12563, "turnout":0.6959,"lean_avg":0.1353,"lean_lin":0.1741,"lean_sd":0.0181,"hist_avg":0.7208},
-    "Placer":     {"registration":8657,  "turnout":0.6520,"lean_avg":0.1224,"lean_lin":0.1462,"lean_sd":0.0113,"hist_avg":0.7079},
-    "Stanislaus": {"registration":301306,"turnout":0.5178,"lean_avg":-0.1553,"lean_lin":-0.1540,"lean_sd":0.0123,"hist_avg":0.4357},
-    "Tuolumne":   {"registration":35681, "turnout":0.6736,"lean_avg":-0.2092,"lean_lin":-0.2034,"lean_sd":0.0140,"hist_avg":0.3763},
+    "Alpine":     {"registration":917,   "turnout":0.7074,"lean_avg":0.0388,"lean_lin":0.0995,"lean_sd":0.0293,"hist_avg":0.6221},
+    "Amador":     {"registration":26992, "turnout":0.7110,"lean_avg":-0.2465,"lean_lin":-0.2444,"lean_sd":0.0143,"hist_avg":0.3481},
+    "Calaveras":  {"registration":32726, "turnout":0.6702,"lean_avg":-0.2404,"lean_lin":-0.2538,"lean_sd":0.0162,"hist_avg":0.3581},
+    "El Dorado":  {"registration":137930,"turnout":0.6630,"lean_avg":-0.1784,"lean_lin":-0.1531,"lean_sd":0.0140,"hist_avg":0.4079},
+    "Inyo":       {"registration":10926, "turnout":0.6890,"lean_avg":-0.1280,"lean_lin":-0.0973,"lean_sd":0.0122,"hist_avg":0.4570},
+    "Madera":     {"registration":36556, "turnout":0.5690,"lean_avg":-0.2700,"lean_lin":-0.2325,"lean_sd":0.0182,"hist_avg":0.3155},
+    "Mariposa":   {"registration":11799, "turnout":0.6941,"lean_avg":-0.2083,"lean_lin":-0.2038,"lean_sd":0.0065,"hist_avg":0.3772},
+    "Merced":     {"registration":12881, "turnout":0.4989,"lean_avg":-0.2673,"lean_lin":-0.2239,"lean_sd":0.0231,"hist_avg":0.3182},
+    "Mono":       {"registration":7960,  "turnout":0.6654,"lean_avg":-0.0251,"lean_lin":-0.0033,"lean_sd":0.0173,"hist_avg":0.5628},
+    "Nevada":     {"registration":12605, "turnout":0.6959,"lean_avg":0.1353,"lean_lin":0.1741,"lean_sd":0.0181,"hist_avg":0.7208},
+    "Placer":     {"registration":8607,  "turnout":0.6520,"lean_avg":0.1224,"lean_lin":0.1462,"lean_sd":0.0113,"hist_avg":0.7079},
+    "Stanislaus": {"registration":301333,"turnout":0.5178,"lean_avg":-0.1553,"lean_lin":-0.1540,"lean_sd":0.0123,"hist_avg":0.4357},
+    "Tuolumne":   {"registration":35784, "turnout":0.6736,"lean_avg":-0.2092,"lean_lin":-0.2034,"lean_sd":0.0140,"hist_avg":0.3763},
 }
 WIN_THRESHOLD = 0.50
 N_DEFAULT     = 10_000

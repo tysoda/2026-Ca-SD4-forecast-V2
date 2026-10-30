@@ -603,7 +603,7 @@ with tabs[0]:
             rc = reg_counts
             reg_m26 = {"D": rc.get("D", 0) / reg_total, "R": rc.get("R", 0) / reg_total,
                        "O": rc.get("O", 0) / reg_total, "dr": (rc.get("D", 0) - rc.get("R", 0)) / reg_total,
-                       "src": "SOS 60-day report"}
+                       "src": "SOS 15-day report"}
         # Returns from the same Optiq feed as registration when possible, so both are the same moment
         if not cp_latest.empty:
             ret26 = cp_latest.groupby("party")[["returned"]].sum()
