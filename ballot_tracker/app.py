@@ -472,7 +472,7 @@ badges = (
 st.markdown(badges, unsafe_allow_html=True)
 
 tabs = st.tabs(["Overview", "Counties", "Latest drop", "Precincts", "Crosstabs", "Trends", "Outstanding",
-                "2022 comparison", "Method & data"])
+                "Margin calculator", "2022 comparison", "Method & data"])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # OVERVIEW
@@ -1831,9 +1831,187 @@ with tabs[6]:
                                     "share_outstanding": pct_col("% of outstanding")})
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 2022 COMPARISON
+# MARGIN CALCULATOR
 # ══════════════════════════════════════════════════════════════════════════════
 with tabs[7]:
+    _src = cp_latest if use_optiq else (ct_latest.rename(columns={"issued": "registered"}) if not ct_latest.empty
+                                         else pd.DataFrame())
+    if _src.empty:
+        st.info("The calculator needs Optiq's returned ballots by party, which aren't available right now.")
+    else:
+        _e = _src.groupby("party")["returned"].sum()
+        E_D, E_R, E_O = (int(_e.get(p_, 0)) for p_ in D.PARTIES)
+        E_N = E_D + E_R + E_O
+        _fp = D.load_forecast_params()
+        _fc_ballots = (int(round(sum(v["registration"] * v["turnout"] for v in _fp["counties"].values()), -3))
+                       if _fp and "counties" in _fp else 380_000)
+
+        section("Final margin calculator",
+                "Starts from the early ballots already back (Optiq, by party), adds the ballots still to come "
+                "(rest of the early vote, Election Day and late mail), then applies vote choice. Margin is "
+                "Democrat minus Republican candidate votes. Everything is in party-registration terms — "
+                "the assumptions are where the real uncertainty lives.")
+        k = st.columns(4)
+        with k[0]:
+            card("Early ballots so far", f"{E_N:,}", "Optiq returned ballots")
+        for i_, (p_, n_) in enumerate((("D", E_D), ("R", E_R), ("O", E_O))):
+            with k[i_ + 1]:
+                card(D.PARTY_LABELS[p_], f"{n_:,}", f"{n_ / E_N:.1%} of early ballots" if E_N else "",
+                     color=D.PARTY_COLORS[p_])
+
+        # ── Inputs ──────────────────────────────────────────────────────────
+        section("Assumptions")
+        a1, a2 = st.columns(2)
+        with a1:
+            st.markdown("**Who else votes**")
+            final_n = st.number_input(
+                "Final ballots cast", min_value=E_N, max_value=640_000, value=max(_fc_ballots, E_N), step=5_000,
+                key="calc_final",
+                help=f"All ballots in the SD4 race's electorate. The SD4 forecast implies ~{_fc_ballots:,}; "
+                     "2022 was roughly 342,000.")
+            rest_lean = st.slider(
+                "D−R lean of the remaining ballots", -30.0, 15.0, -8.0, 0.5, format="%+.1f pp", key="calc_lean",
+                help="Party-registration margin among ballots not yet returned. For reference, 2022's final "
+                     "week of early returns ran about −7; Election Day in-person ballots lean further Republican.")
+            rest_o = st.slider(
+                "O/NPP share of the remaining ballots", 5.0, 40.0, 21.0, 0.5, format="%.1f%%", key="calc_o",
+                help=f"Share of the remaining ballots cast by O/NPP voters. Early ballots so far: "
+                     f"{E_O / E_N:.1%}." if E_N else None)
+        with a2:
+            st.markdown("**How they vote**")
+            d_loy = st.slider("Democratic loyalty", 60.0, 100.0, 90.0, 0.5, format="%.1f%%", key="calc_dloy",
+                              help="Share of Democratic voters choosing the Democratic candidate.")
+            r_loy = st.slider("Republican loyalty", 60.0, 100.0, 90.0, 0.5, format="%.1f%%", key="calc_rloy",
+                              help="Share of Republican voters choosing the Republican candidate.")
+            o_dem = st.slider("O/NPP share for the Democrat", 20.0, 80.0, 50.0, 0.5, format="%.1f%%",
+                              key="calc_odem")
+            roll = st.slider("Excluded (roll-off)", 0.0, 8.0, 5.0, 0.5, format="%.1f%%", key="calc_roll",
+                             help="Ballots with no vote in this race. June 2026 primary: ~6.2%.")
+
+        P = {"final_n": float(final_n), "rest_lean": rest_lean / 100, "rest_o": rest_o / 100,
+             "d_loy": d_loy / 100, "r_loy": r_loy / 100, "o_dem": o_dem / 100, "roll": roll / 100}
+
+        def _model(p):
+            n_rest = max(p["final_n"] - E_N, 0.0)
+            d_sh = (1 - p["rest_o"] + p["rest_lean"]) / 2
+            r_sh = (1 - p["rest_o"] - p["rest_lean"]) / 2
+            Dt, Rt = E_D + n_rest * d_sh, E_R + n_rest * r_sh
+            Ot = E_O + n_rest * p["rest_o"]
+            parts = {
+                "early_gap": E_D - E_R,
+                "rest_gap": n_rest * (d_sh - r_sh),
+                "npp": Ot * (2 * p["o_dem"] - 1),
+                "crossover": -2 * Dt * (1 - p["d_loy"]) + 2 * Rt * (1 - p["r_loy"]),
+            }
+            pre = sum(parts.values())
+            parts["roll"] = -p["roll"] * pre
+            return {"margin": pre + parts["roll"], "parts": parts, "Dt": Dt, "Rt": Rt, "Ot": Ot,
+                    "n_rest": n_rest, "valid": (1 - p["roll"]) * (Dt + Rt + Ot), "d_sh": d_sh, "r_sh": r_sh}
+
+        res = _model(P)
+        if res["d_sh"] < 0 or res["r_sh"] < 0:
+            st.warning("That lean and O/NPP share imply a negative party share for the remaining ballots — "
+                       "pull the lean back toward zero or lower the O/NPP share.")
+
+        # ── Result ──────────────────────────────────────────────────────────
+        section("Projected result")
+        m = res["margin"]
+        r1, r2, r3 = st.columns(3)
+        with r1:
+            card("Margin (Dem − Rep)", f"{m:+,.0f}",
+                 f"{m / res['valid']:+.1%} of {res['valid']:,.0f} votes in the race" if res["valid"] else "",
+                 color=D.PARTY_COLORS["D"] if m >= 0 else D.PARTY_COLORS["R"])
+        tot = res["Dt"] + res["Rt"] + res["Ot"]
+        with r2:
+            card("Electorate by party", f"{res['Dt'] / tot:.0%} / {res['Rt'] / tot:.0%} / {res['Ot'] / tot:.0%}",
+                 f"D / R / O-NPP · party gap {res['Dt'] - res['Rt']:+,.0f}")
+        with r3:
+            card("Ballots still to come", f"{res['n_rest']:,.0f}",
+                 f"{res['n_rest'] / final_n:.0%} of the final electorate" if final_n else "")
+
+        walk = pd.DataFrame([
+            ("Early ballots so far — party gap (D − R)", res["parts"]["early_gap"]),
+            ("Remaining ballots — party gap", res["parts"]["rest_gap"]),
+            ("O/NPP vote split", res["parts"]["npp"]),
+            ("Crossover (each switcher counts twice)", res["parts"]["crossover"]),
+            ("Roll-off", res["parts"]["roll"]),
+        ], columns=["step", "votes"])
+        walk["running"] = walk["votes"].cumsum()       # last row = the margin
+        show_df(walk, signed=["votes", "running"], column_config={
+            "step": "Step",
+            "votes": st.column_config.NumberColumn("Adds", format="%+,.0f"),
+            "running": st.column_config.NumberColumn("Running margin", format="%+,.0f")})
+
+        # ── Sensitivities ───────────────────────────────────────────────────
+        def _slope(key, step):
+            q = dict(P); q[key] = P[key] + step
+            return _model(q)["margin"] - m
+        st.caption(
+            "Each change, holding the rest fixed: "
+            f"+1 pt O/NPP for the Democrat → {_slope('o_dem', 0.01):+,.0f} · "
+            f"+1 pt Democratic loyalty → {_slope('d_loy', 0.01):+,.0f} · "
+            f"+1 pt Republican loyalty → {_slope('r_loy', 0.01):+,.0f} · "
+            f"+1 pt D−R lean of remaining ballots → {_slope('rest_lean', 0.01):+,.0f} · "
+            f"+10,000 ballots cast → {_slope('final_n', 10_000):+,.0f}.")
+
+        # ── Solve for a parameter ───────────────────────────────────────────
+        section("What would it take?",
+                "Pick a target margin and one assumption to solve for; the others stay as set above. The margin "
+                "moves in a straight line with each assumption, so the answer is exact.")
+        SOLVE = {
+            "O/NPP share for the Democrat": ("o_dem", 0.0, 1.0, lambda v: f"{v:.1%}"),
+            "Democratic loyalty": ("d_loy", 0.0, 1.0, lambda v: f"{v:.1%}"),
+            "Republican loyalty": ("r_loy", 0.0, 1.0, lambda v: f"{v:.1%}"),
+            "D−R lean of the remaining ballots": ("rest_lean", -1.0, 1.0, lambda v: f"{v * 100:+.1f} pp"),
+            "Final ballots cast": ("final_n", float(E_N), 2_000_000.0, lambda v: f"{v:,.0f}"),
+        }
+        s1, s2 = st.columns([1, 2])
+        target = s1.number_input("Target margin (Dem − Rep)", value=0, step=1_000, key="calc_target",
+                                 help="0 = a tie. Positive = Democrat ahead.")
+        which = s2.selectbox("Solve for", list(SOLVE), key="calc_solve")
+        key_, lo_, hi_, fmt_ = SOLVE[which]
+        a_, b_ = (P[key_], P[key_] + (10_000 if key_ == "final_n" else 0.01))
+        ma, mb = (_model({**P, key_: a_})["margin"], _model({**P, key_: b_})["margin"])
+        if abs(mb - ma) < 1e-9:
+            st.info(f"The margin doesn't depend on *{which}* with these settings "
+                    "(e.g. no ballots left to come).")
+        else:
+            x = a_ + (target - ma) * (b_ - a_) / (mb - ma)
+            ok = lo_ <= x <= hi_
+            st.markdown(f"To reach a margin of **{target:+,}**, *{which}* would need to be **{fmt_(x)}** "
+                        f"(currently {fmt_(P[key_])}).")
+            if not ok:
+                st.warning(f"That's outside the possible range, so this target can't be reached by changing "
+                           f"*{which}* alone.")
+            elif key_ == "rest_lean":
+                d_need = (1 - P["rest_o"] + x) / 2
+                r_need = (1 - P["rest_o"] - x) / 2
+                if d_need < 0 or r_need < 0:
+                    st.warning("That lean isn't possible with the O/NPP share set above.")
+            # For the O/NPP split, also show what's needed across a range of party loyalties
+            if key_ == "o_dem":
+                grid = []
+                for dl in (0.85, 0.875, 0.90, 0.925, 0.95):
+                    row = {"Democratic loyalty": f"{dl:.1%}"}
+                    for rl in (0.85, 0.875, 0.90, 0.925, 0.95):
+                        q = {**P, "d_loy": dl, "r_loy": rl}
+                        qa = _model({**q, "o_dem": 0.0})["margin"]
+                        qb = _model({**q, "o_dem": 1.0})["margin"]
+                        need_o = (target - qa) / (qb - qa) if qb != qa else np.nan
+                        row[f"R loyalty {rl:.1%}"] = need_o * 100
+                    grid.append(row)
+                st.markdown("**O/NPP share the Democrat needs**, by party loyalty:")
+                gdf = pd.DataFrame(grid)
+                show_df(gdf, column_config={c_: st.column_config.NumberColumn(c_, format="%.1f%%")
+                                            for c_ in gdf.columns if c_ != "Democratic loyalty"})
+        st.caption("Registration ≠ vote: loyalty and O/NPP split stand in for candidate appeal, and the "
+                   "remaining-ballot assumptions for who still votes. Early ballots are Optiq's live party "
+                   "counts (Alpine from PDI).")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2022 COMPARISON
+# ══════════════════════════════════════════════════════════════════════════════
+with tabs[8]:
     if pdi22 is None:
         st.info("2022 data not found (pdi_2022_daily_sd4.csv).")
     else:
@@ -2050,7 +2228,7 @@ with tabs[7]:
 # ══════════════════════════════════════════════════════════════════════════════
 # METHOD & DATA
 # ══════════════════════════════════════════════════════════════════════════════
-with tabs[8]:
+with tabs[9]:
     section("SOS vs Optiq — latest counts",
             "Each source's most recent figures, side by side, to show where the totals differ. "
             "Optiq's 'registered' is its VBM universe (SD4 voters sent a ballot); SOS 'issued' is ballots "
