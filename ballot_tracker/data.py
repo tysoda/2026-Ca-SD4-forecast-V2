@@ -249,6 +249,17 @@ def live_to_snapshot(live: pd.DataFrame, snapshot_date: pd.Timestamp) -> pd.Data
 
 
 # ── Optiq county × party ─────────────────────────────────────────────────────
+def _plain_date(values) -> pd.Series:
+    """Optiq's latestReturnDate as a plain (timezone-free) date.
+
+    Optiq has sent both '2026-10-30' and full timestamps like '2026-10-30T00:00:00Z'. Parsing
+    everything as UTC and then dropping the timezone gives one consistent date column, so
+    saved snapshots, the live feed and PDI's dates can be mixed without pandas errors.
+    """
+    d = pd.to_datetime(pd.Series(values), errors="coerce", utc=True, format="ISO8601")
+    return d.dt.tz_localize(None).dt.normalize()
+
+
 def _parse_geo_rows(rows: list[dict]) -> pd.DataFrame:
     """geography-breakdown rows → one row per county × party (D/R/O).
 
@@ -274,7 +285,7 @@ def _parse_geo_rows(rows: list[dict]) -> pd.DataFrame:
                          "latest_return_date": latest})
     df = pd.DataFrame(recs)
     if not df.empty:
-        df["latest_return_date"] = pd.to_datetime(df["latest_return_date"], errors="coerce")
+        df["latest_return_date"] = _plain_date(df["latest_return_date"])
     return df
 
 
@@ -285,7 +296,7 @@ def load_optiq_county_party(drop_stale: bool = True) -> pd.DataFrame:
         return pd.DataFrame()
     df = pd.read_csv(path, parse_dates=["snapshot_date"])
     if "latest_return_date" in df:
-        df["latest_return_date"] = pd.to_datetime(df["latest_return_date"], errors="coerce")
+        df["latest_return_date"] = _plain_date(df["latest_return_date"])
     for c in ("registered", "returned"):
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
     if drop_stale:
@@ -444,6 +455,8 @@ def apply_pdi_overrides(cp: pd.DataFrame, pdi: dict) -> pd.DataFrame:
     cp = cp.copy()
     if "source" not in cp:
         cp["source"] = "Optiq"
+    if "latest_return_date" in cp:
+        cp["latest_return_date"] = _plain_date(cp["latest_return_date"]).values
     for county, s in pdi.items():
         for d in cp.loc[cp["county"] == county, "snapshot_date"].unique():
             upto = s[s["date"] <= pd.Timestamp(d)]
