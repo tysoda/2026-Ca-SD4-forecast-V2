@@ -2870,6 +2870,13 @@ with tab_night:
         manual_refresh = st.button("🔄 Refresh", key="night_manual_refresh")
 
     if manual_refresh:
+        try:
+            import subprocess as _sp, sys as _sys2
+            _fetcher = Path(__file__).parent / "fetch_election_results.py"
+            _sp.run([_sys2.executable, str(_fetcher)], timeout=60, capture_output=True)
+            load_night_csv.clear()
+        except Exception:
+            pass
         st.rerun()
 
     # ── Load / initialise election night data ─────────────────────────────────
@@ -3640,6 +3647,18 @@ with tab_night:
 
     # ── Auto-refresh logic ────────────────────────────────────────────────────
     if auto_refresh:
-        st.caption("⏱ Auto-refreshing every 10 minutes. Toggle off to stop.")
+        st.caption("⏱ Auto-refreshing every 10 minutes — fetching live SOS results. Toggle off to stop.")
         _time.sleep(600)
+        # Pull fresh results from the SOS API before reloading the page
+        try:
+            import subprocess as _sp, sys as _sys2
+            _fetcher = Path(__file__).parent / "fetch_election_results.py"
+            _sp.run(
+                [_sys2.executable, str(_fetcher)],
+                timeout=60,
+                capture_output=True,
+            )
+            load_night_csv.clear()   # bust the cache so the new CSV is read
+        except Exception:
+            pass   # non-fatal — stale data still shows
         st.rerun()
