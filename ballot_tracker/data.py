@@ -80,9 +80,17 @@ def _ssl_ctx() -> ssl.SSLContext:
     return ssl.create_default_context(cafile=ca if os.path.exists(ca) else None)
 
 
-def _get_json(url: str, timeout: int = 10):
-    with urllib.request.urlopen(url, timeout=timeout, context=_ssl_ctx()) as r:
-        return json.loads(r.read())
+def _get_json(url: str, timeout: int = 30, retries: int = 1):
+    """GET a JSON endpoint. Optiq's ballot feed is large and slows down at busy times, so the
+    timeout is generous and a failed attempt is retried once."""
+    last = None
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout, context=_ssl_ctx()) as r:
+                return json.loads(r.read())
+        except Exception as e:      # timeouts, connection resets, bad JSON
+            last = e
+    raise last
 
 
 # ── SOS ballot returns ───────────────────────────────────────────────────────
