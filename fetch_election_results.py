@@ -2,8 +2,8 @@
 fetch_election_results.py
 Fetches live SD4 State Senate and Governor election night results from
 the California SOS API and writes them to:
-  - election_night.csv   (SD4 State Senate results by county)
-  - governor_night.csv   (Governor results by county)
+  - election_night.csv   (SD4 State Senate results — SD4 counties only)
+  - governor_night.csv   (Governor results — all 58 CA counties)
 
 Usage:
   python3 fetch_election_results.py           # fetch and save
@@ -39,21 +39,43 @@ SD4_COUNTIES = [
     "placer", "stanislaus", "tuolumne",
 ]
 
-# Map API county slug → display name used in election_night.csv
+# All 58 California counties for the statewide Governor race
+ALL_CA_COUNTIES = [
+    "alameda", "alpine", "amador", "butte", "calaveras", "colusa",
+    "contra-costa", "del-norte", "el-dorado", "fresno", "glenn",
+    "humboldt", "imperial", "inyo", "kern", "kings", "lake", "lassen",
+    "los-angeles", "madera", "marin", "mariposa", "mendocino", "merced",
+    "modoc", "mono", "monterey", "napa", "nevada", "orange", "placer",
+    "plumas", "riverside", "sacramento", "san-benito", "san-bernardino",
+    "san-diego", "san-francisco", "san-joaquin", "san-luis-obispo",
+    "san-mateo", "santa-barbara", "santa-clara", "santa-cruz", "shasta",
+    "sierra", "siskiyou", "solano", "sonoma", "stanislaus", "sutter",
+    "tehama", "trinity", "tulare", "tuolumne", "ventura", "yolo", "yuba",
+]
+
+# Map API county slug → display name
 COUNTY_DISPLAY = {
-    "alpine":      "Alpine",
-    "amador":      "Amador",
-    "calaveras":   "Calaveras",
-    "el-dorado":   "El Dorado",
-    "inyo":        "Inyo",
-    "madera":      "Madera",
-    "mariposa":    "Mariposa",
-    "merced":      "Merced",
-    "mono":        "Mono",
-    "nevada":      "Nevada",
-    "placer":      "Placer",
-    "stanislaus":  "Stanislaus",
-    "tuolumne":    "Tuolumne",
+    "alameda": "Alameda", "alpine": "Alpine", "amador": "Amador",
+    "butte": "Butte", "calaveras": "Calaveras", "colusa": "Colusa",
+    "contra-costa": "Contra Costa", "del-norte": "Del Norte",
+    "el-dorado": "El Dorado", "fresno": "Fresno", "glenn": "Glenn",
+    "humboldt": "Humboldt", "imperial": "Imperial", "inyo": "Inyo",
+    "kern": "Kern", "kings": "Kings", "lake": "Lake", "lassen": "Lassen",
+    "los-angeles": "Los Angeles", "madera": "Madera", "marin": "Marin",
+    "mariposa": "Mariposa", "mendocino": "Mendocino", "merced": "Merced",
+    "modoc": "Modoc", "mono": "Mono", "monterey": "Monterey", "napa": "Napa",
+    "nevada": "Nevada", "orange": "Orange", "placer": "Placer",
+    "plumas": "Plumas", "riverside": "Riverside", "sacramento": "Sacramento",
+    "san-benito": "San Benito", "san-bernardino": "San Bernardino",
+    "san-diego": "San Diego", "san-francisco": "San Francisco",
+    "san-joaquin": "San Joaquin", "san-luis-obispo": "San Luis Obispo",
+    "san-mateo": "San Mateo", "santa-barbara": "Santa Barbara",
+    "santa-clara": "Santa Clara", "santa-cruz": "Santa Cruz",
+    "shasta": "Shasta", "sierra": "Sierra", "siskiyou": "Siskiyou",
+    "solano": "Solano", "sonoma": "Sonoma", "stanislaus": "Stanislaus",
+    "sutter": "Sutter", "tehama": "Tehama", "trinity": "Trinity",
+    "tulare": "Tulare", "tuolumne": "Tuolumne", "ventura": "Ventura",
+    "yolo": "Yolo", "yuba": "Yuba",
 }
 
 # Total precincts per county (for the template / sanity check)
@@ -179,8 +201,8 @@ def main():
     # SD4 State Senate
     df_sd4 = fetch_race("state-senate/district/4", SD4_COUNTIES, "SD4 State Senate")
 
-    # Governor
-    df_gov = fetch_race("governor", SD4_COUNTIES, "Governor")
+    # Governor — all 58 CA counties
+    df_gov = fetch_race("governor", ALL_CA_COUNTIES, "Governor (statewide)")
 
     if args.dry_run:
         print("\n── SD4 State Senate ──")
