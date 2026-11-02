@@ -83,15 +83,24 @@ def forecast_registration() -> dict:
     partial_dict = dict(zip(partial.county, partial.sd4_fraction))
 
     # Priority:
-    #   1. SOS 60-day report (month=9, year=2026) — SD4-portion already applied
-    #   2. Nov 2026 forecasted row (month=11, year=2026)
-    #   3. Linear extrapolation from last two Nov values
+    #   1. SOS 15-day report (month=10, year=2026) — SD4-portion already applied
+    #   2. SOS 60-day report (month=9, year=2026) — SD4-portion already applied
+    #   3. Nov 2026 forecasted row (month=11, year=2026)
+    #   4. Linear extrapolation from last two Nov values
     results = {}
     for county in COUNTIES:
         c_df = df[df.county == county].copy()
+        sos15 = c_df[(c_df.year == 2026) & (c_df.month == 10)]
         sos60 = c_df[(c_df.year == 2026) & (c_df.month == 9)]
         nov26 = c_df[(c_df.year == 2026) & (c_df.month == 11)]
-        if len(sos60) > 0:
+        if len(sos15) > 0:
+            # SOS 15-day report: value is already the SD4 portion for split counties
+            reg_sd4 = float(sos15.iloc[-1]["registered_voters"])
+            fraction = partial_dict.get(county, 1.0)
+            # Back-calculate total so the existing fraction logic still works
+            reg_total = reg_sd4 / fraction if fraction > 0 else reg_sd4
+            source = "SOS 15-day"
+        elif len(sos60) > 0:
             # SOS 60-day report: value is already the SD4 portion for split counties
             reg_sd4 = float(sos60.iloc[-1]["registered_voters"])
             fraction = partial_dict.get(county, 1.0)

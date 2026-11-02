@@ -7995,7 +7995,7 @@
   ],
   "counties": {
     "Alpine": {
-      "registration": 922,
+      "registration": 917,
       "turnout": 0.725784,
       "lean_avg": 0.034692,
       "lean_lin": 0.050833,
@@ -8004,7 +8004,7 @@
       "sd4_fraction": 1.0
     },
     "Amador": {
-      "registration": 27073,
+      "registration": 26992,
       "turnout": 0.74645,
       "lean_avg": -0.251462,
       "lean_lin": -0.263242,
@@ -8013,7 +8013,7 @@
       "sd4_fraction": 1.0
     },
     "Calaveras": {
-      "registration": 32716,
+      "registration": 32726,
       "turnout": 0.700377,
       "lean_avg": -0.246338,
       "lean_lin": -0.268173,
@@ -8022,7 +8022,7 @@
       "sd4_fraction": 1.0
     },
     "El Dorado": {
-      "registration": 137303,
+      "registration": 137930,
       "turnout": 0.695114,
       "lean_avg": -0.185577,
       "lean_lin": -0.181856,
@@ -8031,7 +8031,7 @@
       "sd4_fraction": 1.0
     },
     "Inyo": {
-      "registration": 10889,
+      "registration": 10926,
       "turnout": 0.714319,
       "lean_avg": -0.133815,
       "lean_lin": -0.121368,
@@ -8040,7 +8040,7 @@
       "sd4_fraction": 1.0
     },
     "Madera": {
-      "registration": 36317,
+      "registration": 36556,
       "turnout": 0.578333,
       "lean_avg": -0.1866,
       "lean_lin": -0.247914,
@@ -8049,7 +8049,7 @@
       "sd4_fraction": 0.43414686
     },
     "Mariposa": {
-      "registration": 11780,
+      "registration": 11799,
       "turnout": 0.729816,
       "lean_avg": -0.216162,
       "lean_lin": -0.223801,
@@ -8058,7 +8058,7 @@
       "sd4_fraction": 1.0
     },
     "Merced": {
-      "registration": 12835,
+      "registration": 12881,
       "turnout": 0.513369,
       "lean_avg": -0.191685,
       "lean_lin": -0.222907,
@@ -8067,7 +8067,7 @@
       "sd4_fraction": 0.09575366
     },
     "Mono": {
-      "registration": 7945,
+      "registration": 7960,
       "turnout": 0.663948,
       "lean_avg": -0.032654,
       "lean_lin": -0.02614,
@@ -8076,7 +8076,7 @@
       "sd4_fraction": 1.0
     },
     "Nevada": {
-      "registration": 12563,
+      "registration": 12605,
       "turnout": 0.726089,
       "lean_avg": 0.091869,
       "lean_lin": 0.172557,
@@ -8085,7 +8085,7 @@
       "sd4_fraction": 0.16173241
     },
     "Placer": {
-      "registration": 8657,
+      "registration": 8607,
       "turnout": 0.673529,
       "lean_avg": 0.083346,
       "lean_lin": 0.141879,
@@ -8094,7 +8094,7 @@
       "sd4_fraction": 0.02832284
     },
     "Stanislaus": {
-      "registration": 301306,
+      "registration": 301333,
       "turnout": 0.52508,
       "lean_avg": -0.158015,
       "lean_lin": -0.157442,
@@ -8103,7 +8103,7 @@
       "sd4_fraction": 1.0
     },
     "Tuolumne": {
-      "registration": 35681,
+      "registration": 35784,
       "turnout": 0.712891,
       "lean_avg": -0.211115,
       "lean_lin": -0.220247,
