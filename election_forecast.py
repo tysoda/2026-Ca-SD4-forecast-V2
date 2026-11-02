@@ -2850,24 +2850,27 @@ with tab_night:
         "400_PM_D5.csv", "400_PM_D6.csv", "400_PM_D7.csv",
     ]
 
-    mc1, mc2, mc3, mc4 = st.columns([2, 2, 1, 1])
-    with mc1:
-        mock_scenario_label = st.selectbox(
-            "Mock scenario", list(MOCK_SCENARIOS.keys()), key="night_mock_scenario"
-        )
-    with mc2:
-        mock_wave_idx = st.select_slider(
-            "Reporting wave",
-            options=list(range(len(WAVE_LABELS_DISPLAY))),
-            format_func=lambda i: WAVE_LABELS_DISPLAY[i],
-            value=0,
-            key="night_mock_wave",
-            disabled=(mock_scenario_label == "— none —"),
-        )
-    with mc3:
-        auto_refresh = st.toggle("Auto-refresh", value=False, key="night_auto_refresh")
-    with mc4:
+    rc1, rc2 = st.columns([1, 1])
+    with rc1:
+        auto_refresh = st.toggle("Auto-refresh", value=True, key="night_auto_refresh")
+    with rc2:
         manual_refresh = st.button("🔄 Refresh", key="night_manual_refresh")
+
+    with st.expander("🧪 Mock scenario (testing only)", expanded=False):
+        mc1, mc2 = st.columns([2, 2])
+        with mc1:
+            mock_scenario_label = st.selectbox(
+                "Mock scenario", list(MOCK_SCENARIOS.keys()), key="night_mock_scenario"
+            )
+        with mc2:
+            mock_wave_idx = st.select_slider(
+                "Reporting wave",
+                options=list(range(len(WAVE_LABELS_DISPLAY))),
+                format_func=lambda i: WAVE_LABELS_DISPLAY[i],
+                value=0,
+                key="night_mock_wave",
+                disabled=(mock_scenario_label == "— none —"),
+            )
 
     if manual_refresh:
         try:
