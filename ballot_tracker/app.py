@@ -252,11 +252,41 @@ def load_precinct_geo():
     return D.load_precinct_shapes(), D.load_sd4_boundary()
 
 
+class LiveFetchFailed(Exception):
+    """Raised inside load_live so a failed Optiq pull is NOT cached (st.cache_data only
+    caches successful returns) and the next page load tries again."""
+
+
 @st.cache_data(ttl=3600, show_spinner="Fetching live Optiq data…")
 def load_live():
     fetched = pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None)
+    # Small county feed first: if Optiq isn't answering, give up before the large ballot feed
+    cp = D.fetch_optiq_county_party_live()
+    if cp.empty:
+        raise LiveFetchFailed("Optiq didn't respond in time")
     cells, optiq_loaded = D.fetch_optiq_live()
-    return cells, D.fetch_optiq_county_party_live(), fetched, optiq_loaded
+    if cells.empty:
+        raise LiveFetchFailed("Optiq's ballot feed didn't respond in time")
+    return cells, cp, fetched, optiq_loaded
+
+
+def get_live():
+    """Live Optiq data, or empty frames if Optiq can't be reached. After a failure, wait two
+    minutes before trying again (a failed attempt can take about a minute)."""
+    empty = (pd.DataFrame(), pd.DataFrame(), None, None)
+    failed_at = st.session_state.get("optiq_failed_at")
+    now = pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None)
+    if failed_at is not None and now - failed_at < pd.Timedelta(minutes=2) \
+            and not st.session_state.get("optiq_retry"):
+        return empty, failed_at
+    st.session_state["optiq_retry"] = False
+    try:
+        out = load_live()
+        st.session_state.pop("optiq_failed_at", None)
+        return out, None
+    except Exception:
+        st.session_state["optiq_failed_at"] = now
+        return empty, now
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -385,8 +415,9 @@ with st.sidebar:
         st.rerun()
 
 live_cells, live_cp, optiq_fetched, optiq_loaded = (pd.DataFrame(), pd.DataFrame(), None, None)
+optiq_failed_at = None
 if use_live:
-    live_cells, live_cp, optiq_fetched, optiq_loaded = load_live()
+    (live_cells, live_cp, optiq_fetched, optiq_loaded), optiq_failed_at = get_live()
 
 # California date (the server runs on UTC, which would roll over at 5pm Pacific)
 today = pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None).normalize()
@@ -470,6 +501,18 @@ badges = (
        + '</span>')
 )
 st.markdown(badges, unsafe_allow_html=True)
+
+# Tell the user plainly when the live Optiq pull failed and saved data is being shown
+if use_live and optiq_failed_at is not None:
+    _saved = data.get("saved_at", {}).get("optiq")
+    _saved_txt = (f"{_saved:%a %b %-d, %-I:%M %p}".replace("AM", "am").replace("PM", "pm")
+                  if _saved is not None else "the last automatic update")
+    wc1, wc2 = st.columns([5, 1])
+    wc1.warning(f"Couldn't reach Optiq just now (it's responding slowly), so Optiq figures are from the data "
+                f"saved at **{_saved_txt}**. The app tries again automatically after two minutes, or use the button.")
+    if wc2.button("↻ Try Optiq again", key="optiq_retry_btn"):
+        st.session_state["optiq_retry"] = True
+        st.rerun()
 
 tabs = st.tabs(["Overview", "Counties", "Latest drop", "Precincts", "Crosstabs", "Trends", "Outstanding",
                 "Margin calculator", "2022 comparison", "Method & data"])
