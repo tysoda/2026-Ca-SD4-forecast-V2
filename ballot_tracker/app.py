@@ -1903,6 +1903,11 @@ with tabs[7]:
                    "general usually runs lower, hence 3–6%.")
 
 
+        # Early in-person ballots so far (SOS ballot status report, SD4 share)
+        _ipr = sos.dropna(subset=["ip_cast"]) if "ip_cast" in sos.columns else sos.iloc[0:0]
+        _ip_date = _ipr["snapshot_date"].max() if not _ipr.empty else None
+        early_ip_sos = int(round(_ipr.loc[_ipr["snapshot_date"] == _ip_date, "ip_cast"].sum())) if _ip_date is not None else 0
+
         # ── Inputs ──────────────────────────────────────────────────────────
         section("Assumptions")
         a1, a2 = st.columns(2)
@@ -1915,8 +1920,20 @@ with tabs[7]:
                      f"~{_fc_ballots:,}; 2022 was roughly 342,000.")
             ip_share = st.slider(
                 "In-person share of all ballots", 0.0, 25.0, 10.0, 0.5, format="%.1f%%", key="calc_ip",
-                help="Ballots cast in person (Election Day and early in-person). Each county's historical mail "
+                help="All ballots cast in person, early and on Election Day. Each county's historical mail "
                      "share, weighted by forecast ballots, gives ~10%.")
+            early_ip = st.number_input(
+                "Early in-person ballots so far", min_value=0, max_value=200_000, value=early_ip_sos, step=500,
+                key="calc_eip",
+                help=(f"SOS ballot status report for {_ip_date:%b %-d} (SD4 share of split counties): "
+                      f"{early_ip_sos:,}. " if _ip_date is not None else "No SOS in-person count saved yet. ")
+                     + "These are part of the in-person share above; the rest is cast on Election Day.")
+            ip_incl = st.slider(
+                "Share of early in-person already in Optiq's returns", 0.0, 100.0, 100.0, 5.0, format="%.0f%%",
+                key="calc_eipin",
+                help="Ballots counted in the Optiq returns above aren't counted again in the in-person vote. "
+                     "Nov 2 comparison with SOS: El Dorado and Amador clearly include them, Stanislaus partly, "
+                     "Calaveras and Tuolumne unclear.")
             rest_lean = st.slider(
                 "D−R lean of the remaining mail ballots", -30.0, 15.0, -7.0, 0.5, format="%+.1f pp",
                 key="calc_lean",
@@ -1937,16 +1954,31 @@ with tabs[7]:
                 "In-person vote margin (Dem − Rep)", -80.0, 20.0, -46.0, 1.0, format="%+.0f pp", key="calc_ipm",
                 help="Candidate vote margin among in-person ballots. June 2026 primary SoVs (8 counties, weighted): "
                      "in person 73% Republican (R+46) vs mail 57% (R+14).")
+            ip_e_margin = st.slider(
+                "Early in-person margin (Dem − Rep)", -80.0, 20.0, -30.0, 1.0, format="%+.0f pp",
+                key="calc_eipm",
+                help="Candidate margin among early in-person voters. Sunday and Monday Optiq returns (mostly drop "
+                     "box and in person) ran R+12 to R+16 by registration against ~R+3 on weekdays, which points "
+                     "to roughly R+25 to R+40. Used to work out the Election Day in-person margin that keeps the "
+                     "whole in-person vote at the margin above.")
             roll = st.slider("Excluded (roll-off)", 0.0, 8.0, 5.0, 0.5, format="%.1f%%", key="calc_roll",
                              help="Ballots with no vote in this race. June 2026 primary: ~6.2%.")
 
         P = {"final_n": float(final_n), "ip_share": ip_share / 100, "ip_margin": ip_margin / 100,
              "rest_lean": rest_lean / 100, "rest_o": rest_o / 100,
-             "d_loy": d_loy / 100, "r_loy": r_loy / 100, "o_dem": o_dem / 100, "roll": roll / 100}
+             "d_loy": d_loy / 100, "r_loy": r_loy / 100, "o_dem": o_dem / 100, "roll": roll / 100,
+             "early_ip": float(early_ip), "ip_incl": ip_incl / 100, "ip_e_margin": ip_e_margin / 100}
 
         def _model(p):
-            n_ip = p["final_n"] * p["ip_share"]
-            n_mail_rest = max(p["final_n"] - n_ip - E_N, 0.0)
+            n_ip = p["final_n"] * p["ip_share"]                      # all in-person, early + Election Day
+            n_e = min(p.get("early_ip", 0.0), n_ip)                  # early in-person so far
+            n_e_in = n_e * p.get("ip_incl", 0.0)                     # …already inside Optiq's E_N
+            n_ip_out = n_ip - n_e_in                                 # in-person not yet in E_N
+            ip_votes = n_ip * p["ip_margin"]                         # whole in-person vote's net margin
+            out_votes = ip_votes - n_e_in * p.get("ip_e_margin", 0.0)  # what the uncounted part must add
+            n_ed = n_ip - n_e
+            ed_margin = ((ip_votes - n_e * p.get("ip_e_margin", 0.0)) / n_ed) if n_ed > 0 else None
+            n_mail_rest = max(p["final_n"] - n_ip_out - E_N, 0.0)
             d_sh = (1 - p["rest_o"] + p["rest_lean"]) / 2
             r_sh = (1 - p["rest_o"] - p["rest_lean"]) / 2
             Dt, Rt = E_D + n_mail_rest * d_sh, E_R + n_mail_rest * r_sh
@@ -1959,12 +1991,13 @@ with tabs[7]:
             }
             mail_pre = sum(parts.values())
             parts["roll"] = -p["roll"] * mail_pre
-            parts["in_person"] = (1 - p["roll"]) * n_ip * p["ip_margin"]
+            parts["in_person"] = (1 - p["roll"]) * out_votes
             margin = mail_pre + parts["roll"] + parts["in_person"]
             return {"margin": margin, "parts": parts, "Dt": Dt, "Rt": Rt, "Ot": Ot, "n_ip": n_ip,
+                    "n_e": n_e, "n_e_in": n_e_in, "n_ip_out": n_ip_out, "n_ed": n_ed, "ed_margin": ed_margin,
                     "n_mail_rest": n_mail_rest, "mail_margin": mail_pre * (1 - p["roll"]),
                     "valid": (1 - p["roll"]) * p["final_n"], "d_sh": d_sh, "r_sh": r_sh,
-                    "short": p["final_n"] - n_ip < E_N}
+                    "short": p["final_n"] - n_ip_out < E_N}
 
         def _solve(key, target, p=None):
             """Value of one assumption that gives `target` (the margin is linear in each)."""
@@ -1997,8 +2030,11 @@ with tabs[7]:
                  f"{mail_tot:,.0f} ballots · {res['Dt'] / mail_tot:.0%} D / {res['Rt'] / mail_tot:.0%} R / "
                  f"{res['Ot'] / mail_tot:.0%} O · {res['n_mail_rest']:,.0f} still to come" if mail_tot else "")
         with r3:
-            card("In-person vote", f"{res['parts']['in_person']:+,.0f}",
-                 f"{res['n_ip']:,.0f} ballots at {P['ip_margin'] * 100:+.0f} pp")
+            _edm = res["ed_margin"]
+            card("In-person vote still to count", f"{res['parts']['in_person']:+,.0f}",
+                 f"{res['n_ed']:,.0f} on Election Day ({res['n_ed'] / P['final_n']:.1%} of ballots)"
+                 + (f" at {_edm * 100:+.0f} pp" if _edm is not None else "")
+                 + f" · {res['n_e']:,.0f} early, {res['n_e_in']:,.0f} already in Optiq")
 
         walk = pd.DataFrame([
             ("Early ballots so far — party gap (D − R)", res["parts"]["early_gap"]),
@@ -2006,7 +2042,7 @@ with tabs[7]:
             ("O/NPP vote split (mail)", res["parts"]["npp"]),
             ("Crossover, mail (each switcher counts twice)", res["parts"]["crossover"]),
             ("Roll-off (mail)", res["parts"]["roll"]),
-            ("In-person vote (after roll-off)", res["parts"]["in_person"]),
+            ("In-person vote not yet in Optiq (after roll-off)", res["parts"]["in_person"]),
         ], columns=["step", "votes"])
         walk["running"] = walk["votes"].cumsum()       # last row = the margin
         show_df(walk, signed=["votes", "running"], column_config={
