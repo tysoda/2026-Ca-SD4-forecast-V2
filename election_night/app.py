@@ -718,13 +718,17 @@ def load_early_vote_party(p, mtime=0.0):
 
 early_party, early_snap = load_early_vote_party(str(cp_path), _mtime(cp_path))
 
-def _ev_row(label, ev, d, r, o, bold=False):
-    """One table row comparing reported D/R shares with the early-vote party mix."""
+def _ev_row(label, ev, d, r, o, d_loy=1.0, r_loy=1.0, o_dem=0.5, bold=False):
+    """One table row comparing reported D/R shares with the early-vote party mix.
+
+    Expected Dem = D·(Dem loyalty) + R·(1 − Rep loyalty) + Other·(O/NPP Dem share).
+    """
     n_ev = ev["D"] + ev["R"] + ev["O"]
     tv = d + r + o
     if n_ev <= 0:
         return ""
     fd, fr, fo = ev["D"] / n_ev, ev["R"] / n_ev, ev["O"] / n_ev
+    exp_d = fd * d_loy + fr * (1 - r_loy) + fo * o_dem
     cells = [f"{fd*100:.1f}%", f"{fr*100:.1f}%", f"{fo*100:.1f}%"]
     if tv > 0:
         sd, sr = d / tv, r / tv
@@ -744,9 +748,12 @@ def _ev_row(label, ev, d, r, o, bold=False):
             x_str = f"{x*100:.0f}% D / {(1-x)*100:.0f}% R"
         ratio = tv / n_ev
         ratio_str = f"{ratio:.2f}×" + (" <span style='color:#d97706'>⚑</span>" if ratio > 1.05 else "")
-        cells += [f"{sd*100:.1f}%", _pp(vs_d), f"{sr*100:.1f}%", _pp(vs_r), x_str, ratio_str]
+        gap = sd - exp_d
+        exp_str = (f"{exp_d*100:.1f}%<br><span style='font-size:0.68rem;color:"
+                   f"{'#1a6b3c' if gap >= 0 else '#b91c1c'}'>Dem {'+' if gap >= 0 else '−'}{abs(gap)*100:.1f}pt</span>")
+        cells += [exp_str, f"{sd*100:.1f}%", _pp(vs_d), f"{sr*100:.1f}%", _pp(vs_r), x_str, ratio_str]
     else:
-        cells += ["—"] * 6
+        cells += [f"{exp_d*100:.1f}%"] + ["—"] * 6
     td = "".join(f"<td>{c}</td>" for c in cells)
     name = f"<strong>{label}</strong>" if bold else label
     style = " style='border-top:2px solid #ddd;font-weight:600'" if bold else ""
@@ -761,8 +768,17 @@ else:
         "Republican voted Rep, the Dem share would fall between its **floor** (D share of returns) and "
         "its ceiling (D + Other). **Implied Other split** is how unaffiliated and minor-party voters "
         "would have to break with no crossover; outside 0–100% means crossover voting is needed to "
-        "explain the result, and the figure shown is the minimum net crossover."
+        "explain the result, and the figure shown is the minimum net crossover. **Expected Dem** is the "
+        "Dem share the sliders below imply; the line beneath it shows how far the reported Dem share is above or below it."
     )
+    lc1, lc2, lc3 = st.columns(3)
+    ev_d_loy = lc1.slider("Democratic loyalty", 60.0, 100.0, 100.0, 0.5, format="%.1f%%", key="ev_d_loy",
+                          help="Share of registered Democrats voting for the Democrat") / 100
+    ev_r_loy = lc2.slider("Republican loyalty", 60.0, 100.0, 100.0, 0.5, format="%.1f%%", key="ev_r_loy",
+                          help="Share of registered Republicans voting for the Republican") / 100
+    ev_o_dem = lc3.slider("O/NPP share for the Democrat", 20.0, 80.0, 50.0, 0.5, format="%.1f%%", key="ev_o_dem",
+                          help="Share of Other / No Party Preference voters voting for the Democrat") / 100
+    _ev_kw = dict(d_loy=ev_d_loy, r_loy=ev_r_loy, o_dem=ev_o_dem)
     ev_rows = ""; tot_ev = {"D": 0.0, "R": 0.0, "O": 0.0}; tot_d = tot_r = tot_o = 0
     for _, row in df_night.iterrows():
         cn = row.get("county", "")
@@ -771,18 +787,20 @@ else:
         d4 = row.get("dem_votes", 0);   d4 = 0 if pd.isna(d4) else int(d4)
         r4 = row.get("rep_votes", 0);   r4 = 0 if pd.isna(r4) else int(r4)
         o4 = row.get("other_votes", 0); o4 = 0 if pd.isna(o4) else int(o4)
-        ev_rows += _ev_row(cn, early_party[cn], d4, r4, o4)
+        ev_rows += _ev_row(cn, early_party[cn], d4, r4, o4, **_ev_kw)
         for k in tot_ev: tot_ev[k] += early_party[cn][k]
         tot_d += d4; tot_r += r4; tot_o += o4
-    ev_rows += _ev_row("SD4", tot_ev, tot_d, tot_r, tot_o, bold=True)
+    ev_rows += _ev_row("SD4", tot_ev, tot_d, tot_r, tot_o, bold=True, **_ev_kw)
     st.markdown(
         '<div style="overflow-x:auto"><table class="styled-table" style="min-width:900px">'
         '<thead><tr><th>County</th><th>Early D</th><th>Early R</th><th>Early Other</th>'
-        '<th>Dem Share</th><th>Dem vs Floor (pt)</th><th>Rep Share</th><th>Rep vs Floor (pt)</th>'
+        '<th>Expected Dem</th><th>Dem Share</th><th>Dem vs Floor (pt)</th><th>Rep Share</th><th>Rep vs Floor (pt)</th>'
         '<th>Implied Other Split</th><th>Reported ÷ Early</th></tr></thead>'
         f'<tbody>{ev_rows}</tbody></table></div>'
         '<p style="font-size:0.72rem;color:#999;margin-top:0.4rem">'
         'Early D/R/Other = party registration of returned VBM ballots (Optiq). Floor = that party\'s share of returns. '
+        'Expected Dem = Early D × Dem loyalty + Early R × (1 − Rep loyalty) + Early Other × O/NPP Dem share; '
+        'Expected Rep is 100% minus this. '
         'Reported ÷ Early = votes counted ÷ early ballots returned; ⚑ above ~1.05× means Election Day votes are '
         'in the count and the comparison weakens (they lean Republican). Most useful for the first drops, '
         'which are largely early ballots.</p>',
