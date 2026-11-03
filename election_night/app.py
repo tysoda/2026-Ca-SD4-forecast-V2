@@ -515,7 +515,7 @@ if total_votes > 0 and counties_reporting > 0:
 
         implied_final = _implied_final_share(reported_share, cn, f_reported)
         implied_finals[cn]   = implied_final
-        county_est_total[cn] = est_total
+        county_est_total[cn] = min(tv2, est_total)   # votes counted so far
 
     # Build adjusted district-share distribution
     adj_district_dem  = np.zeros(N_ADJ)
