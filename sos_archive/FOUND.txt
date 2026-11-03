@@ -1,0 +1,6 @@
+2025-special	undated	https://elections.cdn.sos.ca.gov/statewide-elections/2025-special/bsr-statistics.xlsx	49811
+2025-special	undated	https://elections.cdn.sos.ca.gov/statewide-elections/2025-special/bsr-statistics.pdf	259445
+2026-general	E-3	https://elections.cdn.sos.ca.gov/statewide-elections/2026-general/bsr-statistics-10-31-26.xlsx	42594
+2026-general	E-3	https://elections.cdn.sos.ca.gov/statewide-elections/2026-general/bsr-statistics-10-31-26.pdf	297821
+2026-general	E-2	https://elections.cdn.sos.ca.gov/statewide-elections/2026-general/bsr-statistics-11-01-26.xlsx	50380
+2026-general	E-2	https://elections.cdn.sos.ca.gov/statewide-elections/2026-general/bsr-statistics-11-01-26.pdf	287099

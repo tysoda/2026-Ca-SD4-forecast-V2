@@ -1,0 +1,78 @@
+===== sos_archive/2025-special/undated-bsr-statistics.xlsx
+--- sheet: Ballot Return Statistics  (68 rows x 28 cols)
+    2025-11-03 21:09:43 |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  | 
+     |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  | 
+     |  | VBM Issued | VBM Returned  |  |  |  |  |  |  | VBM Accepted |  |  | In-Person Cast |  |  |  |  | In-Person Accepted |  |  |  |  |  |  |  |  | 
+    COUNTY | County Type | Total voters Issued VBM ballots | Drop Box    | Drop Off Location | Vote Center Drop Off | Mail        | FAX         | Other       | Total Returned VBM Ballots | Total Accepted VBM ballots | Total VBM Ballots in Review | Accepted % of Voter-returned Ballots | Regular Ballots  | Provisional Ballots  
+(Non-CVR) | Conditional (CVR) | Conditional ("Instant" CVR )  | Total Cast In-Person Ballots | Total Accepted In-Person Ballots | Total In-Person Ballots in Review | Accepted % of Registration | TOTAL BALLOTS CAST |  |  |  |  |  | 
+    Alameda | VCA County | 973713 | 129441 | 1879 | 2504 | 192658 | 512 | 0 | 326994 | 324787 | 0 | 0.9932506406845385 | 5947 | 14 | 176 | 0 | 6137 | 6133 | 0 | 0.0063885549761562 | 333131 |  |  |  |  |  | 
+    Alpine | All Mail | 942 | 160 | 2 | 0 | 306 | 0 | 0 | 468 | 466 | 0 | 0.9957264957264957 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 468 |  |  |  |  |  | 
+    Amador | VCA County | 27464 | 6003 | 0 | 0 | 7735 | 10 | 0 | 13748 | 13719 | 0 | 0.9978906022694211 | 121 | 0 | 1 | 8 | 130 | 130 | 0 | 0.004859631415648013 | 13878 |  |  |  |  |  | 
+    Butte | VCA County | 129301 | 16780 | 679 | 703 | 35915 | 28 | 0 | 54105 | 53413 | 7 | 0.9872100545236115 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 54105 |  |  |  |  |  | 
+  * El Dorado | VCA County | 139577 | 22462 | 2166 | 772 | 36253 | 68 | 0 | 61721 | 61353 | 0 | 0.9940376857147486 | 947 | 0 | 0 | 36 | 983 | 983 | 0 | 0.007085093194562569 | 62704 |  |  |  |  |  | 
+  * Stanislaus | VCA County | 303976 | 20169 | 1293 | 763 | 57077 | 19 | 0 | 79321 | 78133 | 547 | 0.9850228817085009 | 1492 | 0 | 0 | 0 | 1492 | 1492 | 0 | 0.005000100538214576 | 80813 |  |  |  |  |  | 
+  * Total |  | 23269888 | 2043296 | 137941 | 135979 | 4603067 | 6997 | 6 | 6927286 | 6858626 | 11914 | 0.9900884704341643 | 280885 | 211 | 3023 | 881 | 285000 | 284321 | 463 | 0.012324879775191377 | 7212286 |  |  |  |  |  | 
+--- sheet: Ret. Field Definitions  (48 rows x 4 cols)
+    Field Category |  | Field | Field definitions
+     |  | County | This is the county designation for this 
+     |  | County Type | This indicates the county type as a Vote
+    VBM Issued |  | Total voters Issued VBM ballots | This is the total count of distinct vote
+    VBM Returned |  | Drop Box    | This is a count of voters who return the
+     |  | Drop Off Location | This is a count of voters who return the
+     |  | Vote Center Drop Off | This is a count of voters who return the
+     |  | Mail        | This is a count of voters who return the
+--- sheet: Sheet1  (1 rows x 1 cols)
+    
+    
+    
+    
+    
+    
+    
+    
+===== sos_archive/2026-general/bsr-statistics-10-31-26.xlsx
+--- sheet: Ballot Return Statistics  (67 rows x 24 cols)
+    2026-10-31 23:59:00 |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  | 
+     |  | VBM Issued | VBM Returned  |  |  |  |  |  |  | VBM Accepted |  | In-Person Cast |  |  |  |  | In-Person Accepted |  |  |  |  |  | 
+    COUNTY | County Type | Total Voters Issued VBM Ballots | Drop Box    | Drop Off Location | Vote Center Drop Off | Mail        | FAX         | Other       | Total Returned VBM Ballots | Total Accepted VBM Ballots | Accepted % of Voter-Returned Ballots | Regular Ballots  | Provisional Ballots  
+(Non-CVR) | Conditional (CVR) | Conditional ("Instant" CVR )  | Total Cast In-Person Ballots | Total Accepted In-Person Ballots | Accepted % of Registration | TOTAL BALLOTS CAST | PERCENT OF BALLOTS CAST |  |  | 
+    Alameda | VCA County | 991646 | 129411 | 2461 | 2990 | 111470 | 924 | 0 | 247256 | 246137 | 0.9954743262044197 | 4626 | 28 | 298 | 0 | 4952 | 4950 | 0.005052881724798625 | 252208 | 0.254332695336844 |  |  | 
+    Alpine | All Mail | 941 | 165 | 2 | 0 | 176 | 0 | 0 | 343 | 342 | 0.9970845481049563 | 1 | 0 | 0 | 0 | 1 | 1 | 0.001081081081081081 | 344 | 0.3655685441020191 |  |  | 
+    Amador | VCA County | 27433 | 6036 | 0 | 354 | 3889 | 21 | 0 | 10300 | 10292 | 0.9992233009708738 | 183 | 0 | 5 | 13 | 201 | 196 | 0.007272727272727273 | 10501 | 0.38278715415740167 |  |  | 
+    Butte | VCA County | 128586 | 18491 | 0 | 1300 | 19473 | 58 | 0 | 39322 | 39122 | 0.9949137887187833 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 39322 | 0.30580312009083416 |  |  | 
+    Calaveras | VCA County | 33244 | 5140 | 635 | 190 | 4873 | 12 | 0 | 10850 | 10738 | 0.9896774193548387 | 814 | 0 | 0 | 20 | 834 | 834 | 0.025448553643354084 | 11684 | 0.3514619179400794 |  |  | 
+  * El Dorado | VCA County | 139231 | 24107 | 0 | 2163 | 21146 | 68 | 0 | 47484 | 47285 | 0.995809114649145 | 831 | 0 | 0 | 39 | 870 | 870 | 0.006284628665130424 | 48354 | 0.3472933470276016 |  |  | 
+  * Stanislaus | VCA County | 304774 | 30965 | 2051 | 752 | 43326 | 58 | 0 | 77152 | 76443 | 0.9908103484031522 | 1356 | 0 | 0 | 0 | 1356 | 1356 | 0.004511368248750724 | 78508 | 0.25759415173210315 |  |  | 
+  * Total |  | 23451160 | 2483464 | 183041 | 155103 | 2956980 | 12466 | 0 | 5791054 | 5737091 | 0.9906816617493119 | 223145 | 137 | 2729 | 1000 | 227011 | 226503 | 0.009729552938762875 | 6018065 | 0.25662120765028257 |  |  | 
+--- sheet: Ret. Field Definitions  (46 rows x 4 cols)
+    Field Category |  | Field | Field definitions
+     |  | County | This is the county designation for this 
+     |  | County Type | This indicates the county type as a Vote
+    VBM Issued |  | Total Voters Issued VBM Ballots | This is the total count of distinct vote
+    VBM Returned |  | Drop Box    | This is a count of voters who return the
+     |  | Drop Off Location | This is a count of voters who return the
+     |  | Vote Center Drop Off | This is a count of voters who return the
+     |  | Mail        | This is a count of voters who return the
+===== sos_archive/2026-general/bsr-statistics-11-01-26.xlsx
+--- sheet: Ballot Return Statistics  (67 rows x 24 cols)
+    2026-11-01 23:59:00 |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  | 
+     |  | VBM Issued | VBM Returned  |  |  |  |  |  |  | VBM Accepted |  | In-Person Cast |  |  |  |  | In-Person Accepted |  |  |  |  |  | 
+    COUNTY | County Type | Total Voters Issued VBM Ballots | Drop Box    | Drop Off Location | Vote Center Drop Off | Mail        | FAX         | Other       | Total Returned VBM Ballots | Total Accepted VBM Ballots | Accepted % of Voter-Returned Ballots | Regular Ballots  | Provisional Ballots  
+(Non-CVR) | Conditional (CVR) | Conditional ("Instant" CVR )  | Total Cast In-Person Ballots | Total Accepted In-Person Ballots | Accepted % of Registration | TOTAL BALLOTS CAST | PERCENT OF BALLOTS CAST |  |  | 
+    Alameda | VCA County | 991648 | 142610 | 2976 | 5634 | 116820 | 985 | 1 | 269026 | 267720 | 0.9951454506255901 | 6772 | 42 | 500 | 0 | 7314 | 7312 | 0.007463189288608634 | 276340 | 0.27866743037852143 |  |  | 
+    Alpine | All Mail | 941 | 165 | 2 | 0 | 176 | 0 | 0 | 343 | 342 | 0.9970845481049563 | 1 | 0 | 0 | 0 | 1 | 1 | 0.0010822510822510823 | 344 | 0.3655685441020191 |  |  | 
+    Amador | VCA County | 27433 | 6038 | 1 | 354 | 3894 | 21 | 0 | 10308 | 10301 | 0.9993209157935584 | 225 | 0 | 5 | 13 | 243 | 238 | 0.008829530699313672 | 10551 | 0.3846097765464951 |  |  | 
+    Butte | VCA County | 128586 | 18491 | 0 | 1300 | 19473 | 58 | 0 | 39322 | 39122 | 0.9949137887187833 | 0 | 0 | 1 | 0 | 1 | 0 | 0 | 39323 | 0.30581089698723035 |  |  | 
+    Calaveras | VCA County | 33244 | 5738 | 647 | 335 | 4873 | 11 | 0 | 11604 | 11486 | 0.9898310927266459 | 941 | 0 | 0 | 25 | 966 | 966 | 0.02947458351131995 | 12570 | 0.37811334376128025 |  |  | 
+  * El Dorado | VCA County | 139231 | 24107 | 0 | 2163 | 21146 | 68 | 0 | 47484 | 47285 | 0.995809114649145 | 1005 | 0 | 0 | 45 | 1050 | 1050 | 0.007584403576949191 | 48534 | 0.3485861625643714 |  |  | 
+  * Stanislaus | VCA County | 304775 | 30965 | 2051 | 752 | 43326 | 58 | 0 | 77152 | 76456 | 0.9909788469514724 | 1711 | 0 | 0 | 0 | 1711 | 1711 | 0.005692176667065884 | 78863 | 0.25875810023788043 |  |  | 
+  * Total |  | 23451219 | 2686752 | 185206 | 210777 | 3011396 | 12892 | 1 | 6107024 | 6050237 | 0.9907013628896825 | 294009 | 182 | 3657 | 1289 | 299137 | 298511 | 0.012821553573134368 | 6406161 | 0.2731696377915365 |  |  | 
+--- sheet: Ret. Field Definitions  (46 rows x 4 cols)
+    Field Category |  | Field | Field definitions
+     |  | County | This is the county designation for this 
+     |  | County Type | This indicates the county type as a Vote
+    VBM Issued |  | Total Voters Issued VBM Ballots | This is the total count of distinct vote
+    VBM Returned |  | Drop Box    | This is a count of voters who return the
+     |  | Drop Off Location | This is a count of voters who return the
+     |  | Vote Center Drop Off | This is a count of voters who return the
+     |  | Mail        | This is a count of voters who return the
