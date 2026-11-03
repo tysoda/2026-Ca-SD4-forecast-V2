@@ -3651,7 +3651,10 @@ with tab_night:
     # ── Auto-refresh logic ────────────────────────────────────────────────────
     if auto_refresh:
         st.caption("⏱ Auto-refreshing every 10 minutes — fetching live SOS results. Toggle off to stop.")
-        _time.sleep(600)
+        if not st.session_state.get("_night_first_render_done"):
+            st.session_state["_night_first_render_done"] = True
+        else:
+            _time.sleep(600)
         # Pull fresh results from the SOS API before reloading the page
         try:
             import subprocess as _sp, sys as _sys2
