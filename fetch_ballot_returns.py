@@ -157,10 +157,46 @@ def _find_layout(ws) -> Optional[dict]:
         accepted = col(lambda h: "accepted" in h and "%" not in h and "percent" not in h)
         if county and issued and returned:
             ret_total = [i for i in returned if "total" in heads[i]]
-            return {"row": r + 1, "county": county[0], "issued": issued[0],
-                    "returned": (ret_total or returned)[-1],
-                    "accepted": accepted[0] if accepted else None}
+            layout = {"row": r + 1, "county": county[0], "issued": issued[0],
+                      "returned": (ret_total or returned)[-1],
+                      "accepted": accepted[0] if accepted else None}
+            layout.update(_extra_cols(heads))
+            return layout
     return None
+
+
+# Extra columns (added to the SOS report during the 2026 general): how VBM ballots came back,
+# and in-person ballots. Matched on the last line of each header (the group label, e.g.
+# "VBM Returned" or "In-Person Cast", sits on the row above).
+EXTRA_FIELDS = {
+    "ret_drop_box":     lambda h: h == "drop box",
+    "ret_drop_off":     lambda h: h == "drop off location",
+    "ret_vc_drop_off":  lambda h: h == "vote center drop off",
+    "ret_mail":         lambda h: h == "mail",
+    "ret_fax":          lambda h: h == "fax",
+    "ret_other":        lambda h: h == "other",
+    "ip_regular":       lambda h: h.startswith("regular"),
+    "ip_provisional":   lambda h: h.startswith("provisional"),
+    "ip_cvr":           lambda h: h.startswith("conditional") and "instant" not in h,
+    "ip_instant_cvr":   lambda h: h.startswith("conditional") and "instant" in h,
+    "ip_cast":          lambda h: "cast in-person" in h,
+    "ip_accepted":      lambda h: "accepted in-person" in h,
+    "total_cast":       lambda h: h.startswith("total ballots cast"),
+}
+
+
+def _extra_cols(heads: list[str]) -> dict:
+    """Column index for each EXTRA_FIELDS name found in this header row."""
+    out = {}
+    for i, h in enumerate(heads):
+        own = " ".join(h.split())                       # collapse newlines/spaces
+        for grp in ("vbm returned", "in-person cast", "in-person accepted", "vbm accepted", "vbm issued"):
+            if own.startswith(grp + " "):
+                own = own[len(grp) + 1:]                # drop the group label from the row above
+        for name, pred in EXTRA_FIELDS.items():
+            if name not in out and pred(own.strip()):
+                out[name] = i
+    return out
 
 
 def _describe(wb) -> str:
@@ -245,14 +281,18 @@ def parse_xlsx(data: bytes, fractions: dict,
             return None if (not is_partial or val is None) else round(val)
 
         iss, ret, acc = get("issued"), get("returned"), get("accepted")
-        rows_out.append({
+        rec = {
             "county":                county,
             "vbm_issued":            scale(iss),
             "vbm_returned":          scale(ret),
             "vbm_accepted":          scale(acc),
             "county_total_issued":   raw(iss),
             "county_total_returned": raw(ret),
-        })
+        }
+        for name in EXTRA_FIELDS:                       # SD4 share for split counties
+            v = get(name)
+            rec[name] = scale(v) if v is not None else None
+        rows_out.append(rec)
 
     if not rows_out:
         raise ValueError("found the columns but no SD4 county rows\n" + _describe(wb))
@@ -267,59 +307,74 @@ def load_existing_keys() -> set:
         return {(r["county"], r["snapshot_date"]) for r in csv.DictReader(f)}
 
 
+FIELDNAMES = [
+    "county", "snapshot_date",
+    "vbm_issued", "vbm_returned", "vbm_accepted",
+    "county_total_issued", "county_total_returned",
+] + list(EXTRA_FIELDS)
+
+
+def _read_all() -> list[dict]:
+    if not OUTPUT_CSV.exists():
+        return []
+    with open(OUTPUT_CSV, newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def _write_all(rows: list[dict]) -> None:
+    with open(OUTPUT_CSV, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=FIELDNAMES, extrasaction="ignore")
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: ("" if r.get(k) is None else r.get(k, "")) for k in FIELDNAMES})
+
+
 def append_rows(
     snapshot_date: datetime.date,
     rows: list[dict],
     dry_run: bool = False,
 ) -> int:
-    """Append new rows; return count written (0 if all already present)."""
-    existing = load_existing_keys()
+    """Add rows for a report date not yet saved, and fill in the extra columns (return method,
+    in-person, total cast) on already-saved rows that don't have them yet. Returns the number
+    of rows added or updated."""
     date_str = snapshot_date.isoformat()
-
-    to_write = [
-        r for r in rows
-        if (r["county"], date_str) not in existing
-    ]
-
-    if not to_write:
-        print(f"  ✓ All rows for {date_str} already present — nothing to append.")
+    existing = _read_all()
+    index = {(r["county"], r["snapshot_date"]): r for r in existing}
+    added = updated = 0
+    for r in sorted(rows, key=lambda x: x["county"]):
+        key = (r["county"], date_str)
+        if key not in index:
+            new = {**r, "snapshot_date": date_str}
+            existing.append(new); index[key] = new; added += 1
+        else:
+            old = index[key]
+            fill = {k: r[k] for k in EXTRA_FIELDS if r.get(k) is not None and old.get(k) in (None, "")}
+            if fill:
+                old.update(fill); updated += 1
+    if not added and not updated:
+        print(f"  ✓ All rows for {date_str} already present — nothing to change.")
         return 0
-
-    fieldnames = [
-        "county", "snapshot_date",
-        "vbm_issued", "vbm_returned", "vbm_accepted",
-        "county_total_issued", "county_total_returned",
-    ]
-    write_header = not OUTPUT_CSV.exists()
-
     if dry_run:
-        print(f"  DRY RUN — would append {len(to_write)} rows for {date_str}:")
-        for r in sorted(to_write, key=lambda x: x["county"]):
-            ct = (f"  county_total_returned={r['county_total_returned']:>7,}"
-                  if r["county_total_returned"] is not None else "")
-            print(
-                f"    {r['county']:12s}  issued={r['vbm_issued']:>7,}  "
-                f"returned={r['vbm_returned']:>6,}  accepted={r['vbm_accepted']:>6,}{ct}"
-            )
-        return len(to_write)
+        print(f"  DRY RUN — would add {added} and update {updated} rows for {date_str}")
+        for r in rows:
+            print(f"    {r['county']:12s} mail={r['vbm_returned']:>7,} in-person={r.get('ip_cast')} "
+                  f"total={r.get('total_cast')}")
+        return added + updated
+    existing.sort(key=lambda x: (x["snapshot_date"], x["county"]))
+    _write_all(existing)
+    print(f"  ✓ {added} rows added, {updated} updated with in-person/method columns for {date_str} → {OUTPUT_CSV.name}")
+    return added + updated
 
-    with open(OUTPUT_CSV, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        if write_header:
-            writer.writeheader()
-        for r in sorted(to_write, key=lambda x: x["county"]):
-            writer.writerow({
-                "county":                r["county"],
-                "snapshot_date":         date_str,
-                "vbm_issued":            r["vbm_issued"],
-                "vbm_returned":          r["vbm_returned"],
-                "vbm_accepted":          r["vbm_accepted"],
-                "county_total_issued":   r.get("county_total_issued", ""),
-                "county_total_returned": r.get("county_total_returned", ""),
-            })
 
-    print(f"  ✓ Appended {len(to_write)} rows for {date_str} → {OUTPUT_CSV}")
-    return len(to_write)
+ARCHIVE_DIR = DATA_DIR / "sos_archive"
+
+
+def archive_report(data: bytes, name: str, folder: str = "2026-general") -> None:
+    """Keep a copy of each SOS report (SOS removes old ones after the election)."""
+    p = ARCHIVE_DIR / folder / name
+    if not p.exists():
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
 
 
 def fetch_recent(fractions: dict, days_back: int = 10, dry_run: bool = False) -> int:
@@ -355,10 +410,15 @@ def fetch_recent(fractions: dict, days_back: int = 10, dry_run: bool = False) ->
         if snapshot_date in seen:
             continue
         seen.add(snapshot_date)
+        if not dry_run:
+            archive_report(data, name if name.startswith("bsr-statistics-") else
+                           f"bsr-statistics-{snapshot_date:%m-%d-%y}.xlsx")
         status = "already have" if snapshot_date.isoformat() in existing_dates else "NEW"
         print(f"  ✓ {name}: report {snapshot_date} · {len(rows)} SD4 counties · {status}")
-        if status == "NEW":
-            written += 1 if append_rows(snapshot_date, rows, dry_run=dry_run) else 0
+        # New dates are added; saved dates get any missing in-person/method columns filled in
+        changed = append_rows(snapshot_date, rows, dry_run=dry_run)
+        if status == "NEW" and changed:
+            written += 1
     print(f"Done: {written} new report date(s).")
     return written
 
