@@ -27,6 +27,10 @@ OUTPUT_CSV = os.path.join(os.path.dirname(__file__), "optiq_crosstabs.csv")
 # California date: the Action runs on UTC, which would stamp evening runs with tomorrow's date
 SNAPSHOT_DATE = datetime.now(ZoneInfo("America/Los_Angeles")).date().isoformat()
 LATEST_UPDATE = None   # Optiq's last data-load time (UTC ISO), from the ballot-returns response
+RAW_RESPONSE = None    # full ballot-returns response, archived by save_raw_snapshot()
+# One raw file per California day (overwritten each run, so it holds that day's latest load).
+# Keeps each row's returnDate, which optiq_crosstabs.csv collapses to returned/not-returned.
+ARCHIVE_DIR = os.path.join(os.path.dirname(__file__), "optiq_archive", "2026-general")
 
 # SD4 party registration as of 60-day general election report (September 4, 2026).
 SD4_PARTY_REG = {
@@ -54,8 +58,9 @@ def fetch_rows(url: str) -> list[dict]:
               f"First bytes: {body[:120]!r}. If the site has moved, update API_URL/GEO_URL.",
               file=sys.stderr)
         sys.exit(1)
-    global LATEST_UPDATE
+    global LATEST_UPDATE, RAW_RESPONSE
     LATEST_UPDATE = data.get("latestUpdate")
+    RAW_RESPONSE = data
     return data.get("ballotReturns", [])
 
 
@@ -178,10 +183,26 @@ def save_county_party_snapshot() -> None:
     print(f"  Written {len(recs)} county × party rows to {COUNTY_CSV}")
 
 
+def save_raw_snapshot():
+    """Archive the raw ballot-returns response (one row per line, for readable diffs)."""
+    if not RAW_RESPONSE:
+        return
+    os.makedirs(ARCHIVE_DIR, exist_ok=True)
+    path = os.path.join(ARCHIVE_DIR, f"ballot-returns-{SNAPSHOT_DATE}.json")
+    meta = {k: v for k, v in RAW_RESPONSE.items() if k != "ballotReturns"}
+    rows = RAW_RESPONSE.get("ballotReturns", [])
+    with open(path, "w") as f:
+        f.write('{\n"meta": ' + json.dumps(meta) + ',\n"ballotReturns": [\n')
+        f.write(",\n".join(json.dumps(r) for r in rows))
+        f.write("\n]}\n")
+    print(f"  Archived raw response ({len(rows):,} rows) to {os.path.relpath(path)}")
+
+
 def main():
     print(f"Fetching Optiq crosstabs for {DISTRICT_SLUG} (snapshot_date={SNAPSHOT_DATE})…")
     raw = fetch_rows(API_URL)
     print(f"  {len(raw):,} rows received from API")
+    save_raw_snapshot()
 
     today_df = process_rows(raw)
     print(f"  {len(today_df)} distinct (party × age × gender × ethnicity) cells")
