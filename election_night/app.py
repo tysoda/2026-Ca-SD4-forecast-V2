@@ -222,6 +222,27 @@ def load_night_csv(p, mtime=0.0):
 
 _mock_active = mock_scenario_label != "— none —"
 
+_NOW_PT = pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None)
+
+def _parse_sos_time(s):
+    """'November 4, 2026, 4:22 p.m.' (SOS) or ISO UTC → naive Pacific timestamp, else NaT."""
+    if s is None or (isinstance(s, float) and np.isnan(s)):
+        return pd.NaT
+    t = str(s).strip().replace("a.m.", "AM").replace("p.m.", "PM")
+    try:
+        return pd.to_datetime(t, format="%B %d, %Y, %I:%M %p")
+    except Exception:
+        pass
+    try:
+        return pd.to_datetime(t, utc=True).tz_convert("America/Los_Angeles").tz_localize(None)
+    except Exception:
+        return pd.NaT
+
+def _fmt_pt(ts) -> str:
+    if pd.isna(ts):
+        return "—"
+    return f"{ts:%b} {ts.day} {ts:%I:%M}".replace(" 0", " ") + ("am" if ts.hour < 12 else "pm")
+
 if manual_refresh:
     with st.spinner("Fetching SOS results…"):
         _run_fetcher()
@@ -515,171 +536,107 @@ def _wave_share(final_share: float, county: str, wave_idx: int) -> float:
         votes_in     = mail_frac_in * mp * mail_share
     return votes_in / f
 
-# ── Outstanding-ballot model info ─────────────────────────────────────────
-_boost_src = "Optiq party composition" if abs(_mail_boost_live - _MAIL_BOOST) > 0.001 else "static fallback"
-st.caption(
-    f"✉️ Mail-ballot Dem advantage used in adjustments: **{_mail_boost_live:+.1%}** "
-    f"({_boost_src}). "
-    + ("Derived from D/R/O outstanding VBM party composition (Optiq)."
-       if _boost_src != "static fallback"
-       else "Optiq crosstab data not yet available — using fixed +4 pp assumption.")
-)
+# ── Live win probability: late-vote model (default) ───────────────────────
+# final = votes counted + remaining votes × late-vote Dem share, per county.
+# See late_model.py for how the late-vote share and its uncertainty are set.
+import late_model as LM
+LM = importlib.reload(LM)
+import batches as BATCH
+BATCH = importlib.reload(BATCH)
 
-# ── Live win probability ───────────────────────────────────────────────────
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown('<div class="section-label">Live Win Probability</div>', unsafe_allow_html=True)
 
+@st.cache_data(show_spinner=False)
+def _load_csv(p, mtime=0.0):
+    try:
+        return pd.read_csv(p)
+    except Exception:
+        return None
+
+_ms_path, _fd_path = DATA_DIR / "mail_splits.csv", DATA_DIR / "first_drop.csv"
+_hist_path = DATA_DIR / "election_night_history.csv"
+_mail_splits = None if _mock_active else _load_csv(str(_ms_path), _mtime(_ms_path))
+_first_drop  = None if _mock_active else _load_csv(str(_fd_path), _mtime(_fd_path))
+_late_b = None
+if not _mock_active:
+    _hb = BATCH.compute_batches(_load_csv(str(_hist_path), _mtime(_hist_path)))
+    if not _hb.empty:
+        _hb["_posted"] = [_parse_sos_time(x) for x in _hb["last_updated"]]
+        _late_b = _hb[_hb["_posted"] >= LM.LATE_COUNT_START]
+
+with st.expander("⚙️ Late-vote model settings", expanded=False):
+    lm1, lm2, lm3, lm4 = st.columns(4)
+    _lm_shared = lm1.slider("District-wide late-lean uncertainty (SD)", 0.0, 5.0, 2.0, 0.5, format="%.1f pt",
+                            help="One shift applied to every county's late votes together") / 100
+    _lm_county = lm2.slider("County late-lean uncertainty (SD)", 0.0, 6.0, 3.0, 0.5, format="%.1f pt",
+                            help="Independent per county; shrinks as late batches arrive") / 100
+    _lm_rem = lm3.slider("Remaining-vote size uncertainty (SD)", 0, 40, 20, 5, format="%d%%",
+                         help="For model estimates; SOS unprocessed figures use 7%") / 100
+    _lm_k = lm4.slider("Weight on mail split / first drop (votes)", 500, 10000, 3000, 500,
+                       help="How many late-batch votes it takes to outweigh the prior lean equally")
+_lm_s = LM.LateSettings(prior_weight=float(_lm_k), county_sd=_lm_county, shared_sd=_lm_shared,
+                        rem_sd_model=_lm_rem)
+
 if total_votes > 0 and counties_reporting > 0:
-    # Build a mask: for counties with results, filter simulations where county share ≈ reported
-    # For counties without results, use full simulation range
-    live_mask = np.ones(len(district_share), dtype=bool)
+    _ci = LM.county_inputs(df_night, _rem_by_county, _mail_splits, _first_drop, _late_b,
+                           mock_mail=_mock_active, s=_lm_s)
+    _lm = LM.simulate(_ci, _lm_s)
+    wp_l = _lm["win_prob"]
+    col_l = "#1a6b3c" if wp_l >= 0.60 else ("#d97706" if wp_l >= 0.40 else "#b91c1c")
+    lw1, lw2, lw3 = st.columns([1, 1, 1])
+    with lw1:
+        st.markdown(
+            f'<div class="win-hero" style="background:linear-gradient(135deg,{col_l} 0%,{col_l}cc 100%)">'
+            f'<div class="wlabel">Win Probability</div><div class="wvalue">{wp_l*100:.0f}%</div>'
+            f'<div class="wsub">Late-vote model</div></div>', unsafe_allow_html=True)
+    with lw2:
+        st.markdown(f'<div class="stat-card"><div class="label">Projected Final Dem Share</div>'
+                    f'<div class="value">{_lm["share_mean"]*100:.1f}%</div>'
+                    f'<div class="sub">90% range {_lm["share_p05"]*100:.1f}–{_lm["share_p95"]*100:.1f}%</div></div>',
+                    unsafe_allow_html=True)
+        _mm = _lm["margin_median"]
+        st.markdown(f'<div class="stat-card"><div class="label">Projected Final Margin</div>'
+                    f'<div class="value" style="font-size:1.3rem">{"D" if _mm >= 0 else "R"} +{abs(_mm):,.0f}</div>'
+                    f'<div class="sub">90% range {_lm["margin_p05"]:+,.0f} to {_lm["margin_p95"]:+,.0f} (D − R)</div></div>',
+                    unsafe_allow_html=True)
+    with lw3:
+        st.markdown(f'<div class="stat-card"><div class="label">Dem Share Needed of Remaining</div>'
+                    f'<div class="value">{_lm["needed_share"]*100:.1f}%</div>'
+                    f'<div class="sub">of ~{_lm["remaining"]:,.0f} remaining votes</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-card"><div class="label">Expected Dem Share of Remaining</div>'
+                    f'<div class="value">{_lm["expected_late_share"]*100:.1f}%</div>'
+                    f'<div class="sub">weighted late-vote lean across counties</div></div>', unsafe_allow_html=True)
 
-    # ── Mail-adjusted win probability (Option 2) ──────────────────────────
-    # For each reporting county, invert the mail-ballot timing model to recover
-    # the implied true FINAL share.  Then re-run a mini Monte Carlo using:
-    #   • implied final (± lean_sd) for reporting counties
-    #   • full simulation distribution for non-reporting counties
-    # This removes the early-count mail-ballot inflation that makes the raw
-    # probability misleadingly high when only mail votes are in.
-    rng_adj = np.random.default_rng(42)
-    N_ADJ   = int(n_sims)
-
-    # Per-county: collect implied finals and their uncertainty
-    implied_finals   = {}   # cn -> implied final share (point estimate)
-    county_est_total = {}   # cn -> estimated total votes
-
-    for _, row in df_night.iterrows():
-        cn  = row.get("county")
-        d2  = row.get("dem_votes",  0); d2  = 0 if pd.isna(d2)  else int(d2)
-        r2  = row.get("rep_votes",  0); r2  = 0 if pd.isna(r2)  else int(r2)
-        o2  = row.get("other_votes",0); o2  = 0 if pd.isna(o2)  else int(o2)
-        tv2 = d2 + r2 + o2
-        if tv2 == 0 or cn not in county_shares:
-            continue
-        reported_share = d2 / tv2
-        # Filter to simulations within ±2 lean SDs of reported share
-        lean_sd = COUNTIES.get(cn, {}).get("lean_sd", 0.02)
-        tol = max(0.03, lean_sd * 2.0)
-        live_mask &= np.abs(county_shares[cn] - reported_share) <= tol
-
-        # Compute fraction reported for this county
-        cd = COUNTIES.get(cn, {})
-        est_total = int(cd.get("registration", 0) * cd.get("turnout", 0))
-        f_reported = tv2 / est_total if est_total > 0 else 0.5
-        f_reported = min(max(f_reported, 0.01), 1.0)
-
-        implied_final = _implied_final_share(reported_share, cn, f_reported)
-        implied_finals[cn]   = implied_final
-        county_est_total[cn] = min(tv2, est_total)   # votes counted so far
-
-    # Build adjusted district-share distribution
-    adj_district_dem  = np.zeros(N_ADJ)
-    adj_district_total = np.zeros(N_ADJ)
-
-    for cn, cd in COUNTIES.items():
-        est_total = int(cd.get("registration", 0) * cd.get("turnout", 0))
-        if est_total == 0:
-            continue
-        lean_sd = cd.get("lean_sd", 0.02)
-        if cn in implied_finals:
-            # Reporting county: centre on implied final, add lean_sd uncertainty
-            # as we have partial info but not perfect knowledge of final outcome
-            remaining_frac = max(0.0, 1.0 - (county_est_total.get(cn, est_total) /
-                                               max(1, est_total)))
-            # Uncertainty shrinks as more votes are in; add remaining-vote noise
-            noise_sd = lean_sd * (remaining_frac ** 0.5 + 0.3)
-            county_sims = rng_adj.normal(implied_finals[cn], noise_sd, N_ADJ)
-            county_sims = np.clip(county_sims, 0.0, 1.0)
-        else:
-            # Non-reporting county: use full simulation distribution
-            county_sims = county_shares[cn][:N_ADJ] if len(county_shares[cn]) >= N_ADJ else \
-                          np.resize(county_shares[cn], N_ADJ)
-
-        adj_district_dem   += county_sims * est_total
-        adj_district_total += est_total
-
-    adj_district_share = adj_district_dem / adj_district_total
-    adj_wp   = float(np.mean(adj_district_share >= WIN_THRESHOLD))
-    adj_mean = float(np.mean(adj_district_share))
-
-    n_live = int(live_mask.sum())
-    if n_live >= 50:
-        live_share = district_share[live_mask]
-        live_wp    = float(np.mean(live_share >= WIN_THRESHOLD))
-        live_mean  = float(np.mean(live_share))
-
-        lw1, lw2, lw3 = st.columns([1, 2, 2])
-        with lw1:
-            color_adj = "#1a6b3c" if adj_wp >= 0.60 else ("#d97706" if adj_wp >= 0.40 else "#b91c1c")
-            st.markdown(
-                f'<div class="win-hero" style="background:linear-gradient(135deg,{color_adj} 0%,{color_adj}cc 100%)">'
-                f'<div class="wlabel">Win Probability</div>'
-                f'<div class="wvalue">{adj_wp*100:.0f}%</div>'
-                f'<div class="wsub">Mail-adjusted estimate</div>'
-                f'</div>',
-                unsafe_allow_html=True
-            )
-            st.markdown(
-                f'<div class="stat-card" style="margin-top:0.5rem;font-size:0.82rem">'
-                f'<div class="label">Raw (unadjusted)</div>'
-                f'<div class="value" style="font-size:1.1rem">{live_wp*100:.0f}%</div>'
-                f'<div class="sub">{n_live:,} matching simulations</div>'
-                f'</div>',
-                unsafe_allow_html=True
-            )
-        with lw2:
-            st.markdown(f'<div class="stat-card"><div class="label">Implied Final Share</div><div class="value">{adj_mean*100:.1f}%</div><div class="sub">Mail-adjusted district estimate</div></div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="stat-card"><div class="label">5th–95th Pct Range</div><div class="value" style="font-size:1.2rem">{np.percentile(adj_district_share,5)*100:.1f}–{np.percentile(adj_district_share,95)*100:.1f}%</div></div>', unsafe_allow_html=True)
-            if implied_finals:
-                imp_rows = "".join(
-                    f"<tr><td>{cn}</td><td>{implied_finals[cn]*100:.1f}%</td></tr>"
-                    for cn in sorted(implied_finals)
-                )
-                st.markdown(
-                    f'<details style="font-size:0.78rem;margin-top:0.4rem"><summary style="cursor:pointer;color:#555">Implied finals by county</summary>'
-                    f'<table style="width:100%;border-collapse:collapse;margin-top:0.3rem">'
-                    f'<thead><tr><th style="text-align:left;padding:2px 6px;font-size:0.75rem">County</th>'
-                    f'<th style="text-align:left;padding:2px 6px;font-size:0.75rem">Implied Final</th></tr></thead>'
-                    f'<tbody>{imp_rows}</tbody></table></details>',
-                    unsafe_allow_html=True
-                )
-        with lw3:
-            fig_lw, ax_lw = plt.subplots(figsize=(5, 2.5))
-            fig_lw.patch.set_facecolor("#f7f7f5"); ax_lw.set_facecolor("#f7f7f5")
-            ax_lw.hist(adj_district_share*100, bins=40, color="#1a6b3c", alpha=0.75, edgecolor="none", label="Mail-adjusted")
-            ax_lw.hist(live_share*100, bins=40, color="#888", alpha=0.35, edgecolor="none", label="Raw (filtered sims)")
-            ax_lw.axvline(50, color="#b91c1c", linewidth=1.5, linestyle="--")
-            if dist_dem_share:
-                ax_lw.axvline(dist_dem_share*100, color="#d97706", linewidth=1.5, linestyle="-", label=f"Reported {dist_dem_share*100:.1f}%")
-            ax_lw.set_xlabel("Dem Vote Share (%)", fontsize=7)
-            ax_lw.xaxis.set_major_formatter(mtick.PercentFormatter())
-            ax_lw.spines[["top","right","left"]].set_visible(False)
-            ax_lw.tick_params(labelsize=6)
-            ax_lw.legend(fontsize=6, framealpha=0)
-            plt.tight_layout()
-            st.pyplot(fig_lw, width="stretch"); plt.close()
-        st.caption(
-            "**Mail-adjusted** win probability strips out early mail-ballot lean "
-            "by back-calculating each county's implied final share from the current "
-            "reported share and fraction of votes in.  Raw probability shown for reference."
+    _lrows = ""
+    for _, c in _ci.sort_values("remaining", ascending=False).iterrows():
+        _late = f"{c.late_share*100:.1f}% of {c.late_votes:,}" if c.late_votes > 0 else "—"
+        _net = c.exp_net
+        _lrows += (
+            f"<tr><td>{c.county}</td><td>{c.prior_source}</td>"
+            f"<td>{'—' if np.isnan(c.prior) else f'{c.prior*100:.1f}%'}</td><td>{_late}</td>"
+            f"<td><strong>{'—' if np.isnan(c.lean) else f'{c.lean*100:.1f}%'}</strong></td>"
+            f"<td>{c.remaining:,.0f}{'*' if c.remaining_source == 'sos' else ''}</td>"
+            f"<td style='color:{'#1a6b3c' if _net >= 0 else '#b91c1c'}'>{'D' if _net >= 0 else 'R'} +{abs(_net):,.0f}</td></tr>"
         )
-    else:
-        st.info(f"Only {n_live} simulations match current results — too few to estimate win probability. Results may be partial or extreme.")
-        # Still show adjusted estimate even when filter is too narrow
-        color_adj = "#1a6b3c" if adj_wp >= 0.60 else ("#d97706" if adj_wp >= 0.40 else "#b91c1c")
-        col_adj1, col_adj2, _ = st.columns([1, 1, 2])
-        with col_adj1:
-            st.markdown(
-                f'<div class="win-hero" style="background:linear-gradient(135deg,{color_adj} 0%,{color_adj}cc 100%)">'
-                f'<div class="wlabel">Mail-Adjusted Win Prob</div>'
-                f'<div class="wvalue">{adj_wp*100:.0f}%</div>'
-                f'<div class="wsub">Implied finals estimate</div>'
-                f'</div>',
-                unsafe_allow_html=True
-            )
-        with col_adj2:
-            st.markdown(f'<div class="stat-card"><div class="label">Pre-results Win Probability</div><div class="value">{float(np.mean(district_share>=WIN_THRESHOLD))*100:.0f}%</div><div class="sub">From prior simulation (no live filter)</div></div>', unsafe_allow_html=True)
-        st.caption("Mail-adjusted estimate still available even when simulation filter is too narrow.")
+    with st.expander("Late-vote lean by county", expanded=True):
+        st.markdown(
+            '<div style="overflow-x:auto"><table class="styled-table" style="min-width:760px">'
+            '<thead><tr><th>County</th><th>Lean Source</th><th>Mail / First-Drop Dem Share</th>'
+            '<th>Post-Election-Day Batches</th><th>Late-Vote Lean Used</th><th>Remaining Votes</th>'
+            '<th>Expected Net</th></tr></thead>'
+            f'<tbody>{_lrows}</tbody></table></div>'
+            '<p style="font-size:0.72rem;color:#999;margin-top:0.4rem">'
+            'Lean source: <b>county mail split</b> = the county\'s own vote-by-mail results for SD4 (fetch_mail_splits.py); '
+            '<b>first drop</b> = its first election-night report, almost all early mail, for counties that publish totals '
+            'only. Post-election-day batches (posted after 5 am on 4 Nov) are blended in, weighted by votes. '
+            'Two-party shares. Remaining votes as in County Results (* = SOS unprocessed figure).</p>',
+            unsafe_allow_html=True)
+    st.caption(
+        "Simulates each county's remaining votes at its late-vote lean, with a district-wide shift (counties' late "
+        "votes leaning the same way together), a county-level shift and uncertainty in how many votes remain. "
+        "Settings above."
+    )
 else:
     prior_wp = float(np.mean(district_share >= WIN_THRESHOLD))
     col_pw, _ = st.columns([1, 3])
@@ -692,30 +649,186 @@ else:
         )
     st.caption("Enter results in the county table below or load a mock scenario to see live filtering.")
 
+with st.expander("Previous method: mail-adjusted estimate (for comparison)", expanded=False):
+    # ── Outstanding-ballot model info ─────────────────────────────────────────
+    _boost_src = "Optiq party composition" if abs(_mail_boost_live - _MAIL_BOOST) > 0.001 else "static fallback"
+    st.caption(
+        f"✉️ Mail-ballot Dem advantage used in adjustments: **{_mail_boost_live:+.1%}** "
+        f"({_boost_src}). "
+        + ("Derived from D/R/O outstanding VBM party composition (Optiq)."
+           if _boost_src != "static fallback"
+           else "Optiq crosstab data not yet available — using fixed +4 pp assumption.")
+    )
+
+    # ── Live win probability ───────────────────────────────────────────────────
+
+    if total_votes > 0 and counties_reporting > 0:
+        # Build a mask: for counties with results, filter simulations where county share ≈ reported
+        # For counties without results, use full simulation range
+        live_mask = np.ones(len(district_share), dtype=bool)
+
+        # ── Mail-adjusted win probability (Option 2) ──────────────────────────
+        # For each reporting county, invert the mail-ballot timing model to recover
+        # the implied true FINAL share.  Then re-run a mini Monte Carlo using:
+        #   • implied final (± lean_sd) for reporting counties
+        #   • full simulation distribution for non-reporting counties
+        # This removes the early-count mail-ballot inflation that makes the raw
+        # probability misleadingly high when only mail votes are in.
+        rng_adj = np.random.default_rng(42)
+        N_ADJ   = int(n_sims)
+
+        # Per-county: collect implied finals and their uncertainty
+        implied_finals   = {}   # cn -> implied final share (point estimate)
+        county_est_total = {}   # cn -> estimated total votes
+
+        for _, row in df_night.iterrows():
+            cn  = row.get("county")
+            d2  = row.get("dem_votes",  0); d2  = 0 if pd.isna(d2)  else int(d2)
+            r2  = row.get("rep_votes",  0); r2  = 0 if pd.isna(r2)  else int(r2)
+            o2  = row.get("other_votes",0); o2  = 0 if pd.isna(o2)  else int(o2)
+            tv2 = d2 + r2 + o2
+            if tv2 == 0 or cn not in county_shares:
+                continue
+            reported_share = d2 / tv2
+            # Filter to simulations within ±2 lean SDs of reported share
+            lean_sd = COUNTIES.get(cn, {}).get("lean_sd", 0.02)
+            tol = max(0.03, lean_sd * 2.0)
+            live_mask &= np.abs(county_shares[cn] - reported_share) <= tol
+
+            # Compute fraction reported for this county
+            cd = COUNTIES.get(cn, {})
+            est_total = int(cd.get("registration", 0) * cd.get("turnout", 0))
+            f_reported = tv2 / est_total if est_total > 0 else 0.5
+            f_reported = min(max(f_reported, 0.01), 1.0)
+
+            implied_final = _implied_final_share(reported_share, cn, f_reported)
+            implied_finals[cn]   = implied_final
+            county_est_total[cn] = min(tv2, est_total)   # votes counted so far
+
+        # Build adjusted district-share distribution
+        adj_district_dem  = np.zeros(N_ADJ)
+        adj_district_total = np.zeros(N_ADJ)
+
+        for cn, cd in COUNTIES.items():
+            est_total = int(cd.get("registration", 0) * cd.get("turnout", 0))
+            if est_total == 0:
+                continue
+            lean_sd = cd.get("lean_sd", 0.02)
+            if cn in implied_finals:
+                # Reporting county: centre on implied final, add lean_sd uncertainty
+                # as we have partial info but not perfect knowledge of final outcome
+                remaining_frac = max(0.0, 1.0 - (county_est_total.get(cn, est_total) /
+                                                   max(1, est_total)))
+                # Uncertainty shrinks as more votes are in; add remaining-vote noise
+                noise_sd = lean_sd * (remaining_frac ** 0.5 + 0.3)
+                county_sims = rng_adj.normal(implied_finals[cn], noise_sd, N_ADJ)
+                county_sims = np.clip(county_sims, 0.0, 1.0)
+            else:
+                # Non-reporting county: use full simulation distribution
+                county_sims = county_shares[cn][:N_ADJ] if len(county_shares[cn]) >= N_ADJ else \
+                              np.resize(county_shares[cn], N_ADJ)
+
+            adj_district_dem   += county_sims * est_total
+            adj_district_total += est_total
+
+        adj_district_share = adj_district_dem / adj_district_total
+        adj_wp   = float(np.mean(adj_district_share >= WIN_THRESHOLD))
+        adj_mean = float(np.mean(adj_district_share))
+
+        n_live = int(live_mask.sum())
+        if n_live >= 50:
+            live_share = district_share[live_mask]
+            live_wp    = float(np.mean(live_share >= WIN_THRESHOLD))
+            live_mean  = float(np.mean(live_share))
+
+            lw1, lw2, lw3 = st.columns([1, 2, 2])
+            with lw1:
+                color_adj = "#1a6b3c" if adj_wp >= 0.60 else ("#d97706" if adj_wp >= 0.40 else "#b91c1c")
+                st.markdown(
+                    f'<div class="win-hero" style="background:linear-gradient(135deg,{color_adj} 0%,{color_adj}cc 100%)">'
+                    f'<div class="wlabel">Win Probability</div>'
+                    f'<div class="wvalue">{adj_wp*100:.0f}%</div>'
+                    f'<div class="wsub">Mail-adjusted estimate</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+                st.markdown(
+                    f'<div class="stat-card" style="margin-top:0.5rem;font-size:0.82rem">'
+                    f'<div class="label">Raw (unadjusted)</div>'
+                    f'<div class="value" style="font-size:1.1rem">{live_wp*100:.0f}%</div>'
+                    f'<div class="sub">{n_live:,} matching simulations</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+            with lw2:
+                st.markdown(f'<div class="stat-card"><div class="label">Implied Final Share</div><div class="value">{adj_mean*100:.1f}%</div><div class="sub">Mail-adjusted district estimate</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-card"><div class="label">5th–95th Pct Range</div><div class="value" style="font-size:1.2rem">{np.percentile(adj_district_share,5)*100:.1f}–{np.percentile(adj_district_share,95)*100:.1f}%</div></div>', unsafe_allow_html=True)
+                if implied_finals:
+                    imp_rows = "".join(
+                        f"<tr><td>{cn}</td><td>{implied_finals[cn]*100:.1f}%</td></tr>"
+                        for cn in sorted(implied_finals)
+                    )
+                    st.markdown(
+                        f'<details style="font-size:0.78rem;margin-top:0.4rem"><summary style="cursor:pointer;color:#555">Implied finals by county</summary>'
+                        f'<table style="width:100%;border-collapse:collapse;margin-top:0.3rem">'
+                        f'<thead><tr><th style="text-align:left;padding:2px 6px;font-size:0.75rem">County</th>'
+                        f'<th style="text-align:left;padding:2px 6px;font-size:0.75rem">Implied Final</th></tr></thead>'
+                        f'<tbody>{imp_rows}</tbody></table></details>',
+                        unsafe_allow_html=True
+                    )
+            with lw3:
+                fig_lw, ax_lw = plt.subplots(figsize=(5, 2.5))
+                fig_lw.patch.set_facecolor("#f7f7f5"); ax_lw.set_facecolor("#f7f7f5")
+                ax_lw.hist(adj_district_share*100, bins=40, color="#1a6b3c", alpha=0.75, edgecolor="none", label="Mail-adjusted")
+                ax_lw.hist(live_share*100, bins=40, color="#888", alpha=0.35, edgecolor="none", label="Raw (filtered sims)")
+                ax_lw.axvline(50, color="#b91c1c", linewidth=1.5, linestyle="--")
+                if dist_dem_share:
+                    ax_lw.axvline(dist_dem_share*100, color="#d97706", linewidth=1.5, linestyle="-", label=f"Reported {dist_dem_share*100:.1f}%")
+                ax_lw.set_xlabel("Dem Vote Share (%)", fontsize=7)
+                ax_lw.xaxis.set_major_formatter(mtick.PercentFormatter())
+                ax_lw.spines[["top","right","left"]].set_visible(False)
+                ax_lw.tick_params(labelsize=6)
+                ax_lw.legend(fontsize=6, framealpha=0)
+                plt.tight_layout()
+                st.pyplot(fig_lw, width="stretch"); plt.close()
+            st.caption(
+                "**Mail-adjusted** win probability strips out early mail-ballot lean "
+                "by back-calculating each county's implied final share from the current "
+                "reported share and fraction of votes in.  Raw probability shown for reference."
+            )
+        else:
+            st.info(f"Only {n_live} simulations match current results — too few to estimate win probability. Results may be partial or extreme.")
+            # Still show adjusted estimate even when filter is too narrow
+            color_adj = "#1a6b3c" if adj_wp >= 0.60 else ("#d97706" if adj_wp >= 0.40 else "#b91c1c")
+            col_adj1, col_adj2, _ = st.columns([1, 1, 2])
+            with col_adj1:
+                st.markdown(
+                    f'<div class="win-hero" style="background:linear-gradient(135deg,{color_adj} 0%,{color_adj}cc 100%)">'
+                    f'<div class="wlabel">Mail-Adjusted Win Prob</div>'
+                    f'<div class="wvalue">{adj_wp*100:.0f}%</div>'
+                    f'<div class="wsub">Implied finals estimate</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+            with col_adj2:
+                st.markdown(f'<div class="stat-card"><div class="label">Pre-results Win Probability</div><div class="value">{float(np.mean(district_share>=WIN_THRESHOLD))*100:.0f}%</div><div class="sub">From prior simulation (no live filter)</div></div>', unsafe_allow_html=True)
+            st.caption("Mail-adjusted estimate still available even when simulation filter is too narrow.")
+    else:
+        prior_wp = float(np.mean(district_share >= WIN_THRESHOLD))
+        col_pw, _ = st.columns([1, 3])
+        with col_pw:
+            st.markdown(
+                f'<div class="win-hero"><div class="wlabel">Pre-results Win Probability</div>'
+                f'<div class="wvalue">{prior_wp*100:.0f}%</div>'
+                f'<div class="wsub">No results entered yet</div></div>',
+                unsafe_allow_html=True
+            )
+        st.caption("Enter results in the county table below or load a mock scenario to see live filtering.")
+
 # ── County results table ───────────────────────────────────────────────────
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown('<div class="section-label">County Results</div>', unsafe_allow_html=True)
 
-_NOW_PT = pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None)
-
-def _parse_sos_time(s):
-    """'November 4, 2026, 4:22 p.m.' (SOS) or ISO UTC → naive Pacific timestamp, else NaT."""
-    if s is None or (isinstance(s, float) and np.isnan(s)):
-        return pd.NaT
-    t = str(s).strip().replace("a.m.", "AM").replace("p.m.", "PM")
-    try:
-        return pd.to_datetime(t, format="%B %d, %Y, %I:%M %p")
-    except Exception:
-        pass
-    try:
-        return pd.to_datetime(t, utc=True).tz_convert("America/Los_Angeles").tz_localize(None)
-    except Exception:
-        return pd.NaT
-
-def _fmt_pt(ts) -> str:
-    if pd.isna(ts):
-        return "—"
-    return f"{ts:%b} {ts.day} {ts:%I:%M}".replace(" 0", " ") + ("am" if ts.hour < 12 else "pm")
 
 crows = ""
 for _, row in df_night.iterrows():

@@ -66,3 +66,16 @@ reset on restart/redeploy, and the next SOS fetch overwrites manual entries.
   ~10 min, commits new history rows and emails the new batches via the daily-email Gmail secrets
   (`NOTIFY_TO` secret overrides recipients). It stops after 11 Dec 2026.
 - The fetcher no longer blanks a county if one request fails; it keeps the last saved numbers.
+
+## Late-vote model (default win probability, added 4 Nov)
+
+`late_model.py`: final = votes counted + remaining votes × late-vote Dem share, per county.
+- **Late-vote lean:** the county's mail-ballot Dem share where it reports by vote type (`mail_splits.csv`,
+  refreshed by `fetch_mail_splits.py` on every results fetch — Madera and Merced via Clarity, Stanislaus via its
+  HTML report, Nevada via Enhanced Voting, Calaveras via its PDF report if `pypdf` is installed); otherwise its
+  first election-night drop (`first_drop.csv`, almost all early mail). Post-election-day batches (posted after
+  5 am on 4 Nov) are blended in, weighted by votes (prior weight 3,000 votes).
+- **Uncertainty:** district-wide late-lean shift (SD 2 pt), county shift (3 pt, shrinking with late batches),
+  remaining-vote size (20%, or 7% with SOS unprocessed figures). All adjustable under ⚙️ Late-vote model settings.
+- The previous mail-adjusted method (Optiq outstanding-ballot boost) is kept in a collapsed panel for comparison.
+- The late-vote lean assumptions are not yet checked against 2022/2024 county canvass data.

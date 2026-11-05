@@ -292,6 +292,15 @@ def main():
     if not new.empty:
         print(f"🆕 History: {', '.join(new['county'])} changed")
 
+    # County mail / in-person splits (non-fatal)
+    try:
+        import fetch_mail_splits
+        df_ms = fetch_mail_splits.fetch_all()
+        if not df_ms.empty:
+            df_ms.to_csv(fetch_mail_splits.OUT_PATH, index=False)
+    except Exception as e:
+        print(f"⚠  mail splits: {e}", file=sys.stderr)
+
 
 if __name__ == "__main__":
     main()

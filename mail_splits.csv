@@ -1,0 +1,6 @@
+county,mail_dem,mail_rep,inperson_dem,inperson_rep,source,fetched_at
+Madera,5093,7687,528,1452,Clarity ENR,2026-11-05T03:09:48Z
+Merced,1337,1683,356,506,Clarity ENR,2026-11-05T03:09:48Z
+Stanislaus,37164,32708,7006,7659,county HTML report,2026-11-05T03:09:48Z
+Nevada,2703,760,713,312,Enhanced Voting API,2026-11-05T03:09:48Z
+Calaveras,5428,7459,815,2511,county PDF report,2026-11-05T03:09:48Z
