@@ -51,3 +51,18 @@ If you change the forecast app's simulation, copy the change into `prior.run_sim
 
 On Streamlit Cloud the fetched CSVs live on the app's container disk, so manual edits and fetched results
 reset on restart/redeploy, and the next SOS fetch overwrites manual entries.
+
+## Late count (added 4 Nov)
+
+- **History:** each fetch appends a row per county whose count changed to `election_night_history.csv`
+  (seeded with the ~midnight 3–4 Nov count). `batches.py` turns it into per-update batches; the app's
+  **Late Count — New Batches** section shows each batch's Dem share against the county's count before it.
+- **Last Update** (County Results) is each county's latest SOS report time; 🆕 = within the past hour.
+- **Unprocessed ballots:** enter the SOS *Unprocessed Ballots Status* figures (whole county) in
+  `unprocessed_ballots.csv` (`county,unprocessed_ballots,as_of`). The app scales split counties by
+  `partial_county_fractions.csv` and uses them for Est. Votes Remaining (marked *). The SOS page is behind
+  bot protection, so it can't be fetched automatically.
+- **Email:** the *County Update Email* Action (`scripts/notify_county_updates.py`) checks the SOS feed every
+  ~10 min, commits new history rows and emails the new batches via the daily-email Gmail secrets
+  (`NOTIFY_TO` secret overrides recipients). It stops after 11 Dec 2026.
+- The fetcher no longer blanks a county if one request fails; it keeps the last saved numbers.

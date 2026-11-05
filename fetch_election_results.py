@@ -190,35 +190,107 @@ def fetch_race(contest_path: str, counties: list[str], label: str) -> pd.DataFra
     return pd.DataFrame(rows)
 
 
+# ── History (one row per county each time its count changes) ─────────────────
+
+HISTORY_PATH = DATA_DIR / "election_night_history.csv"
+HISTORY_COLS = ["fetched_at", "county", "last_updated", "dem_votes", "rep_votes", "other_votes"]
+_VOTE_COLS   = ["dem_votes", "rep_votes", "other_votes"]
+
+
+def _vote_key(row) -> tuple:
+    return tuple(int(row[c]) if pd.notna(row[c]) else 0 for c in _VOTE_COLS)
+
+
+def load_history(path: Path = HISTORY_PATH) -> pd.DataFrame:
+    try:
+        return pd.read_csv(path)
+    except (FileNotFoundError, pd.errors.EmptyDataError):
+        return pd.DataFrame(columns=HISTORY_COLS)
+
+
+def new_history_rows(df: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
+    """Rows of df (fetched results) whose vote counts differ from the county's
+    latest history row. Counties with no votes are skipped."""
+    now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    last = {} if hist.empty else {r["county"]: _vote_key(r) for _, r in hist.groupby("county").tail(1).iterrows()}
+    rows = []
+    for _, r in df.iterrows():
+        key = _vote_key(r)
+        if sum(key) == 0 or last.get(r["county"]) == key:
+            continue
+        rows.append({"fetched_at": now_ts, "county": r["county"], "last_updated": r["last_updated"],
+                     **dict(zip(_VOTE_COLS, key))})
+    return pd.DataFrame(rows, columns=HISTORY_COLS)
+
+
+def append_history(df: pd.DataFrame, path: Path = HISTORY_PATH) -> pd.DataFrame:
+    """Append changed counties to the history file; return the new rows."""
+    hist = load_history(path)
+    new = new_history_rows(df, hist)
+    if not new.empty:
+        if hist.empty:
+            new.to_csv(path, index=False)              # new (or header-only) file
+        else:
+            new.to_csv(path, mode="a", header=False, index=False)
+    return new
+
+
+def keep_previous_on_failure(df_new: pd.DataFrame, path: Path) -> pd.DataFrame:
+    """If a county's fetch failed (no votes) but the saved CSV has votes for it,
+    keep the saved row instead of blanking it."""
+    try:
+        old = pd.read_csv(path).set_index("county")
+    except Exception:
+        return df_new
+    out = df_new.copy()
+    for i, r in out.iterrows():
+        cn = r["county"]
+        if sum(_vote_key(r)) == 0 and cn in old.index and sum(_vote_key(old.loc[cn])) > 0:
+            for c in out.columns:
+                if c != "county" and c in old.columns:
+                    out.at[i, c] = old.loc[cn, c]
+    return out
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="Fetch CA SOS election night results for SD4.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print fetched data; don't write CSV files.")
+    parser.add_argument("--sd4-only", action="store_true",
+                        help="Skip the 58-county governor fetch.")
     args = parser.parse_args()
-
-    # SD4 State Senate
-    df_sd4 = fetch_race("state-senate/district/4", SD4_COUNTIES, "SD4 State Senate")
-
-    # Governor — all 58 CA counties
-    df_gov = fetch_race("governor", ALL_CA_COUNTIES, "Governor (statewide)")
-
-    if args.dry_run:
-        print("\n── SD4 State Senate ──")
-        print(df_sd4.to_string(index=False))
-        print("\n── Governor ──")
-        print(df_gov.to_string(index=False))
-        return
 
     sd4_path = DATA_DIR / "election_night.csv"
     gov_path = DATA_DIR / "governor_night.csv"
 
-    df_sd4.to_csv(sd4_path, index=False)
-    df_gov.to_csv(gov_path, index=False)
+    # SD4 State Senate
+    df_sd4 = fetch_race("state-senate/district/4", SD4_COUNTIES, "SD4 State Senate")
+    df_sd4 = keep_previous_on_failure(df_sd4, sd4_path)
 
+    # Governor — all 58 CA counties
+    df_gov = None if args.sd4_only else fetch_race("governor", ALL_CA_COUNTIES, "Governor (statewide)")
+    if df_gov is not None:
+        df_gov = keep_previous_on_failure(df_gov, gov_path)
+
+    if args.dry_run:
+        print("\n── SD4 State Senate ──")
+        print(df_sd4.to_string(index=False))
+        if df_gov is not None:
+            print("\n── Governor ──")
+            print(df_gov.to_string(index=False))
+        return
+
+    df_sd4.to_csv(sd4_path, index=False)
     print(f"\n✅ Saved {sd4_path}")
-    print(f"✅ Saved {gov_path}")
+    if df_gov is not None:
+        df_gov.to_csv(gov_path, index=False)
+        print(f"✅ Saved {gov_path}")
+
+    new = append_history(df_sd4)
+    if not new.empty:
+        print(f"🆕 History: {', '.join(new['county'])} changed")
 
 
 if __name__ == "__main__":

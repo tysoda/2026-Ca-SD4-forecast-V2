@@ -1,0 +1,69 @@
+name: County Update Email
+
+on:
+  schedule:
+    # Every 10 minutes. GitHub often runs scheduled jobs late at busy times, so
+    # expect gaps of 10–30 minutes. The script stops itself after certification.
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+    inputs:
+      preview_only:
+        description: "Build the email but don't send it or save history (download from the run's artifacts)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: county-update-email
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pandas numpy requests
+
+      - name: Preview email
+        if: ${{ inputs.preview_only }}
+        run: python3 scripts/notify_county_updates.py --preview county_update_preview.html
+
+      - name: Upload preview
+        if: ${{ inputs.preview_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: county-update-preview
+          path: county_update_preview.html
+          if-no-files-found: ignore
+
+      - name: Check counties and email
+        if: ${{ !inputs.preview_only }}
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
+        run: python3 scripts/notify_county_updates.py
+
+      - name: Commit history if changed
+        if: ${{ !inputs.preview_only }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add election_night_history.csv
+          if git diff --cached --quiet; then
+            echo "No county changes."
+          else
+            git commit -m "chore: county results update [skip ci]"
+            git pull --rebase --autostash origin main
+            git push
+          fi

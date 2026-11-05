@@ -297,7 +297,49 @@ dist_est_total = sum(
     for cd in COUNTIES.values()
 )
 total_cast = total_dem + total_rep + total_other
-dist_est_remaining = max(0, dist_est_total - total_cast)
+
+# ── Remaining votes: SOS unprocessed-ballot estimates when entered ────────
+# unprocessed_ballots.csv holds the SOS "Unprocessed Ballots Status" figures
+# (whole county); split counties are scaled by their SD4 share of registration.
+@st.cache_data(show_spinner=False)
+def _load_unprocessed(p, mtime=0.0):
+    try:
+        u = pd.read_csv(p)
+        u["unprocessed_ballots"] = pd.to_numeric(u["unprocessed_ballots"], errors="coerce")
+        u = u.dropna(subset=["unprocessed_ballots"])
+        return {r.county: (float(r.unprocessed_ballots), str(r.get("as_of", ""))) for _, r in u.iterrows()}
+    except Exception:
+        return {}
+
+@st.cache_data(show_spinner=False)
+def _load_fractions(p, mtime=0.0):
+    try:
+        f = pd.read_csv(p)
+        return dict(zip(f["county"], f["sd4_fraction"].astype(float)))
+    except Exception:
+        return {}
+
+_unproc_path = DATA_DIR / "unprocessed_ballots.csv"
+_frac_path   = DATA_DIR / "partial_county_fractions.csv"
+UNPROCESSED  = {} if _mock_active else _load_unprocessed(str(_unproc_path), _mtime(_unproc_path))
+SD4_FRACTION = _load_fractions(str(_frac_path), _mtime(_frac_path))
+
+def county_remaining(cn: str, counted: int):
+    """(remaining votes, source) for a county: SOS unprocessed × SD4 share, else model estimate."""
+    if cn in UNPROCESSED:
+        return int(round(UNPROCESSED[cn][0] * SD4_FRACTION.get(cn, 1.0))), "sos"
+    cd = COUNTIES.get(cn, {})
+    est = int(cd.get("registration", 0) * cd.get("turnout", 0))
+    return (max(0, est - counted), "model") if est > 0 else (None, "none")
+
+def _row_votes(row):
+    v = [row.get(c, 0) for c in ("dem_votes", "rep_votes", "other_votes")]
+    return sum(0 if pd.isna(x) else int(x) for x in v)
+
+_rem_by_county = {row.get("county", ""): county_remaining(row.get("county", ""), _row_votes(row))
+                  for _, row in df_night.iterrows()}
+dist_est_remaining = sum(r for r, _ in _rem_by_county.values() if r is not None)
+n_sos_remaining = sum(1 for _, src in _rem_by_county.values() if src == "sos")
 
 _sc = "padding:0.6rem 0.7rem"           # tighter card padding
 _lbl = "font-size:0.62rem;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#666;margin-bottom:0.15rem"
@@ -344,7 +386,9 @@ with ns5:
     st.markdown(_ns_card("Total Votes Cast", f"{total_cast:,}"), unsafe_allow_html=True)
 with ns6:
     rem_str = f"~{dist_est_remaining:,}" if dist_est_total > 0 else "—"
-    st.markdown(_ns_card("Est. Votes Remaining", rem_str, f"of ~{dist_est_total:,} est. total"), unsafe_allow_html=True)
+    rem_sub = (f"SOS unprocessed for {n_sos_remaining}/13 counties" if n_sos_remaining
+               else f"of ~{dist_est_total:,} est. total")
+    st.markdown(_ns_card("Est. Votes Remaining", rem_str, rem_sub), unsafe_allow_html=True)
 
 # ── Mail-ballot timing model (used by live win prob + targets) ───────────
 # Reporting speed: fraction of final county votes in at each of 11 checkpoints.
@@ -652,6 +696,27 @@ else:
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown('<div class="section-label">County Results</div>', unsafe_allow_html=True)
 
+_NOW_PT = pd.Timestamp.now(tz="America/Los_Angeles").tz_localize(None)
+
+def _parse_sos_time(s):
+    """'November 4, 2026, 4:22 p.m.' (SOS) or ISO UTC → naive Pacific timestamp, else NaT."""
+    if s is None or (isinstance(s, float) and np.isnan(s)):
+        return pd.NaT
+    t = str(s).strip().replace("a.m.", "AM").replace("p.m.", "PM")
+    try:
+        return pd.to_datetime(t, format="%B %d, %Y, %I:%M %p")
+    except Exception:
+        pass
+    try:
+        return pd.to_datetime(t, utc=True).tz_convert("America/Los_Angeles").tz_localize(None)
+    except Exception:
+        return pd.NaT
+
+def _fmt_pt(ts) -> str:
+    if pd.isna(ts):
+        return "—"
+    return f"{ts:%b} {ts.day} {ts:%I:%M}".replace(" 0", " ") + ("am" if ts.hour < 12 else "pm")
+
 crows = ""
 for _, row in df_night.iterrows():
     cn   = row.get("county", "")
@@ -665,7 +730,7 @@ for _, row in df_night.iterrows():
 
     county_data   = COUNTIES.get(cn, {})
     est_total     = int(county_data.get("registration", 0) * county_data.get("turnout", 0))
-    votes_remaining = max(0, est_total - tv3) if est_total > 0 else None
+    votes_remaining, rem_src = county_remaining(cn, tv3)
 
     if tv3 > 0:
         rep_share3 = d3 / tv3
@@ -678,8 +743,12 @@ for _, row in df_night.iterrows():
     else:
         share_str = "—"; diff_str = "—"; diff_col = "#888"; status_icon = "⚪"
 
-    pct_str  = f"{pct3*100:.0f}%" if pct3 > 0 else "—"
-    rem_str  = f"~{votes_remaining:,}" if votes_remaining is not None else "—"
+    upd_ts   = _parse_sos_time(row.get("last_updated"))
+    is_new   = pd.notna(upd_ts) and (_NOW_PT - upd_ts) <= pd.Timedelta(hours=1)
+    pct_str  = (f"<span style='color:#1a6b3c;font-weight:600'>🆕 {_fmt_pt(upd_ts)}</span>" if is_new
+                else (_fmt_pt(upd_ts) if not _mock_active else str(row.get("last_updated", "—"))))
+    rem_str  = ((f"{votes_remaining:,}*" if rem_src == "sos" else f"~{votes_remaining:,}")
+                if votes_remaining is not None else "—")
     crows += (
         f"<tr><td>{status_icon} {cn}</td>"
         f"<td>{d3:,}</td><td>{r3:,}</td>"
@@ -692,13 +761,83 @@ for _, row in df_night.iterrows():
 st.markdown(
     f'<table class="styled-table">'
     f'<thead><tr><th>County</th><th>Dem Votes</th><th>Rep Votes</th>'
-    f'<th>Dem Share</th><th>vs Forecast</th><th>Precincts In</th><th>Est. Votes Remaining</th>'
+    f'<th>Dem Share</th><th>vs Forecast</th><th>Last Update</th><th>Est. Votes Remaining</th>'
     f'</tr></thead><tbody>{crows}</tbody></table>'
     f'<p style="font-size:0.72rem;color:#999;margin-top:0.4rem">'
     f'🟢 leading · 🔴 trailing · ⚪ no results · vs Forecast uses linear lean · '
-    f'Est. Votes Remaining = (registration × expected turnout) − votes counted</p>',
+    f'Last Update = the county\'s latest SOS report (🆕 within the past hour) · '
+    f'Est. Votes Remaining = (registration × expected turnout) − votes counted, or * SOS unprocessed '
+    f'ballots × SD4 share of the county where entered in unprocessed_ballots.csv</p>',
     unsafe_allow_html=True
 )
+
+# ── Late count: new batches ────────────────────────────────────────────────
+# Each time a county's count changes, the fetcher appends a row to
+# election_night_history.csv. A batch is what one county added in one update;
+# comparing its Dem share with the county's running share shows whether the
+# late count is leaning one way.
+import batches as BATCH
+BATCH = importlib.reload(BATCH)
+
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown('<div class="section-label">Late Count — New Batches</div>', unsafe_allow_html=True)
+
+hist_path = DATA_DIR / "election_night_history.csv"
+
+@st.cache_data(show_spinner=False)
+def _load_history(p, mtime=0.0):
+    try:
+        return pd.read_csv(p)
+    except Exception:
+        return None
+
+if _mock_active:
+    st.caption("Not shown while a mock scenario is selected.")
+else:
+    _hist = _load_history(str(hist_path), _mtime(hist_path))
+    _b = BATCH.compute_batches(_hist)
+    _sb = BATCH.since_baseline(_hist) if _hist is not None else None
+    if _b.empty or not _sb:
+        st.caption("No county has posted a new batch since the first saved count. Batches appear here "
+                   "as counties update (election_night_history.csv).")
+    else:
+        _bt = _fmt_pt(_parse_sos_time(_sb["baseline_at"]))
+        _dsn, _dsb = _sb["dem_share_new"], _sb["dem_share_baseline"]
+        _lean = ("more Democratic" if _dsn > _dsb else "more Republican") + " than the count before them"
+        _net = _sb["net_dem"]
+        st.markdown(
+            f"Since the first saved count (**{_bt}**), counties have added **{_sb['new_votes']:,}** votes: "
+            f"**{_dsn*100:.1f}% Dem**, {_lean} ({_dsb*100:.1f}%). "
+            f"Net: **{'D' if _net >= 0 else 'R'} +{abs(_net):,}**."
+        )
+        def _share_cell(new, before):
+            if pd.isna(new):
+                return "—"
+            c = "#1a6b3c" if new >= before else "#b91c1c"
+            return f"<span style='color:{c};font-weight:600'>{new*100:.1f}%</span>"
+        brows = ""
+        _b["_posted"] = [_parse_sos_time(x) for x in _b["last_updated"]]
+        for _, r in _b.sort_values(["_posted", "fetched_at"], ascending=False, na_position="last").iterrows():
+            ts = r._posted
+            new_tag = "🆕 " if pd.notna(ts) and (_NOW_PT - ts) <= pd.Timedelta(hours=1) else ""
+            brows += (
+                f"<tr><td>{new_tag}{r.county}</td><td>{_fmt_pt(ts)}</td><td>{int(r.new_votes):,}</td>"
+                f"<td>{_share_cell(r.dem_share_new, r.dem_share_before)}</td>"
+                f"<td>{r.dem_share_before*100:.1f}%</td><td>{r.dem_share_after*100:.1f}%</td>"
+                f"<td style='color:{'#1a6b3c' if r.net_dem >= 0 else '#b91c1c'}'>"
+                f"{'D' if r.net_dem >= 0 else 'R'} +{abs(int(r.net_dem)):,}</td></tr>"
+            )
+        st.markdown(
+            '<div style="overflow-x:auto"><table class="styled-table" style="min-width:700px">'
+            '<thead><tr><th>County</th><th>Posted</th><th>New Votes</th><th>Dem Share of New</th>'
+            '<th>Dem Share Before</th><th>Dem Share After</th><th>Net</th></tr></thead>'
+            f'<tbody>{brows}</tbody></table></div>'
+            '<p style="font-size:0.72rem;color:#999;margin-top:0.4rem">'
+            'Newest first. Dem share is two-party (D ÷ (D + R)). Dem Share of New is green when the batch is more '
+            'Democratic than the county\'s count before it, red when less. Batches are recorded whenever the app '
+            '(or the email check) fetches a changed count, so one row can cover more than one county report.</p>',
+            unsafe_allow_html=True
+        )
 
 # ── Early vote vs reported results ────────────────────────────────────────
 # Compare each county's reported shares with the party registration mix of
