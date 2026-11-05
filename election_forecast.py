@@ -2979,9 +2979,20 @@ with tab_night:
         color = ("#1a6b3c" if dist_dem_share and dist_dem_share >= 0.50 else "#b91c1c") if dist_dem_share else "#888"
         st.markdown(_ns_card("Dem Vote Share", v, "Combined election night", val_color=color, border_color=color), unsafe_allow_html=True)
     with ns2:
-        st.markdown(_ns_card("Counties Reporting", f"{counties_reporting}/13"), unsafe_allow_html=True)
+        if total_votes > 0:
+            st.markdown(_ns_card("Vote Totals", f"{total_dem:,} D", f"{total_rep:,} R"
+                                 + (f" · {total_other:,} other" if total_other else "")), unsafe_allow_html=True)
+        else:
+            st.markdown(_ns_card("Vote Totals", "—", "No results yet"), unsafe_allow_html=True)
     with ns3:
-        st.markdown(_ns_card("Precincts In", f"{pct_precincts*100:.0f}%", f"{total_prec:,} of {total_prec_all:,}"), unsafe_allow_html=True)
+        if total_votes > 0:
+            _m = total_dem - total_rep
+            _mc = "#1a6b3c" if _m >= 0 else "#b91c1c"
+            st.markdown(_ns_card("Vote Margin", f"{'D' if _m >= 0 else 'R'} +{abs(_m):,}",
+                                 f"{abs(_m) / total_votes * 100:.1f}pt · {counties_reporting}/13 counties in",
+                                 val_color=_mc, border_color=_mc), unsafe_allow_html=True)
+        else:
+            st.markdown(_ns_card("Vote Margin", "—", f"{counties_reporting}/13 counties in"), unsafe_allow_html=True)
     with ns4:
         if dist_dem_share:
             diff = dist_dem_share - model_district_mean
