@@ -28,9 +28,11 @@ import pandas as pd
 import streamlit as st
 
 import prior as P
+import remaining as REM
 
 # Streamlit keeps imported helper modules between reruns; reload after a git pull.
 P = importlib.reload(P)
+REM = importlib.reload(REM)
 
 DATA_DIR = P.REPO_DIR
 WIN_THRESHOLD = P.WIN_THRESHOLD
@@ -324,13 +326,14 @@ total_cast = total_dem + total_rep + total_other
 # (whole county); split counties are scaled by their SD4 share of registration.
 @st.cache_data(show_spinner=False)
 def _load_unprocessed(p, mtime=0.0):
+    return REM.load_unprocessed(p)
+
+@st.cache_data(show_spinner=False)
+def _load_hist_prepped(p, mtime=0.0):
     try:
-        u = pd.read_csv(p)
-        u["unprocessed_ballots"] = pd.to_numeric(u["unprocessed_ballots"], errors="coerce")
-        u = u.dropna(subset=["unprocessed_ballots"])
-        return {r.county: (float(r.unprocessed_ballots), str(r.get("as_of", ""))) for _, r in u.iterrows()}
+        return REM.prep_history(pd.read_csv(p))
     except Exception:
-        return {}
+        return REM.prep_history(None)
 
 @st.cache_data(show_spinner=False)
 def _load_fractions(p, mtime=0.0):
@@ -344,11 +347,17 @@ _unproc_path = DATA_DIR / "unprocessed_ballots.csv"
 _frac_path   = DATA_DIR / "partial_county_fractions.csv"
 UNPROCESSED  = {} if _mock_active else _load_unprocessed(str(_unproc_path), _mtime(_unproc_path))
 SD4_FRACTION = _load_fractions(str(_frac_path), _mtime(_frac_path))
+_hist_p      = DATA_DIR / "election_night_history.csv"
+HIST_PREP    = REM.prep_history(None) if _mock_active else _load_hist_prepped(str(_hist_p), _mtime(_hist_p))
+SOS_AGED     = {}   # county → votes subtracted for batches posted after the SOS as_of time
 
 def county_remaining(cn: str, counted: int):
-    """(remaining votes, source) for a county: SOS unprocessed × SD4 share, else model estimate."""
+    """(remaining votes, source) for a county: SOS unprocessed × SD4 share minus SD4 votes
+    counted since the figure's as_of time, else model estimate."""
     if cn in UNPROCESSED:
-        return int(round(UNPROCESSED[cn][0] * SD4_FRACTION.get(cn, 1.0))), "sos"
+        rem, since = REM.sos_remaining(UNPROCESSED[cn], SD4_FRACTION.get(cn, 1.0), counted, HIST_PREP, cn)
+        SOS_AGED[cn] = since
+        return rem, "sos"
     cd = COUNTIES.get(cn, {})
     est = int(cd.get("registration", 0) * cd.get("turnout", 0))
     return (max(0, est - counted), "model") if est > 0 else (None, "none")
@@ -880,7 +889,11 @@ st.markdown(
     f'🟢 leading · 🔴 trailing · ⚪ no results · vs Forecast uses linear lean · '
     f'Last Update = the county\'s latest SOS report (🆕 within the past hour) · '
     f'Est. Votes Remaining = (registration × expected turnout) − votes counted, or * SOS unprocessed '
-    f'ballots × SD4 share of the county where entered in unprocessed_ballots.csv</p>',
+    f'ballots × SD4 share of the county where entered in unprocessed_ballots.csv, minus SD4 votes the '
+    f'county has posted since that figure\'s as_of time'
+    + (" (" + ", ".join(f"{c} −{v:,}" for c, v in SOS_AGED.items() if v > 0) + ")"
+       if any(v > 0 for v in SOS_AGED.values()) else "")
+    + '</p>',
     unsafe_allow_html=True
 )
 
@@ -951,6 +964,55 @@ else:
             '(or the email check) fetches a changed count, so one row can cover more than one county report.</p>',
             unsafe_allow_html=True
         )
+
+# ── Needed share over time ────────────────────────────────────────────────
+# Replays election_night_history.csv: after each county update, the district's
+# two-party Dem share and the Dem share needed of the remaining vote (remaining
+# as in County Results — aged SOS figure from its as_of time on, model before).
+if not _mock_active and not HIST_PREP.empty:
+    _model_tot = {cn: cd.get("registration", 0) * cd.get("turnout", 0) for cn, cd in COUNTIES.items()}
+    _nh = REM.need_history(HIST_PREP, UNPROCESSED, SD4_FRACTION, _model_tot)
+    try:
+        _exp_late = float(_lm["expected_late_share"])
+    except (NameError, KeyError, TypeError):
+        _exp_late = np.nan
+
+    import matplotlib.dates as mdates
+    _BLUE, _ORANGE, _INK, _MUTED = "#2a78d6", "#eb6834", "#333", "#999"
+    fig, ax = plt.subplots(figsize=(10, 3.6))
+    ax.step(_nh["posted"], _nh["needed"].clip(0, 1), where="post", color=_ORANGE, lw=2,
+            label="Dem share needed of remaining")
+    ax.step(_nh["posted"], _nh["dem_2p"], where="post", color=_BLUE, lw=2,
+            label="Dem share, all counted")
+    _bd = _nh[~_nh["first"] & _nh["batch_dem_2p"].notna() & (_nh["new_votes"] > 0)]
+    if not _bd.empty:
+        ax.scatter(_bd["posted"], _bd["batch_dem_2p"],
+                   s=20 + 280 * (_bd["new_votes"] / _bd["new_votes"].max()) ** 0.5,
+                   color=_BLUE, alpha=0.35, edgecolor="white", linewidth=1.5, zorder=3,
+                   label="Dem share of each batch (size = votes)")
+    if np.isfinite(_exp_late):
+        ax.axhline(_exp_late, color=_ORANGE, lw=1, ls=":", zorder=1,
+                   label=f"Expected Dem share of remaining now ({_exp_late*100:.1f}%)")
+    ax.axhline(0.5, color=_MUTED, lw=1, ls="--", zorder=0)
+    ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0, decimals=0))
+    ax.set_ylabel("Two-party Dem share", color=_INK, fontsize=9)
+    ax.tick_params(colors=_INK, labelsize=8)
+    ax.grid(axis="y", color="#eee", lw=0.8); ax.set_axisbelow(True)
+    for _sp in ("top", "right"): ax.spines[_sp].set_visible(False)
+    for _sp in ("left", "bottom"): ax.spines[_sp].set_color("#ccc")
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%a %-I %p"))
+    ax.legend(loc="upper left", bbox_to_anchor=(0, -0.14), ncol=2, frameon=False, fontsize=8)
+    fig.tight_layout()
+    st.pyplot(fig, width="stretch")
+    plt.close(fig)
+    _last = _nh.iloc[-1]
+    st.caption(
+        f"Needed now: {_last['needed']*100:.1f}% of ~{_last['remaining']:,.0f} remaining "
+        f"(the late-vote model's figure above uses the same remaining votes). Each step is one county "
+        f"update, at its SOS posting time; each county's first saved count isn't drawn as a batch. "
+        f"Remaining uses a county's SOS figure from its as_of time on and the model before. "
+        f"Needed is clipped to 0–100% on the chart."
+    )
 
 # ── Early vote vs reported results ────────────────────────────────────────
 # Compare each county's reported shares with the party registration mix of

@@ -62,6 +62,14 @@ reset on restart/redeploy, and the next SOS fetch overwrites manual entries.
   `unprocessed_ballots.csv` (`county,unprocessed_ballots,as_of`). The app scales split counties by
   `partial_county_fractions.csv` and uses them for Est. Votes Remaining (marked *). The SOS page is behind
   bot protection, so it can't be fetched automatically.
+- **Aging (added 5 Nov):** `as_of` (Pacific, `YYYY-MM-DD HH:MM`) is the county results update the SOS
+  figure goes with. Any SD4 votes the county posts after that come off its figure (`remaining.py`, using
+  each history row's SOS posting time), so a batch isn't counted twice before the next SOS update. Blank or
+  pre-history `as_of` = nothing subtracted. Numbers may include commas.
+- **Needed share over time (added 5 Nov):** below the batch table, a chart replays the history: two-party Dem
+  share of all counted votes, the Dem share needed of the remaining vote after each update, each batch's own
+  Dem share (dot size = votes) and the late-vote model's current expected share. Remaining at each point uses
+  a county's aged SOS figure from its `as_of` time on, the model estimate before.
 - **Email:** the *County Update Email* Action (`scripts/notify_county_updates.py`) checks the SOS feed every
   ~10 min, commits new history rows and emails the new batches via the daily-email Gmail secrets
   (`NOTIFY_TO` secret overrides recipients). It stops after 11 Dec 2026.
