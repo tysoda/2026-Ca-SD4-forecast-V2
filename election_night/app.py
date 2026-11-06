@@ -977,41 +977,56 @@ if not _mock_active and not HIST_PREP.empty:
     except (NameError, KeyError, TypeError):
         _exp_late = np.nan
 
-    import matplotlib.dates as mdates
-    _BLUE, _ORANGE, _INK, _MUTED = "#2a78d6", "#eb6834", "#333", "#999"
-    fig, ax = plt.subplots(figsize=(10, 3.6))
-    ax.step(_nh["posted"], _nh["needed"].clip(0, 1), where="post", color=_ORANGE, lw=2,
-            label="Dem share needed of remaining")
-    ax.step(_nh["posted"], _nh["dem_2p"], where="post", color=_BLUE, lw=2,
-            label="Dem share, all counted")
-    _bd = _nh[~_nh["first"] & _nh["batch_dem_2p"].notna() & (_nh["new_votes"] > 0)]
+    import plotly.graph_objects as go
+    _BLUE, _ORANGE, _INK, _MUTED, _GRID = "#2a78d6", "#eb6834", "#333", "#999", "#eee"
+    _hov = _nh.assign(
+        when=_nh["posted"].dt.strftime("%a %b %-d, %-I:%M %p"),
+        upd=np.where(_nh["first"], "first saved count",
+                     _nh["new_votes"].map(lambda v: f"+{int(v):,} votes")),
+    )
+    _cd = np.stack([_hov["when"], _hov["county"], _hov["upd"], _hov["remaining"]], axis=-1)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=_nh["posted"], y=_nh["needed"].clip(0, 1), mode="lines", line=dict(color=_ORANGE, width=2, shape="hv"),
+        name="Dem share needed of remaining", customdata=_cd,
+        hovertemplate="<b>Needed: %{y:.1%}</b> of ~%{customdata[3]:,.0f} remaining<br>"
+                      "after %{customdata[1]} (%{customdata[2]})<br>%{customdata[0]}<extra></extra>"))
+    fig.add_trace(go.Scatter(
+        x=_nh["posted"], y=_nh["dem_2p"], mode="lines", line=dict(color=_BLUE, width=2, shape="hv"),
+        name="Dem share, all counted", customdata=_cd,
+        hovertemplate="<b>Counted: %{y:.1%}</b> Dem<br>after %{customdata[1]} (%{customdata[2]})"
+                      "<br>%{customdata[0]}<extra></extra>"))
+    _bd = _hov[~_hov["first"] & _hov["batch_dem_2p"].notna() & (_hov["new_votes"] > 0)]
     if not _bd.empty:
-        ax.scatter(_bd["posted"], _bd["batch_dem_2p"],
-                   s=20 + 280 * (_bd["new_votes"] / _bd["new_votes"].max()) ** 0.5,
-                   color=_BLUE, alpha=0.35, edgecolor="white", linewidth=1.5, zorder=3,
-                   label="Dem share of each batch (size = votes)")
+        fig.add_trace(go.Scatter(
+            x=_bd["posted"], y=_bd["batch_dem_2p"], mode="markers", name="Dem share of each batch (size = votes)",
+            marker=dict(color=_BLUE, opacity=0.4, line=dict(color="white", width=1.5),
+                        size=8 + 22 * (_bd["new_votes"] / _bd["new_votes"].max()) ** 0.5),
+            customdata=np.stack([_bd["when"], _bd["county"], _bd["new_votes"]], axis=-1),
+            hovertemplate="<b>%{customdata[1]} batch: %{y:.1%}</b> Dem<br>%{customdata[2]:,} votes"
+                          "<br>%{customdata[0]}<extra></extra>"))
     if np.isfinite(_exp_late):
-        ax.axhline(_exp_late, color=_ORANGE, lw=1, ls=":", zorder=1,
-                   label=f"Expected Dem share of remaining now ({_exp_late*100:.1f}%)")
-    ax.axhline(0.5, color=_MUTED, lw=1, ls="--", zorder=0)
-    ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0, decimals=0))
-    ax.set_ylabel("Two-party Dem share", color=_INK, fontsize=9)
-    ax.tick_params(colors=_INK, labelsize=8)
-    ax.grid(axis="y", color="#eee", lw=0.8); ax.set_axisbelow(True)
-    for _sp in ("top", "right"): ax.spines[_sp].set_visible(False)
-    for _sp in ("left", "bottom"): ax.spines[_sp].set_color("#ccc")
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%a %-I %p"))
-    ax.legend(loc="upper left", bbox_to_anchor=(0, -0.14), ncol=2, frameon=False, fontsize=8)
-    fig.tight_layout()
-    st.pyplot(fig, width="stretch")
-    plt.close(fig)
+        fig.add_hline(y=_exp_late, line=dict(color=_ORANGE, width=1, dash="dot"),
+                      annotation_text=f"Expected now {_exp_late*100:.1f}%", annotation_position="top right",
+                      annotation_font=dict(size=10, color=_INK))
+    fig.add_hline(y=0.5, line=dict(color=_MUTED, width=1, dash="dash"))
+    fig.update_layout(
+        height=380, margin=dict(l=60, r=20, t=20, b=10), plot_bgcolor="white", paper_bgcolor="white",
+        font=dict(family="IBM Plex Sans, sans-serif", size=11, color=_INK),
+        hovermode="closest", hoverlabel=dict(bgcolor="white", font_size=11),
+        legend=dict(orientation="h", yanchor="top", y=-0.12, x=0, font=dict(size=11)),
+        xaxis=dict(showgrid=False, linecolor="#ccc", tickformat="%a %-I %p"),
+        yaxis=dict(title="Two-party Dem share", tickformat=".0%", gridcolor=_GRID, zeroline=False),
+    )
+    st.plotly_chart(fig, width="stretch", config={"displaylogo": False})
     _last = _nh.iloc[-1]
     st.caption(
         f"Needed now: {_last['needed']*100:.1f}% of ~{_last['remaining']:,.0f} remaining "
         f"(the late-vote model's figure above uses the same remaining votes). Each step is one county "
         f"update, at its SOS posting time; each county's first saved count isn't drawn as a batch. "
         f"Remaining uses a county's SOS figure from its as_of time on and the model before. "
-        f"Needed is clipped to 0–100% on the chart."
+        f"Needed is clipped to 0–100% on the chart. Hover for details; drag to zoom, double-click to reset, "
+        f"click a legend item to hide it."
     )
 
 # ── Early vote vs reported results ────────────────────────────────────────
