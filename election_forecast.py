@@ -1982,6 +1982,42 @@ with tab_map:
             st.info("Select a county to see detailed statistics.")
             st.markdown(f'<div class="stat-card"><div class="label">District Win Probability</div><div class="value">{fmt_pct(float(np.mean(district_share>=WIN_THRESHOLD)))}</div><div class="sub">across all {int(n_sims):,} simulations</div></div>', unsafe_allow_html=True)
 
+    # ── Win / Loss county breakdown ───────────────────────────────────────────
+    st.markdown("---")
+    with st.expander("📊 Win/Loss county breakdown", expanded=True):
+        wm_all = district_share >= WIN_THRESHOLD
+        lm_all = ~wm_all
+        n_w    = int(wm_all.sum())
+        n_l    = int(lm_all.sum())
+        rows = []
+        for cn in county_names:
+            s = county_shares[cn]
+            avg_win  = float(np.mean(s[wm_all])) if n_w > 0 else float("nan")
+            avg_lose = float(np.mean(s[lm_all])) if n_l > 0 else float("nan")
+            gap      = avg_win - avg_lose if (n_w > 0 and n_l > 0) else float("nan")
+            rows.append({
+                "County":           cn,
+                "Avg share (win)":  avg_win,
+                "Avg share (loss)": avg_lose,
+                "Gap (win−loss)":   gap,
+                "Reg.":             COUNTIES[cn]["registration"],
+            })
+        import pandas as _pd_wl
+        df_wl = _pd_wl.DataFrame(rows).sort_values("Gap (win−loss)", ascending=False)
+        st.caption(f"Based on {n_w:,} winning and {n_l:,} losing simulations out of {n_w + n_l:,} total.")
+        st.dataframe(
+            df_wl.style
+                .format({
+                    "Avg share (win)":  "{:.1%}",
+                    "Avg share (loss)": "{:.1%}",
+                    "Gap (win−loss)":   "{:+.1%}",
+                    "Reg.":             "{:,.0f}",
+                })
+                .background_gradient(subset=["Gap (win−loss)"], cmap="RdYlGn", vmin=-0.05, vmax=0.05),
+            use_container_width=True,
+            hide_index=True,
+        )
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 5 — FORECAST MODEL
 # ══════════════════════════════════════════════════════════════════════════════
