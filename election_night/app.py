@@ -834,6 +834,14 @@ with st.expander("Previous method: mail-adjusted estimate (for comparison)", exp
             )
         st.caption("Enter results in the county table below or load a mock scenario to see live filtering.")
 
+# ── Pre-compute win-target medians (used in county results table) ──────────
+_win_mask_pre = district_share >= WIN_THRESHOLD
+_win_tgt_p50  = {
+    cn: float(np.median(county_shares[cn][_win_mask_pre]))
+    for cn in county_shares
+    if _win_mask_pre.sum() > 0
+}
+
 # ── County results table ───────────────────────────────────────────────────
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown('<div class="section-label">County Results</div>', unsafe_allow_html=True)
@@ -854,6 +862,7 @@ for _, row in df_night.iterrows():
     est_total     = int(county_data.get("registration", 0) * county_data.get("turnout", 0))
     votes_remaining, rem_src = county_remaining(cn, tv3)
 
+    win_tgt3 = _win_tgt_p50.get(cn)
     if tv3 > 0:
         rep_share3 = d3 / tv3
         model_share3 = forecast_env + county_data.get("lean_lin", 0)
@@ -862,8 +871,15 @@ for _, row in df_night.iterrows():
         diff_str  = f"{'▲' if diff3>=0 else '▼'} {abs(diff3)*100:.1f}pt"
         diff_col  = "#1a6b3c" if diff3 >= 0 else "#b91c1c"
         status_icon = "🟢" if rep_share3 >= 0.50 else "🔴"
+        if win_tgt3 is not None:
+            tgt_diff3 = rep_share3 - win_tgt3
+            tgt_str   = f"{'▲' if tgt_diff3>=0 else '▼'} {abs(tgt_diff3)*100:.1f}pt"
+            tgt_col   = "#1a6b3c" if tgt_diff3 >= 0 else "#b91c1c"
+        else:
+            tgt_str = "—"; tgt_col = "#888"
     else:
         share_str = "—"; diff_str = "—"; diff_col = "#888"; status_icon = "⚪"
+        tgt_str = "—"; tgt_col = "#888"
 
     upd_ts   = _parse_sos_time(row.get("last_updated"))
     is_new   = pd.notna(upd_ts) and (_NOW_PT - upd_ts) <= pd.Timedelta(hours=1)
@@ -876,6 +892,7 @@ for _, row in df_night.iterrows():
         f"<td>{d3:,}</td><td>{r3:,}</td>"
         f"<td>{share_str}</td>"
         f"<td style='color:{diff_col}'>{diff_str}</td>"
+        f"<td style='color:{tgt_col}'>{tgt_str}</td>"
         f"<td>{pct_str}</td>"
         f"<td>{rem_str}</td></tr>"
     )
@@ -883,10 +900,11 @@ for _, row in df_night.iterrows():
 st.markdown(
     f'<table class="styled-table">'
     f'<thead><tr><th>County</th><th>Dem Votes</th><th>Rep Votes</th>'
-    f'<th>Dem Share</th><th>vs Forecast</th><th>Last Update</th><th>Est. Votes Remaining</th>'
+    f'<th>Dem Share</th><th>vs Forecast</th><th>vs Win target</th><th>Last Update</th><th>Est. Votes Remaining</th>'
     f'</tr></thead><tbody>{crows}</tbody></table>'
     f'<p style="font-size:0.72rem;color:#999;margin-top:0.4rem">'
     f'🟢 leading · 🔴 trailing · ⚪ no results · vs Forecast uses linear lean · '
+    f'vs Win target = actual share vs median share in winning simulations · '
     f'Last Update = the county\'s latest SOS report (🆕 within the past hour) · '
     f'Est. Votes Remaining = (registration × expected turnout) − votes counted, or * SOS unprocessed '
     f'ballots × SD4 share of the county where entered in unprocessed_ballots.csv, minus SD4 votes the '
